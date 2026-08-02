@@ -27,6 +27,11 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `docs`: document `models.json` provider entry shape (redacted verified example)
 - `docs`: record milestone 3 candidate evaluations — no setup additions adopted ([docs/DECISIONS.md](docs/DECISIONS.md) D13, D14)
 - `docs`: close milestone 3 — depth (verdict: complete with minor improvements)
+- `docs`: adopt platform architecture — constitution v1.2, `docs/ARCHITECTURE.md`, `capabilities/` registry and asset tree ([docs/DECISIONS.md](docs/DECISIONS.md) D15)
+- `feat`: integrate Wave 1 capabilities — rpiv-todo, pi-permission-system (path protection), pi-plan-mode, pi-fff, sequential-thinking + context7 MCP, anthropics doc skills (validated 2026-08-03; registry: `capabilities/index.md`)
+- `feat`: version platform assets — power-tools extension and prompt templates now sourced from `capabilities/`
+- `docs`: record Wave 1 decisions — license-driven skill referencing, subagent/browser-layer decisions (D16, D17)
+- `docs`: close milestone 6 — Wave 1 integration (verdict: successful; see completion report)
 
 ## Notes
 

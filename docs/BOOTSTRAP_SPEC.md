@@ -1,8 +1,10 @@
-# Harness Pi Blueprint — Bootstrap Specification v1.1
+# Harness Pi Blueprint — Bootstrap Specification v1.2
 
 > **Constitution.** This document is the repository's constitution. It lives inside the repository so that future AI agents and contributors never depend on external chat history. See [Amendment Process](#amendment-process) for how this document itself changes.
 
 **v1.1 changes (2026-08-02).** Revision per the audit of v1.0 (audit located at `G:/blueprint-plan`, outside this repo; dispositions recorded in `docs/DECISIONS.md`): constitution committed to the repository (C1), secrets policy (C2), setup inventory (C3), documentation ownership matrix (I1), content contracts (I2), capture loop (I3), `last-verified` convention (I4), and minor findings M1–M5. Philosophy unchanged.
+
+**v1.2 changes (2026-08-03).** Platform architecture adoption per Milestone 5.5: adds `docs/ARCHITECTURE.md` (platform layers, capability lifecycle, governance, integration architecture) and the `capabilities/` asset tree (registry + platform-owned assets) to the structure and ownership matrix. The capability lifecycle and governance model in `docs/ARCHITECTURE.md` govern all future capability integration. Philosophy unchanged.
 
 ---
 
@@ -146,11 +148,13 @@ Every document has exactly one responsibility. Every fact has exactly one owner 
 | `NEXT_SESSION.md` | Handoff: first actions for next session | PROJECT_STATE |
 | `AI_CONTEXT.md` | Everything an agent needs on first contact; index + constitution | all others |
 | `docs/BOOTSTRAP_SPEC.md` | The constitution (this document) | — |
+| `docs/ARCHITECTURE.md` | The platform architecture: layers, capability lifecycle, governance model, integration architecture, intelligence design, evolution | DECISIONS |
 | `docs/VISION.md` | Long-term vision, mission | DESIGN_PRINCIPLES |
 | `docs/DESIGN_PRINCIPLES.md` | Principle elaboration, rationale, examples | — |
 | `docs/SUCCESS_CRITERIA.md` | Measurable success metrics and their status | — |
 | `docs/DECISIONS.md` | Decision log (date, context, decision, alternatives, rationale) | — |
 | `docs/SETUP.md` | Setup inventory: what is installed and how to rebuild it | — |
+| `capabilities/index.md` | Capability registry: deployed capabilities, status, lifecycle stage, validation | SETUP (deployment paths) |
 | `implementation/TODO.md` | Concrete actionable tasks | ROADMAP |
 
 ## Content Contracts
@@ -186,17 +190,28 @@ AI_CONTEXT.md
 
 docs/
     BOOTSTRAP_SPEC.md
+    ARCHITECTURE.md
     VISION.md
     DESIGN_PRINCIPLES.md
     SUCCESS_CRITERIA.md
     DECISIONS.md
     SETUP.md
 
+capabilities/
+    index.md          # capability registry (single source of truth)
+    skills/           # owned copies of adapted skills (referenced sources documented)
+    prompts/          # prompt templates (source of deployed copies)
+    workflows/        # workflow definitions (when adopted)
+    scripts/          # automation scripts
+    mcp/              # MCP server notes and config fragments (no secrets)
+    extensions/       # home-grown extensions
+    agents/           # subagent type definitions (when adopted)
+
 implementation/
     TODO.md
 ```
 
-Do not add extra folders unless they are clearly necessary. Justification for the existing split (decision D4 in `docs/DECISIONS.md`): `docs/` holds process and reference documentation; `implementation/` holds actionable task tracking.
+Do not add extra folders unless they are clearly necessary. Create capability subdirectories only when they contain real content (no placeholder directories). Justification for the existing split (decision D4 in `docs/DECISIONS.md`): `docs/` holds process and reference documentation; `implementation/` holds actionable task tracking; `capabilities/` holds platform assets (adopted 2026-08-03, decision D15).
 
 ---
 

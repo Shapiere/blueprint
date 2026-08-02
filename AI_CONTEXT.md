@@ -10,7 +10,7 @@ You are the Lead AI Engineer responsible for this repository: maintainable docum
 
 ## Constitution
 
-[docs/BOOTSTRAP_SPEC.md](docs/BOOTSTRAP_SPEC.md) is the governing document (Bootstrap Specification v1.1). It defines philosophy, non-goals, decision framework, documentation ownership, content contracts, secrets policy, capture loop, commit policy, and the amendment process. Follow it before all else.
+[docs/BOOTSTRAP_SPEC.md](docs/BOOTSTRAP_SPEC.md) is the governing document (Bootstrap Specification v1.2). It defines philosophy, non-goals, decision framework, documentation ownership, content contracts, secrets policy, capture loop, commit policy, and the amendment process. Follow it before all else.
 
 ## Repository Map
 
@@ -22,11 +22,14 @@ You are the Lead AI Engineer responsible for this repository: maintainable docum
 | `PROJECT_STATE.md` | Current status snapshot |
 | `ROADMAP.md` | Future milestones |
 | `NEXT_SESSION.md` | Handoff for the next session |
+| `docs/BOOTSTRAP_SPEC.md` | Constitution (v1.2) |
+| `docs/ARCHITECTURE.md` | Platform architecture: layers, lifecycle, governance |
 | `docs/VISION.md` | Long-term vision |
 | `docs/DESIGN_PRINCIPLES.md` | Principle elaboration |
 | `docs/SUCCESS_CRITERIA.md` | Measurable success criteria |
 | `docs/DECISIONS.md` | Decision log |
 | `docs/SETUP.md` | Setup inventory and rebuild instructions |
+| `capabilities/index.md` | Capability registry (status, validation, lifecycle) |
 | `implementation/TODO.md` | Concrete tasks |
 
 ## Operating Rules (summary)
@@ -43,6 +46,7 @@ You are the Lead AI Engineer responsible for this repository: maintainable docum
 - Current milestone: [PROJECT_STATE.md](PROJECT_STATE.md).
 - Next actions: [NEXT_SESSION.md](NEXT_SESSION.md).
 - Setup facts: [docs/SETUP.md](docs/SETUP.md).
+- Capability status: [capabilities/index.md](capabilities/index.md).
 
 ## Notes
 

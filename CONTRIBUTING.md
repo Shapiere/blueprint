@@ -34,3 +34,7 @@ Rules for changing this repository safely. This guide is agent-facing: it exists
 ## Amending the Constitution
 
 Changes to `docs/BOOTSTRAP_SPEC.md` require a CHANGELOG entry, a DECISIONS entry, and a version bump per the constitution's Amendment Process. Do not edit it casually.
+
+## Integrating Capabilities
+
+All capability integration follows the lifecycle and governance model in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): benchmark, decision entry, adaptation, integration, validation (smoke test), and registry update in the same session. The registry (`capabilities/index.md`) is the single source of truth for capability status. Never promote an unvalidated capability to active.

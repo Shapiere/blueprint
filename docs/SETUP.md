@@ -4,7 +4,7 @@
 
 Everything required to rebuild this environment from scratch, and the current state of the Pi installation. Unknown information is marked **Pending** — never invent configuration.
 
-**Last verified: 2026-08-02** (re-verified during Milestone 2 validation; refresh via the capture loop on every setup change).
+**Last verified: 2026-08-03** (re-verified during Milestone 6 Wave 1 integration; refresh via the capture loop on every setup change).
 
 ---
 
@@ -81,8 +81,8 @@ Everything required to rebuild this environment from scratch, and the current st
 | `theme` | `dark` | |
 | `compaction` | enabled, reserve 16384, keep recent 20000 | defaults, explicit |
 | `retry` | enabled, maxRetries 3, baseDelayMs 2000 | defaults, explicit |
-| `skills` | see Skills section | 10 entries |
-| `packages` | see Packages section | 5 entries |
+| `skills` | see Skills section | 14 entries |
+| `packages` | see Packages section | 9 entries |
 
 ## Packages (managed by `pi install`)
 
@@ -93,6 +93,10 @@ Everything required to rebuild this environment from scratch, and the current st
 | `git:github.com/badlogic/pi-skills` | 8 skills (registered via settings `skills`, not the package loader — repo has no manifest) |
 | `npm:pi-mcp-adapter` | MCP server support via a single proxy tool |
 | `npm:pi-lens` | LSP/linter/formatter feedback during edits |
+| `npm:@juicesharp/rpiv-todo` | todo tool + live overlay (Wave 1, validated 2026-08-03) |
+| `npm:@gotgenes/pi-permission-system` | permission gates; path protection active (Wave 1, validated 2026-08-03) |
+| `npm:@narumitw/pi-plan-mode` | enforced read-only plan mode (Wave 1, validated 2026-08-03) |
+| `npm:@ff-labs/pi-fff` | fuzzy file/content search (Wave 1, validated 2026-08-03) |
 
 Uninstall: `pi remove <source>`.
 
@@ -109,6 +113,7 @@ Uninstall: `pi remove <source>`.
 | `frontend-design-review` | `~/.codex/skills` |
 | `brave-search`, `browser-tools`, `gccli`, `gdcli`, `gmcli`, `transcribe`, `vscode`, `youtube-transcript` | `badlogic/pi-skills` dirs (via settings `skills`) |
 | `pi-subagents` | `npm:pi-subagents` package |
+| `docx`, `pdf`, `pptx`, `xlsx` | anthropics/skills, referenced from `~/.pi/agent/vendor/anthropics/skills` (not vendored — source-available license, see `capabilities/skills/NOTES.md`) |
 
 ## Prompt Templates (`~/.pi/agent/prompts/`)
 
@@ -119,9 +124,21 @@ Uninstall: `pi remove <source>`.
 ## MCP
 
 - Adapter: `pi-mcp-adapter` (package, installed).
-- Config: `~/.config/mcp/mcp.json` — one server: `chrome-devtools` (`npx -y chrome-devtools-mcp@latest`).
+- Config: `~/.config/mcp/mcp.json` — three servers:
+  - `chrome-devtools` (`npx -y chrome-devtools-mcp@latest`) — validated 2026-08-03
+  - `sequential-thinking` (`npx -y @modelcontextprotocol/server-sequential-thinking`) — validated 2026-08-03
+  - `context7` (`npx -y @upstash/context7-mcp`) — validated 2026-08-03
 - Also read automatically: `.mcp.json`, `~/.agents/mcp.json`, host configs via `/mcp setup`.
 - Manage: `/mcp` in Pi; servers start lazily on first tool use.
+- Server notes and config fragments: [chrome-devtools](../capabilities/mcp/chrome-devtools.md), [sequential-thinking](../capabilities/mcp/sequential-thinking.md), [context7](../capabilities/mcp/context7.md).
+
+## Permission System
+
+- Package: `@gotgenes/pi-permission-system` (installed).
+- Wave 1 scope: **path protection only** — deny rules on `.env*` (except `.env.example`), `~/.ssh/*`, `~/.pi/agent/auth.json`, `~/.pi/agent/oauth.json`; everything else `allow`.
+- Config: `~/.pi/agent/extensions/pi-permission-system/config.json`.
+- Validated 2026-08-03: `.env` read denied; normal file reads unaffected.
+- Wave 2: full allow/ask/deny gates, bash policy, external-directory guard (see `docs/DECISIONS.md` D17).
 
 ## Operations
 
@@ -156,9 +173,9 @@ Extensions hot-reload with `/reload` inside Pi. Sessions persist under `~/.pi/ag
 4. Write `~/.pi/agent/models.json` per the Provider section (example shape there; the source machine's file contains the full ~200-model catalog). — **verified via fresh-config simulation 2026-08-02**
 5. Run `pi`, authenticate via `/login` for provider `9router`. — **stored-credential path verified via fresh-config simulation 2026-08-02** (`FRESH_OK`); interactive `/login` UI flow untested
 6. Apply `settings.json` keys from the Settings table.
-7. `pi install` the five packages.
-8. Copy `extensions/power-tools.ts`, `prompts/*.md`, and skills registration to `~/.pi/agent/`.
-9. Write `~/.config/mcp/mcp.json` (chrome-devtools).
+7. `pi install` the nine packages (see Packages table).
+8. Copy `extensions/power-tools.ts` (source: `capabilities/extensions/`), `prompts/*.md` (source: `capabilities/prompts/`), and register skills per `capabilities/skills/NOTES.md`.
+9. Write `~/.config/mcp/mcp.json` (three servers; fragments in `capabilities/mcp/`) and the permission config per the Permission System section.
 
 Validation status: steps 4–5 verified via fresh-config simulation (temp agent dir, documented files, placeholder auth; output `FRESH_OK`, 2026-08-02). Steps 1–3 and 6–9 verified by checklist against the live machine. Full fresh-machine execution remains pending (see `implementation/TODO.md`).
 

@@ -21,21 +21,28 @@ Candidate items:
 
 Additional Milestone 2 tasks in `implementation/TODO.md` (9router service startup method, fresh-machine `/login` flow) derive from `docs/SETUP.md` Pending items.
 
-## Milestone 3 — Depth (complete — see [PROJECT_STATE.md](PROJECT_STATE.md))
+## Milestone 6 — Wave 1 Integration (complete — see [PROJECT_STATE.md](PROJECT_STATE.md))
 
-Purpose: deepen the setup where it measurably helps.
+Integrated and validated 2026-08-03: rpiv-todo, pi-permission-system (path protection), pi-plan-mode, pi-fff, sequential-thinking + context7 MCP, anthropics doc skills. Registry: `capabilities/index.md`. Layer decisions recorded: `docs/DECISIONS.md` D17.
 
-Candidate items (each requires justification before adoption):
+## Milestone 7 — Wave 2 (next)
 
-1. Additional Pi packages or extensions from the catalog.
-2. More MCP servers.
-3. New prompt templates or skills derived from real use.
+Scope (benchmarked, decisions recorded):
 
-Outcome: all three candidates evaluated 2026-08-02; none adopted (see `docs/DECISIONS.md` D13). Depth delivered as operations/troubleshooting knowledge in `docs/SETUP.md` (D14).
+1. Full permission gates (allow/ask/deny, bash policy, external-directory guard).
+2. Superpowers methodology port (TDD, systematic-debugging, writing/executing-plans).
+3. Review suite consolidation (codex/gemini patterns into one review workflow).
+4. dynamic-workflows core (parallel orchestration, /code-review, /deep-research, /codebase-audit) + retire pi-subagents per D17.
+5. rpiv-ask-user-question, pi-simplify.
+6. frontend-design + skill-creator skills (anthropics).
+
+## Milestone 8 — Wave 3 (candidate)
+
+piolium (sandboxed), GitHub MCP, playwright decision execution, memory MCP, background tasks, trailofbits/vercel skill subsets. Gated on Wave 2 stability.
 
 ## Next Milestone
 
-None defined. Propose a Milestone 4 scope here only when the carried-forward items (see `implementation/TODO.md`) are resolved or a concrete need emerges.
+Milestone 7 as scoped above. Propose Milestone 8 scope changes only through the roadmap review at the close of Milestone 7.
 
 ## Prioritization Rules
 

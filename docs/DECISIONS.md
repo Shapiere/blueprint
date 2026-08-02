@@ -127,3 +127,27 @@ Decision log. Every entry uses the template below. This file owns the history of
 - Decision: Extend `docs/SETUP.md` with an Operations section, a Troubleshooting table, a verified redacted `models.json` example, and a host path-resolution note. No new documents.
 - Alternatives: New `docs/OPERATIONS.md` — rejected: would require an ownership-matrix amendment (constitution change) for content that fits SETUP.md's charter ("what is installed and how to run/rebuild it"), and risks duplication.
 - Rationale: Depth without new structure; the ownership matrix stays untouched and the capture loop stays the single update path.
+
+### D15 — Platform architecture adopted (constitution v1.2)
+
+- Date: 2026-08-03
+- Context: Milestone 5.5 delivered the AI Engineering Platform architecture; Milestone 6 begins actual platform implementation.
+- Decision: Adopt `docs/ARCHITECTURE.md` as the governing architecture reference (layers, capability lifecycle, governance, integration architecture) and `capabilities/` as the platform asset tree with `capabilities/index.md` as the capability registry. Constitution amended to v1.2 (structure + ownership matrix).
+- Alternatives: Defer structure change until Wave 2 — rejected: the registry and asset homes are prerequisites for Wave 1 integration itself.
+- Rationale: Architecture before implementation; the registry is the single source of truth for capability status.
+
+### D16 — External skills: reference, don't vendor (license gate)
+
+- Date: 2026-08-03
+- Context: anthropics doc skills (docx/pdf/pptx/xlsx) are source-available/proprietary; this repository is public (D11). Placing the clone in `~/.pi/agent/skills/` accidentally auto-loaded all 17 anthropics skills (incident 2026-08-03).
+- Decision: The anthropics clone lives in `~/.pi/agent/vendor/anthropics`; only the four Wave 1 doc skills are registered via settings `skills`. External skill collections are referenced by path, never vendored into this repository, unless the license permits redistribution into a public repo and the skill is adapted.
+- Alternatives: Vendor the four skills — rejected: redistribution of source-available material into a public repository.
+- Rationale: License compliance and curated context (success criterion 4). Rules recorded in `capabilities/skills/NOTES.md`.
+
+### D17 — Wave 2 layer decisions recorded early
+
+- Date: 2026-08-03
+- Context: The architecture requires the subagent-layer and browser-server conflicts to be decided before both sides coexist; Milestone 6 records the decisions, Wave 2 executes them.
+- Decision: (a) Subagent layer — `pi-dynamic-workflows` wins the orchestration role; installed `pi-subagents` is retired when dynamic-workflows is integrated (Wave 2). (b) Browser server — playwright-mcp is the preferred E2E server per official token-economy guidance; the swap from chrome-devtools is evaluated during Wave 2 after a concrete E2E need is demonstrated. (c) Permission policy — full allow/ask/deny gates, bash policy, and external-directory guard are configured in Wave 2; Wave 1 keeps path protection only.
+- Alternatives: Integrate both subagent layers — rejected: duplication cost exceeds benefit (benchmark).
+- Rationale: Conflict resolution before coexistence; decisions recorded here, execution gated to Wave 2.

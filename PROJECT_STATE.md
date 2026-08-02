@@ -6,7 +6,7 @@ Current status snapshot. History lives in [CHANGELOG.md](CHANGELOG.md); this fil
 
 ## Current Milestone
 
-**Milestone 3 — Depth.** Status: **complete with minor improvements** (2026-08-02). Verdict: COMPLETE WITH MINOR IMPROVEMENTS (see completion report). Committed and pushed.
+**Milestone 6 — Wave 1 Capability Integration.** Status: **complete** (2026-08-03). Verdict: successful (see completion report). Committed and pushed.
 
 ## Completed
 
@@ -26,10 +26,14 @@ Current status snapshot. History lives in [CHANGELOG.md](CHANGELOG.md); this fil
 - Milestone 3 depth: `models.json` provider entry shape documented (redacted verified example).
 - Milestone 3 depth: candidate evaluations recorded — no setup additions adopted ([docs/DECISIONS.md](docs/DECISIONS.md) D13, D14).
 - Milestone 3 depth: capture loop exercised — M3 updates captured same-session.
+- Milestone 6: platform architecture adopted — constitution v1.2, `docs/ARCHITECTURE.md`, `capabilities/` tree with registry ([docs/DECISIONS.md](docs/DECISIONS.md) D15).
+- Milestone 6: Wave 1 integrated and validated — rpiv-todo, pi-permission-system (path protection), pi-plan-mode, pi-fff, sequential-thinking + context7 MCP, anthropics doc skills; all smoke tests PASS (see [capabilities/index.md](capabilities/index.md)).
+- Milestone 6: platform assets versioned — power-tools + prompt templates sourced from `capabilities/`.
+- Milestone 6: decisions recorded — license-driven skill referencing (D16), Wave 2 layer decisions (D17).
 
 ## In Flight
 
-Nothing. No next milestone is defined; the repository is in maintenance mode until a Milestone 4 proposal is recorded in [ROADMAP.md](ROADMAP.md).
+Nothing. Milestone 7 (Wave 2 — full permission gates, methodology port, review consolidation, dynamic-workflows core) is scoped in [ROADMAP.md](ROADMAP.md).
 
 ## Blocked
 
@@ -39,7 +43,7 @@ Nothing.
 
 1. Whether other machines or agents consume this repository — cannot be determined from repository evidence; requires user input; **Pending**.
 
-(Resolved during Milestone 2: remote visibility is **public** — recorded in `docs/DECISIONS.md` D11.)
+(Resolved during Milestone 2: remote visibility is **public** — `docs/DECISIONS.md` D11. Resolved during Milestone 6: subagent-layer and browser-server decisions recorded — D17.)
 
 ## Known Gaps
 
