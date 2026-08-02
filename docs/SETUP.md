@@ -12,6 +12,7 @@ Everything required to rebuild this environment from scratch, and the current st
 
 - Windows 11 Pro (build 10.0.26200), x64, terminal: Warp.
 - Git for Windows installed; bash at `C:\Program Files\Git\bin\bash.exe` — **required by Pi** (checked locations: settings `shellPath`, Git Bash, `bash` on PATH).
+- Path note (verified 2026-08-02): short paths resolve differently for this machine's shell tools versus real binaries — `/g/pisetup` maps to `G:\pisetup` for the former but to `G:/g/pisetup` for git. Use explicit drive-letter paths with real binaries (`git -C "G:/pisetup" ...`).
 
 ## Prerequisites
 
@@ -29,7 +30,29 @@ Everything required to rebuild this environment from scratch, and the current st
 - Provider id: **`9router`** — a local router process (see [9router Service](#9router-service)).
 - Endpoint: `http://127.0.0.1:20128/v1` (must be running; verified responding 2026-08-02).
 - API: `openai-completions`. Model catalog is fetched from the router at runtime (~200 models).
-- `models.json` defines the provider entry: `baseUrl`, `api`, placeholder `apiKey`, `compat` (`thinkingFormat`) and model overrides.
+- `models.json` defines the provider entry: `baseUrl`, `api`, placeholder `apiKey`, `compat` (`thinkingFormat`) and model overrides. Verified shape (2026-08-02), values are placeholders — no secrets:
+
+```json
+{
+  "providers": {
+    "9router": {
+      "baseUrl": "http://127.0.0.1:20128/v1",
+      "api": "openai-completions",
+      "apiKey": "sk_9router",
+      "models": [
+        {
+          "id": "oc/deepseek-v4-flash-free(max)",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 1000000,
+          "maxTokens": 128000,
+          "compat": { "thinkingFormat": "deepseek" }
+        }
+      ]
+    }
+  }
+}
+```
 - Default model: `oc/deepseek-v4-flash-free(max)`.
 - Notable catalog entries: `cc/claude-sonnet-5`, `cc/claude-opus-5`, `cx/gpt-5.6-sol`, `ag/gemini-3.6-flash-*`, `oc/deepseek-v4-flash-free(max)`.
 - Model switching: `Ctrl+P` cycle, `/model`, or `--model provider/id`.
@@ -100,12 +123,37 @@ Uninstall: `pi remove <source>`.
 - Also read automatically: `.mcp.json`, `~/.agents/mcp.json`, host configs via `/mcp setup`.
 - Manage: `/mcp` in Pi; servers start lazily on first tool use.
 
+## Operations
+
+Daily start sequence:
+
+1. Start the 9router service — run `9router` in a terminal (see [9router Service](#9router-service)).
+2. Start Pi — run `pi` in the project directory.
+
+Health check: `curl http://127.0.0.1:20128/v1/models` returns the model catalog (the placeholder bearer `sk_9router` is accepted).
+
+Updates:
+
+- Pi: `pi update` (or reinstall: `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`)
+- Packages: `pi update --extensions`
+- 9router: `npm install -g 9router`; verify with `npm ls -g 9router`
+
+Extensions hot-reload with `/reload` inside Pi. Sessions persist under `~/.pi/agent/sessions/`.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Provider is not configured: 9router` | `auth.json` credential missing the `type` field (incident 2026-08-02) | Ensure the stored shape matches the Auth section, then restart Pi |
+| Router unreachable (models list empty or connection refused) | 9router service not running | Check the listener: `netstat -ano \| grep :20128`; start `9router` |
+| Model missing from `/model` | Entry absent from `models.json` or the router catalog changed | Add/refresh the provider entry (see Provider section) and restart Pi |
+
 ## Restore Procedure (cold install — PARTIALLY VALIDATED 2026-08-02)
 
 1. Install Node.js (>= 22.19) and Git for Windows.
 2. `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`
 3. Start the 9router service: run `9router` in a terminal (see [9router Service](#9router-service)).
-4. Write `~/.pi/agent/models.json` per the Provider section (schema: `docs/DECISIONS.md` D3; exact file: on the source machine). — **verified via fresh-config simulation 2026-08-02**
+4. Write `~/.pi/agent/models.json` per the Provider section (example shape there; the source machine's file contains the full ~200-model catalog). — **verified via fresh-config simulation 2026-08-02**
 5. Run `pi`, authenticate via `/login` for provider `9router`. — **stored-credential path verified via fresh-config simulation 2026-08-02** (`FRESH_OK`); interactive `/login` UI flow untested
 6. Apply `settings.json` keys from the Settings table.
 7. `pi install` the five packages.

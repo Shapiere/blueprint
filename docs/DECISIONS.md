@@ -110,3 +110,20 @@ Decision log. Every entry uses the template below. This file owns the history of
 - Alternatives: (a) Destructive reinstall of pi on this machine — rejected: risks the working setup without adding evidence; (b) declare the criterion unvalidated without attempting — rejected: real evidence was obtainable.
 - Result: Simulation passed (`FRESH_OK`, 2026-08-02): restore steps 4–5 verified end-to-end, including that the local router accepts the placeholder key. Steps 1–3 and 6–9 verified by checklist. Full fresh-machine execution and the interactive `/login` flow remain carried forward in `implementation/TODO.md`.
 - Rationale: Honest partial validation with documented evidence beats either fabrication or blanket deferral.
+
+### D13 — Milestone 3 candidate evaluations: no setup additions adopted
+
+- Date: 2026-08-02
+- Context: ROADMAP Milestone 3 candidates — additional packages/extensions, more MCP servers, new templates/skills — each require justification before adoption. No concrete workflow need was demonstrated for any of them.
+- Decision: Evaluate each candidate against success criteria 4 (context economy) and 5 (secrets) and the demonstrated workflow; adopt none.
+- Evaluations: (1) Packages/extensions — the installed set already covers identified needs (web access, subagents, MCP adapter, LSP feedback); remaining gallery candidates (todo overlays, security-audit suites, background-task managers, large skill packs) either duplicate capability, add credential burden, or inflate always-loaded context. (2) MCP servers — `chrome-devtools` covers browser workflows; filesystem/github/playwright candidates duplicate built-in tools or require new credentials. (3) Templates/skills — the existing three (`commit`, `review`, `explain`) cover the documented workflows; no real-usage gap was demonstrated.
+- Alternatives: Adopt the most popular candidates (e.g., `rpiv-todo`, `piolium`) — rejected: no demonstrated need; contradicts practicality and criterion 4.
+- Rationale: "Reject complexity without measurable value." The milestone's depth work is the evaluation itself, recorded here for future sessions to reference instead of re-running.
+
+### D14 — Depth documentation folded into SETUP.md (no new files)
+
+- Date: 2026-08-02
+- Context: Milestone 3 depth analysis found operational and recovery knowledge undocumented: daily start sequence, health check, update commands, the `auth.json` `type`-field incident recovery, and a weak restore step 4 ("exact file: on the source machine").
+- Decision: Extend `docs/SETUP.md` with an Operations section, a Troubleshooting table, a verified redacted `models.json` example, and a host path-resolution note. No new documents.
+- Alternatives: New `docs/OPERATIONS.md` — rejected: would require an ownership-matrix amendment (constitution change) for content that fits SETUP.md's charter ("what is installed and how to run/rebuild it"), and risks duplication.
+- Rationale: Depth without new structure; the ownership matrix stays untouched and the capture loop stays the single update path.

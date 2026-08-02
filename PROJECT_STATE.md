@@ -6,7 +6,7 @@ Current status snapshot. History lives in [CHANGELOG.md](CHANGELOG.md); this fil
 
 ## Current Milestone
 
-**Milestone 2 — Validation.** Status: **complete with remaining validation items** (2026-08-02). Verdict: COMPLETE WITH REMAINING VALIDATION ITEMS (see completion report). Committed and pushed.
+**Milestone 3 — Depth.** Status: **complete with minor improvements** (2026-08-02). Verdict: COMPLETE WITH MINOR IMPROVEMENTS (see completion report). Committed and pushed.
 
 ## Completed
 
@@ -22,10 +22,14 @@ Current status snapshot. History lives in [CHANGELOG.md](CHANGELOG.md); this fil
 - Milestone 2 validation: remote repository visibility determined — **public** (GitHub API, unauthenticated access).
 - Milestone 2 validation: success criteria re-evaluated with evidence (C1 partially validated; C2/C3/C5 re-validated).
 - Milestone 2 validation: capture loop exercised — validation findings captured same-session in SETUP.md, CHANGELOG.md, DECISIONS.md.
+- Milestone 3 depth: operations and troubleshooting sections added to [docs/SETUP.md](docs/SETUP.md) (start sequence, health check, updates, auth-shape incident recovery).
+- Milestone 3 depth: `models.json` provider entry shape documented (redacted verified example).
+- Milestone 3 depth: candidate evaluations recorded — no setup additions adopted ([docs/DECISIONS.md](docs/DECISIONS.md) D13, D14).
+- Milestone 3 depth: capture loop exercised — M3 updates captured same-session.
 
 ## In Flight
 
-Nothing. Milestone 3 (Depth) is scoped in [ROADMAP.md](ROADMAP.md); it begins after the remaining validation items are resolved or explicitly deferred with a recorded reason.
+Nothing. No next milestone is defined; the repository is in maintenance mode until a Milestone 4 proposal is recorded in [ROADMAP.md](ROADMAP.md).
 
 ## Blocked
 

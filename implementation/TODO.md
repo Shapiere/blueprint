@@ -21,7 +21,7 @@ Concrete actionable tasks. Priorities and milestone context live in [ROADMAP.md]
 
 ## Backlog (candidates, require justification before adoption)
 
-- [ ] Evaluate additional Pi packages/extensions against success criteria 4 (context economy) and 5 (secrets).
-- [ ] Add MCP servers only if a concrete workflow need is identified.
-- [ ] Add prompt templates or skills derived from real usage.
-- [ ] Reconsider a config-sync script only if `docs/SETUP.md` drift becomes measurable (decision D3 allows revisiting).
+- [x] Evaluate additional Pi packages/extensions against success criteria 4 (context economy) and 5 (secrets) — done 2026-08-02: none adopted (`docs/DECISIONS.md` D13).
+- [x] Add MCP servers only if a concrete workflow need is identified — evaluated 2026-08-02: no need demonstrated; none adopted (D13).
+- [x] Add prompt templates or skills derived from real usage — evaluated 2026-08-02: existing templates cover documented workflows; none adopted (D13).
+- [ ] Reconsider a config-sync script only if `docs/SETUP.md` drift becomes measurable (decision D3 allows revisiting) — condition not met; remains open.

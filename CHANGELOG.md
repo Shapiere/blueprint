@@ -23,6 +23,10 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `docs`: determine remote repository visibility — public (GitHub API)
 - `docs`: re-evaluate success criteria with evidence (C1 partially validated; C2/C3/C5 re-validated)
 - `docs`: close milestone 2 — validation (verdict: complete with remaining validation items)
+- `docs`: add operations and troubleshooting sections to setup inventory (start sequence, health check, updates, auth-shape incident recovery)
+- `docs`: document `models.json` provider entry shape (redacted verified example)
+- `docs`: record milestone 3 candidate evaluations — no setup additions adopted ([docs/DECISIONS.md](docs/DECISIONS.md) D13, D14)
+- `docs`: close milestone 3 — depth (verdict: complete with minor improvements)
 
 ## Notes
 

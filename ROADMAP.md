@@ -21,7 +21,7 @@ Candidate items:
 
 Additional Milestone 2 tasks in `implementation/TODO.md` (9router service startup method, fresh-machine `/login` flow) derive from `docs/SETUP.md` Pending items.
 
-## Milestone 3 — Depth (candidate, not started)
+## Milestone 3 — Depth (complete — see [PROJECT_STATE.md](PROJECT_STATE.md))
 
 Purpose: deepen the setup where it measurably helps.
 
@@ -30,6 +30,12 @@ Candidate items (each requires justification before adoption):
 1. Additional Pi packages or extensions from the catalog.
 2. More MCP servers.
 3. New prompt templates or skills derived from real use.
+
+Outcome: all three candidates evaluated 2026-08-02; none adopted (see `docs/DECISIONS.md` D13). Depth delivered as operations/troubleshooting knowledge in `docs/SETUP.md` (D14).
+
+## Next Milestone
+
+None defined. Propose a Milestone 4 scope here only when the carried-forward items (see `implementation/TODO.md`) are resolved or a concrete need emerges.
 
 ## Prioritization Rules
 

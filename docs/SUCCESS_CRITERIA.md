@@ -16,19 +16,19 @@ A fresh Windows machine with only the documented prerequisites can rebuild the P
 
 Any setup change (package, skill, extension, template, MCP server, setting) is reflected in `docs/SETUP.md` and `CHANGELOG.md` within the same working session it was made.
 
-- Status: **validated at Milestone 2** (2026-08-02): the Milestone 2 validation updates (SETUP.md, CHANGELOG.md, DECISIONS.md) were captured in the same session as the work they describe.
+- Status: **validated at Milestone 2** (2026-08-02): the Milestone 2 validation updates (SETUP.md, CHANGELOG.md, DECISIONS.md) were captured in the same session as the work they describe. **Re-validated at Milestone 3** (2026-08-02): M3 updates captured same-session.
 
 ### 3. Single-Source Rule
 
 No fact is restated in more than one file; the ownership matrix in the constitution is the authoritative map and the repository structure matches it.
 
-- Status: **re-validated at Milestone 2** (2026-08-02): automated link/path/orphan scan clean; ownership matrix respected.
+- Status: **re-validated at Milestone 2** (2026-08-02): automated link/path/orphan scan clean; ownership matrix respected. **Re-validated at Milestone 3** (2026-08-02): scan clean.
 
 ### 4. Context Economy
 
 The assistant's always-loaded context stays lean: tools and skills load on demand (progressive disclosure) rather than all being injected. Proxy-style integrations (e.g., MCP adapter) are preferred over hundreds of direct tool definitions.
 
-- Status: **baseline unchanged** (2026-08-02): no tool or integration changes during Milestone 2; the Milestone 1 baseline stands.
+- Status: **baseline unchanged** (2026-08-02): no tool or integration changes during Milestone 2; the Milestone 1 baseline stands. **Re-confirmed at Milestone 3** (2026-08-02): candidate additions were evaluated and rejected on context-economy and secrets grounds (`docs/DECISIONS.md` D13).
 
 ### 5. Zero Secrets in History
 
