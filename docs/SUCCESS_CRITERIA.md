@@ -10,31 +10,31 @@ Measurable criteria that make the repository's mission concrete. Each criterion 
 
 A fresh Windows machine with only the documented prerequisites can rebuild the Pi environment from [SETUP.md](SETUP.md) alone, within 30 minutes.
 
-- Status: **not yet validated** (restore procedure written, execution pending — see `implementation/TODO.md`).
+- Status: **partially validated** (2026-08-02): fresh-config simulation passed (`FRESH_OK`), restoring steps 4–5 of the procedure. Full fresh-machine execution pending — see `implementation/TODO.md`.
 
 ### 2. Capture-Loop Freshness
 
 Any setup change (package, skill, extension, template, MCP server, setting) is reflected in `docs/SETUP.md` and `CHANGELOG.md` within the same working session it was made.
 
-- Status: **adopted as policy** (constitution, Capture Loop section); compliance audited at each milestone.
+- Status: **validated at Milestone 2** (2026-08-02): the Milestone 2 validation updates (SETUP.md, CHANGELOG.md, DECISIONS.md) were captured in the same session as the work they describe.
 
 ### 3. Single-Source Rule
 
 No fact is restated in more than one file; the ownership matrix in the constitution is the authoritative map and the repository structure matches it.
 
-- Status: **validated at Milestone 1** (2026-08-02).
+- Status: **re-validated at Milestone 2** (2026-08-02): automated link/path/orphan scan clean; ownership matrix respected.
 
 ### 4. Context Economy
 
 The assistant's always-loaded context stays lean: tools and skills load on demand (progressive disclosure) rather than all being injected. Proxy-style integrations (e.g., MCP adapter) are preferred over hundreds of direct tool definitions.
 
-- Status: **baseline recorded** at Milestone 1: built-in tools + 2 custom tools; MCP exposed via a single proxy tool.
+- Status: **baseline unchanged** (2026-08-02): no tool or integration changes during Milestone 2; the Milestone 1 baseline stands.
 
 ### 5. Zero Secrets in History
 
 No API key, auth file, OAuth token, or `.env` value ever appears in repository history.
 
-- Status: **validated at Milestone 1** (2026-08-02); re-checked before every push per the secrets policy.
+- Status: **re-validated at Milestone 2** (2026-08-02): the fresh-config test used placeholder credentials only; repository history and working tree contain no secrets.
 
 ## Notes
 

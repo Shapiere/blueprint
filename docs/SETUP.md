@@ -4,7 +4,7 @@
 
 Everything required to rebuild this environment from scratch, and the current state of the Pi installation. Unknown information is marked **Pending** — never invent configuration.
 
-**Last verified: 2026-08-02** (refresh via the capture loop on every setup change).
+**Last verified: 2026-08-02** (re-verified during Milestone 2 validation; refresh via the capture loop on every setup change).
 
 ---
 
@@ -26,7 +26,7 @@ Everything required to rebuild this environment from scratch, and the current st
 
 ## Provider and Models
 
-- Provider id: **`9router`** — a local router process.
+- Provider id: **`9router`** — a local router process (see [9router Service](#9router-service)).
 - Endpoint: `http://127.0.0.1:20128/v1` (must be running; verified responding 2026-08-02).
 - API: `openai-completions`. Model catalog is fetched from the router at runtime (~200 models).
 - `models.json` defines the provider entry: `baseUrl`, `api`, placeholder `apiKey`, `compat` (`thinkingFormat`) and model overrides.
@@ -34,12 +34,18 @@ Everything required to rebuild this environment from scratch, and the current st
 - Notable catalog entries: `cc/claude-sonnet-5`, `cc/claude-opus-5`, `cx/gpt-5.6-sol`, `ag/gemini-3.6-flash-*`, `oc/deepseek-v4-flash-free(max)`.
 - Model switching: `Ctrl+P` cycle, `/model`, or `--model provider/id`.
 
+## 9router Service
+
+- Package: `9router@0.5.45` (npm global; binary `9router`). Install/update: `npm install -g 9router`.
+- Start: run `9router` in a terminal. The CLI spawns `node app/custom-server.js` and waits for the port (default `127.0.0.1:20128`; `-l` shows server logs, `-p <port>` overrides).
+- Verified 2026-08-02: process tree `powershell -> node cli.js -> node app/custom-server.js`; listener on `0.0.0.0:20128`. No autostart registration found (Run keys, scheduled tasks, services) — the service is started manually and must be running before Pi is used.
+
 ## Auth
 
 - The 9router key lives in `~/.pi/agent/auth.json` — **never committed** (see Secrets Policy).
 - Stored shape: `{"9router": {"type": "api_key", "key": "<secret>"}}` — the `type` field is required.
 - Re-entry on a fresh machine: `pi` then `/login` (provider 9router), or write `auth.json` with the shape above.
-- Note: the local router accepted placeholder bearer `sk_9router` for `GET /v1/models` (verified 2026-08-02); upstream credential behavior is **Pending** (untested on a fresh machine).
+- Note: verified 2026-08-02 (fresh-config simulation): the local router accepts the placeholder bearer `sk_9router` for `GET /v1/models` and for chat completions on the free model; it does not validate the Pi-supplied key. The real key remains the documented re-entry path. Fresh-machine interactive `/login` flow remains **Pending**.
 
 ## Settings (`~/.pi/agent/settings.json`)
 
@@ -94,20 +100,21 @@ Uninstall: `pi remove <source>`.
 - Also read automatically: `.mcp.json`, `~/.agents/mcp.json`, host configs via `/mcp setup`.
 - Manage: `/mcp` in Pi; servers start lazily on first tool use.
 
-## Restore Procedure (cold install — NOT YET VALIDATED)
+## Restore Procedure (cold install — PARTIALLY VALIDATED 2026-08-02)
 
 1. Install Node.js (>= 22.19) and Git for Windows.
 2. `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`
-3. Start the local 9router service on `127.0.0.1:20128` (startup method: **Pending**).
-4. Write `~/.pi/agent/models.json` per the Provider section (schema: constitution-referenced `docs/DECISIONS.md` D3; exact file: on the source machine).
-5. Run `pi`, authenticate via `/login` for provider `9router`.
+3. Start the 9router service: run `9router` in a terminal (see [9router Service](#9router-service)).
+4. Write `~/.pi/agent/models.json` per the Provider section (schema: `docs/DECISIONS.md` D3; exact file: on the source machine). — **verified via fresh-config simulation 2026-08-02**
+5. Run `pi`, authenticate via `/login` for provider `9router`. — **stored-credential path verified via fresh-config simulation 2026-08-02** (`FRESH_OK`); interactive `/login` UI flow untested
 6. Apply `settings.json` keys from the Settings table.
 7. `pi install` the five packages.
 8. Copy `extensions/power-tools.ts`, `prompts/*.md`, and skills registration to `~/.pi/agent/`.
 9. Write `~/.config/mcp/mcp.json` (chrome-devtools).
 
+Validation status: steps 4–5 verified via fresh-config simulation (temp agent dir, documented files, placeholder auth; output `FRESH_OK`, 2026-08-02). Steps 1–3 and 6–9 verified by checklist against the live machine. Full fresh-machine execution remains pending (see `implementation/TODO.md`).
+
 ## Pending
 
-- Cold-install procedure unexecuted (validation item, Milestone 2).
-- 9router service startup method undocumented.
-- Fresh-machine `/login` flow untested.
+- Full cold-install on a fresh machine (steps 1–3, 6–9) not yet executed; partial validation complete (2026-08-02).
+- Interactive `/login` flow on a fresh machine untested (stored-credential path verified via simulation).

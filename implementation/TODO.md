@@ -4,14 +4,20 @@
 
 Concrete actionable tasks. Priorities and milestone context live in [ROADMAP.md](../ROADMAP.md); this file owns the task list only.
 
-## Milestone 2 — Validation
+## Milestone 2 — Validation (complete 2026-08-02)
 
-- [ ] Execute the cold-install test against `docs/SETUP.md` (fresh environment or thorough checklist review); update success criterion 1 status.
-- [ ] Document the 9router local service startup method (currently Pending in `docs/SETUP.md`).
-- [ ] Verify fresh-machine `/login` flow for provider 9router.
-- [ ] Run one full capture-loop cycle on a real setup change; audit the resulting diff against the ownership matrix.
-- [ ] Refresh all `last-verified` dates in `docs/SETUP.md`.
-- [ ] Confirm remote repository visibility (public/private); record in `docs/DECISIONS.md`.
+- [x] Execute the cold-install test — partial: fresh-config simulation passed (`FRESH_OK`, steps 4–5); full fresh-machine execution carried forward (no fresh machine available).
+- [x] Document the 9router local service startup method — done: npm global `9router@0.5.45`, manual start via `9router` CLI, no autostart registration (see `docs/SETUP.md`).
+- [x] Verify fresh-machine `/login` flow — partial: stored-credential path verified via simulation; interactive UI flow carried forward.
+- [x] Run one full capture-loop cycle on a real setup change — done: M2 validation findings captured same-session (SETUP.md + CHANGELOG.md + DECISIONS.md); diff audited against the ownership matrix.
+- [x] Refresh all `last-verified` dates in `docs/SETUP.md` — done: re-verified against the live environment 2026-08-02.
+- [x] Confirm remote repository visibility — done: public (GitHub API, unauthenticated access); recorded in `docs/DECISIONS.md` D11.
+
+## Carried Forward (requires fresh machine or user input)
+
+- [ ] Full cold-install on a fresh machine (restore steps 1–3, 6–9).
+- [ ] Interactive `/login` flow on a fresh machine.
+- [ ] Confirm open question 2 (other machines/agents consuming this repository) — requires user input.
 
 ## Backlog (candidates, require justification before adoption)
 

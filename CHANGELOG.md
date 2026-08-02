@@ -18,6 +18,11 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `docs`: add vision, design principles, success criteria, roadmap, contributing guide
 - `docs`: apply milestone 1 audit revisions (broken-link fix, map deduplication, status pointers, ownership leaks, task traceability)
 - `docs`: close milestone 1 (audit verdict: approve with minor revisions; revisions applied and verified)
+- `docs`: document 9router service startup method (npm global `9router@0.5.45`, manual start via `9router` CLI; no autostart registration — verified 2026-08-02)
+- `docs`: validate restore procedure steps 4–5 via fresh-config simulation (`FRESH_OK`, 2026-08-02)
+- `docs`: determine remote repository visibility — public (GitHub API)
+- `docs`: re-evaluate success criteria with evidence (C1 partially validated; C2/C3/C5 re-validated)
+- `docs`: close milestone 2 — validation (verdict: complete with remaining validation items)
 
 ## Notes
 

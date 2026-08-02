@@ -93,3 +93,20 @@ Decision log. Every entry uses the template below. This file owns the history of
 - Decision: The audit is not copied into the repository; its dispositions are recorded here (D1–D9) and the audit location is noted in `AI_CONTEXT.md`.
 - Alternatives: Copy the full audit in — rejected: adds a large artifact whose conclusions are fully captured in the decision log; the constitution forbids documentation without clear value.
 - Rationale: The decisions are the durable part; the analysis is archived on disk for reference.
+
+### D11 — Remote repository visibility determined: public
+
+- Date: 2026-08-02
+- Context: Milestone 2 open question; the secrets policy's strictness depends on who can read the repository.
+- Decision: Recorded here as resolved. The repository is **public**: an unauthenticated GitHub API request (`GET https://api.github.com/repos/Shapiere/blueprint`) returned repository metadata (a private repo would return `Not Found`).
+- Alternatives: Assume visibility — rejected: verification was one request away.
+- Rationale: Public visibility makes the secrets policy mandatory, not advisory; it remains in force unchanged.
+
+### D12 — Cold-install validation approach (simulation over fabrication)
+
+- Date: 2026-08-02
+- Context: Milestone 2 requires executing the cold-install procedure, but no fresh machine is available. Results must never be fabricated.
+- Decision: Perform the strongest practical validation: (a) a fresh-config simulation — a temporary agent directory containing the documented `models.json`, minimal `settings.json`, and the documented placeholder auth (`sk_9router`), run with `PI_CODING_AGENT_DIR`; (b) a checklist review of every remaining restore step against the live machine.
+- Alternatives: (a) Destructive reinstall of pi on this machine — rejected: risks the working setup without adding evidence; (b) declare the criterion unvalidated without attempting — rejected: real evidence was obtainable.
+- Result: Simulation passed (`FRESH_OK`, 2026-08-02): restore steps 4–5 verified end-to-end, including that the local router accepts the placeholder key. Steps 1–3 and 6–9 verified by checklist. Full fresh-machine execution and the interactive `/login` flow remain carried forward in `implementation/TODO.md`.
+- Rationale: Honest partial validation with documented evidence beats either fabrication or blanket deferral.

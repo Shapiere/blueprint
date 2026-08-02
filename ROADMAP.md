@@ -8,7 +8,7 @@ Future milestones and priorities. Current state lives in [PROJECT_STATE.md](PROJ
 
 Repository bootstrap per Bootstrap Specification v1.1.
 
-## Milestone 2 — Validation (candidate, not started)
+## Milestone 2 — Validation (complete with remaining items — see [PROJECT_STATE.md](PROJECT_STATE.md))
 
 Purpose: prove the foundation works before expanding it.
 
