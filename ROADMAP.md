@@ -4,7 +4,7 @@
 
 Future milestones and priorities. Current state lives in [PROJECT_STATE.md](PROJECT_STATE.md); concrete tasks live in [implementation/TODO.md](implementation/TODO.md).
 
-## Milestone 1 — Foundation (complete, 2026-08-02)
+## Milestone 1 — Foundation (closed — see [PROJECT_STATE.md](PROJECT_STATE.md))
 
 Repository bootstrap per Bootstrap Specification v1.1.
 
@@ -18,6 +18,8 @@ Candidate items:
 2. Run one full capture-loop cycle on a real setup change.
 3. Refresh `last-verified` dates in `docs/SETUP.md`.
 4. Resolve open questions (remote visibility, single-user vs shared).
+
+Additional Milestone 2 tasks in `implementation/TODO.md` (9router service startup method, fresh-machine `/login` flow) derive from `docs/SETUP.md` Pending items.
 
 ## Milestone 3 — Depth (candidate, not started)
 

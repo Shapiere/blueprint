@@ -6,7 +6,7 @@ Current status snapshot. History lives in [CHANGELOG.md](CHANGELOG.md); this fil
 
 ## Current Milestone
 
-**Milestone 1 — Foundation.** Status: complete (2026-08-02), committed and pushed.
+**Milestone 1 — Foundation.** Status: **closed** (2026-08-02). Audit verdict: APPROVE WITH MINOR REVISIONS; all revisions applied and verified. Committed and pushed.
 
 ## Completed
 
@@ -16,10 +16,11 @@ Current status snapshot. History lives in [CHANGELOG.md](CHANGELOG.md); this fil
 - Secrets policy and `.gitignore` in place.
 - Vision, design principles, success criteria, decision log, roadmap, contributing guide.
 - Decision log records all audit dispositions.
+- Audit revisions applied (broken link fix, map deduplication, status pointers, ownership leaks, task traceability).
 
 ## In Flight
 
-Nothing. Milestone 2 must not begin until a future session decides its scope (see [ROADMAP.md](ROADMAP.md)).
+Nothing. Milestone 2 (Validation) is scoped in [ROADMAP.md](ROADMAP.md) and begins in the next session.
 
 ## Blocked
 

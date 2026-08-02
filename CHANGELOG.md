@@ -16,6 +16,8 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `docs`: add secrets policy and `.gitignore` (audit C2)
 - `docs`: record audit dispositions ([docs/DECISIONS.md](docs/DECISIONS.md))
 - `docs`: add vision, design principles, success criteria, roadmap, contributing guide
+- `docs`: apply milestone 1 audit revisions (broken-link fix, map deduplication, status pointers, ownership leaks, task traceability)
+- `docs`: close milestone 1 (audit verdict: approve with minor revisions; revisions applied and verified)
 
 ## Notes
 

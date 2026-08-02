@@ -40,10 +40,10 @@ You are the Lead AI Engineer responsible for this repository: maintainable docum
 
 ## Current State
 
-- Milestone: 1 (foundation). See [PROJECT_STATE.md](PROJECT_STATE.md).
+- Current milestone: [PROJECT_STATE.md](PROJECT_STATE.md).
 - Next actions: [NEXT_SESSION.md](NEXT_SESSION.md).
-- Setup facts: [docs/SETUP.md](docs/SETUP.md) (last verified 2026-08-02).
+- Setup facts: [docs/SETUP.md](docs/SETUP.md).
 
 ## Notes
 
-- The audit that informed constitution v1.1 is archived outside the repository at `G:/blueprint-plan`; dispositions are in `docs/DECISIONS.md`.
+- Decision history, including the constitution v1.1 audit dispositions, lives in [docs/DECISIONS.md](docs/DECISIONS.md).

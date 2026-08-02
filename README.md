@@ -15,21 +15,7 @@ It is a documentation-first engineering blueprint. It is not a codebase and not 
 
 ## Repository Map
 
-| Path | Responsibility |
-|---|---|
-| `AI_CONTEXT.md` | Agent onboarding: role, rules, pointers |
-| `CONTRIBUTING.md` | How to change this repository safely |
-| `CHANGELOG.md` | Chronological log of repository and setup changes |
-| `PROJECT_STATE.md` | Current status snapshot |
-| `ROADMAP.md` | Future milestones and priorities |
-| `NEXT_SESSION.md` | Handoff instructions for the next session |
-| `docs/BOOTSTRAP_SPEC.md` | Constitution (bootstrap specification v1.1) |
-| `docs/VISION.md` | Long-term vision |
-| `docs/DESIGN_PRINCIPLES.md` | Principle elaboration |
-| `docs/SUCCESS_CRITERIA.md` | Measurable success criteria and status |
-| `docs/DECISIONS.md` | Decision log |
-| `docs/SETUP.md` | Setup inventory (rebuild instructions) |
-| `implementation/TODO.md` | Concrete actionable tasks |
+See [AI_CONTEXT.md](AI_CONTEXT.md) for the full map of documents and their responsibilities.
 
 ## Key Points
 
@@ -41,7 +27,6 @@ It is a documentation-first engineering blueprint. It is not a codebase and not 
 ## Notes
 
 - Initialized 2026-08-02 as Milestone 1 of Bootstrap Specification v1.1.
-- The audit that informed v1.1 lives at `G:/blueprint-plan` (outside this repository); its dispositions are recorded in `docs/DECISIONS.md`.
 
 ## Future Improvements
 

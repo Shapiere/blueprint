@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Elaboration of the principles stated compactly in the constitution ([docs/BOOTSTRAP_SPEC.md](docs/BOOTSTRAP_SPEC.md)). This file owns the "why" and the examples; the constitution owns the operating rules.
+Elaboration of the principles stated compactly in the constitution ([BOOTSTRAP_SPEC.md](BOOTSTRAP_SPEC.md)). This file owns the "why" and the examples; the constitution owns the operating rules.
 
 ## Think Before Writing
 

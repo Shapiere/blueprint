@@ -111,4 +111,3 @@ Uninstall: `pi remove <source>`.
 - Cold-install procedure unexecuted (validation item, Milestone 2).
 - 9router service startup method undocumented.
 - Fresh-machine `/login` flow untested.
-- Remote repository visibility (public/private) unknown.
