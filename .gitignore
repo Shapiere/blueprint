@@ -1,0 +1,19 @@
+# Secrets — never commit (see docs/BOOTSTRAP_SPEC.md Secrets Policy)
+auth.json
+oauth.json
+models.json
+.env
+.env.*
+*.pem
+*credential*
+
+# OS junk
+Thumbs.db
+.DS_Store
+
+# Editor-local
+.idea/
+.vscode/
+
+# Logs
+*.log
