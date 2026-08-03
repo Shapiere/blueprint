@@ -204,7 +204,7 @@ The first version is implemented as composed capabilities plus platform-owned ar
 
 1. Plan/implement → plan mode → todo overlay → TDD skill → verify.
 2. Debug → systematic-debugging skill → sequential-thinking for weak-model reasoning.
-3. Research → context7 (docs) → firecrawl (web) → /deep-research (orchestrated).
+3. Research → context7 (docs) → pi-web-access (web, once keyed) → /deep-research (orchestrated).
 4. Review (staged) → consolidated four-dimension review (`/review`).
 5. Architecture / repo analysis → repository-intelligence skill → `/review-architecture`.
 6. Audit / repository risk → /codebase-audit or piolium (risk-gated).

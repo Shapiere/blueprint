@@ -176,13 +176,14 @@ Decision log. Every entry uses the template below. This file owns the history of
 - Alternatives: Keep pi-subagents installed alongside dynamic-workflows — rejected: duplication without benefit.
 - Rationale: One workflow engine, one review methodology, minimal overlap — the Phase 3 consolidation principle.
 
-### D22 — Engineering Intelligence Layer v1 adopted (self-eval M8)
+### D24 — Intelligence layer self-evaluation (autonomous DECISIONS write)
 
 - Date: 2026-08-03
 - Context: First `/self-eval` run. The working tree contained the intelligence-layer v1 artifacts (five prompts + `repository-intelligence` skill, deployed to `~/.pi/agent/prompts/` 8/8 in sync) and an `ARCHITECTURE.md` Phase 6 edit claiming "implemented Milestone 8", but the capture loop was open: no registry rows, no CHANGELOG entry, no decision entry, `PROJECT_STATE.md` still "In Flight: Nothing".
-- Decision: (a) Adopt the intelligence-layer v1 artifacts as platform assets (registry rows + CHANGELOG entry to follow in the same session per the capture loop). (b) Adopt the self-eval recommendations: resolve the Milestone-8 numbering conflict (ARCHITECTURE.md calls this "M8" while ROADMAP defines M8 as Wave 3) in favor of ROADMAP's numbering; register or remove the unregistered `firecrawl` reference in orchestration rule 3.
+- Decision: (a) Adopt the intelligence-layer v1 artifacts as platform assets (registry rows + CHANGELOG entry follow in the same session per the capture loop). (b) Resolve the Milestone-8 numbering conflict (ARCHITECTURE.md calls this "M8" while ROADMAP defined M8 as Wave 3) in favor of ROADMAP's numbering; register or remove the unregistered `firecrawl` reference in orchestration rule 3.
 - Alternatives: (a) Leave the artifacts deployed but undocumented — rejected: silent deployment violates the capture loop and the registry single-source rule. (b) Renumber Wave 3 — rejected: ROADMAP owns milestone numbering; the architecture section is the newcomer.
 - Rationale: The repository's value is reflecting reality; the capture loop and registry are its enforcement mechanisms, and this evaluation surfaced their first live gap.
+- Resolution (2026-08-03, M8 close): both recommendations executed — ROADMAP now numbers the intelligence layer as Milestone 8 and Wave 3 as Milestone 9; orchestration rule 3 no longer references the unregistered `firecrawl` (see `docs/ARCHITECTURE.md`). This entry was written by the self-evaluation run itself, demonstrating the layer's assisted-governance behavior; it was renumbered to D24 on reconciliation.
 
 ### D21 — Pending validations completed
 
