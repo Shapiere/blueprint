@@ -16,19 +16,19 @@ A fresh Windows machine with only the documented prerequisites can rebuild the P
 
 Any setup change (package, skill, extension, template, MCP server, setting) is reflected in `docs/SETUP.md` and `CHANGELOG.md` within the same working session it was made.
 
-- Status: **validated at Milestone 2** (2026-08-02): the Milestone 2 validation updates (SETUP.md, CHANGELOG.md, DECISIONS.md) were captured in the same session as the work they describe. **Re-validated at Milestone 3** (2026-08-02): M3 updates captured same-session. **Re-validated at Milestone 6** (2026-08-03): Wave 1 integration captured same-session. **Re-validated at Milestone 7** (2026-08-03): Wave 2 captured same-session (registry + SETUP + CHANGELOG + DECISIONS D18–D21).
+- Status: **validated at Milestone 2** (2026-08-02). **Re-validated at Milestone 3** (2026-08-02). **Re-validated at Milestone 6** (2026-08-03): Wave 1. **Re-validated at Milestone 7** (2026-08-03): Wave 2. **Re-validated at Milestone 8** (2026-08-03): intelligence v1. **Re-validated at Milestone 9** (2026-08-03): intelligence v2 captured same-session.
 
 ### 3. Single-Source Rule
 
 No fact is restated in more than one file; the ownership matrix in the constitution is the authoritative map and the repository structure matches it.
 
-- Status: **re-validated at Milestone 2** (2026-08-02): automated link/path/orphan scan clean. **Re-validated at Milestone 3** (2026-08-02). **Re-validated at Milestone 6** (2026-08-03): scan clean; matrix extended. **Re-validated at Milestone 7** (2026-08-03): scan clean after Wave 2.
+- Status: **re-validated at Milestone 2** (2026-08-02). **Re-validated at Milestone 3** (2026-08-02). **Re-validated at Milestone 6** (2026-08-03). **Re-validated at Milestone 7** (2026-08-03). **Re-validated at Milestone 9** (2026-08-03): scan clean after Wave 3 + intelligence v2.
 
 ### 4. Context Economy
 
 The assistant's always-loaded context stays lean: tools and skills load on demand (progressive disclosure) rather than all being injected. Proxy-style integrations (e.g., MCP adapter) are preferred over hundreds of direct tool definitions.
 
-- Status: **baseline unchanged** (2026-08-02). **Re-confirmed at Milestone 3** (D13). **Measured at Milestone 6**: skill index 11→19. **Measured at Milestone 7**: 19→26. **Measured at Milestone 8** (2026-08-03): 26→27 (repository-intelligence skill); intelligence delivered as on-demand prompts — 8 templates, zero always-loaded context beyond the skill index entry.
+- Status: **baseline unchanged** (2026-08-02). **Measured at Milestone 6**: skill index 11→19. **Milestone 7**: 19→26. **Milestone 8**: 26→27; intelligence as on-demand prompts. **Milestone 9** (2026-08-03): 27 (no new skill registrations; downloads are zero — intelligence v2 delivered as prompts and one MCP server (memory), lazy-loaded; 5 MCP servers behind the single proxy tool.
 
 ### 5. Zero Secrets in History
 

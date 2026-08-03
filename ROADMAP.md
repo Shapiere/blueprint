@@ -33,13 +33,18 @@ Integrated and validated 2026-08-03: permission policy deepened (bash + external
 
 Engineering Intelligence Layer v1 established 2026-08-03: repository-intelligence skill, five intelligence prompt templates, orchestration rules, context strategy, self-evaluation framework (D22/D23); behaviorally validated (repo analysis, plan-next audit, decide analysis).
 
-## Milestone 9 — Wave 3 + Intelligence v2 (next)
+## Milestone 9 — Wave 3 + Intelligence v2 (complete — see [PROJECT_STATE.md](PROJECT_STATE.md))
+
+Completed 2026-08-03: memory MCP integrated and validated; repository-intelligence v2 modules; orchestration v2 rules; debug/perf/metrics/memory protocols; engineering memory strategy; metrics baseline (D25–D27). Deferred with triggers: GitHub MCP, piolium, pi-background-tasks, playwright gate (registry Notes).
+
+## Milestone 10 — Wave 4 Experimental + Production Hardening (next)
 
 Scope:
 
-1. Advance capabilities: piolium (sandboxed), GitHub MCP, memory MCP, background tasks; playwright swap only after a concrete E2E need (D23).
-2. Intelligence v2: close gaps — debugging integration, architecture review depth, performance profiling, prompt evals (each through the lifecycle); behavioral validation of `/self-eval` (pending after environment interruption); tutorial sessions for plan-mode/ask-user/simplify/pi-lens.
-3. Governance: refresh UNVERIFIED registry licenses; interactive validations; open question 2.
+1. Experimental (isolated until validated): pi-hashline-edit-pro (edit dialect), pi-lean-ctx (token savings), ast-grep codemod pattern.
+2. Production hardening: automated verification for the only code file (power-tools.ts) — type-check + tests; pre-commit secret scan (CI-less, script-based); registry license completion (pi-plan-mode).
+3. Conditional integrations when triggers fire: GitHub MCP (PAT), piolium (containerized host), playwright (E2E need), trailofbits/vercel subsets.
+4. Intelligence v3: debugging integration (debugger adapter), performance profiling capability, prompt evaluation, `/self-eval` behavioral completion.
 
 ## Next Milestone
 

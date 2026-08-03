@@ -6,7 +6,7 @@ Current status snapshot. History lives in [CHANGELOG.md](CHANGELOG.md); this fil
 
 ## Current Milestone
 
-**Milestone 8 — Engineering Intelligence Layer.** Status: **complete** (2026-08-03). Verdict: successful (see completion report). Committed and pushed.
+**Milestone 9 — Wave 3 + Intelligence v2.** Status: **complete** (2026-08-03). Verdict: successful (see completion report). Committed and pushed.
 
 ## Completed
 
@@ -32,10 +32,11 @@ Current status snapshot. History lives in [CHANGELOG.md](CHANGELOG.md); this fil
 - Milestone 6: decisions recorded — license-driven skill referencing (D16), Wave 2 layer decisions (D17).
 - Milestone 7: Wave 2 — permission policy deepened (bash + external-directory gates; `rm -rf` deny validated), dynamic-workflows core adopted + pi-subagents retired (D17/D20), superpowers methodology skills ported (TDD, systematic-debugging, plans), review workflow consolidated, rpiv-ask-user-question + pi-simplify loaded, frontend-design/skill-creator skills registered, pdf functional validation completed (pypdf), licenses verified (all MIT).
 - Milestone 8: Engineering Intelligence Layer v1 — repository-intelligence skill + five intelligence prompt templates + orchestrator rules ([docs/DECISIONS.md](docs/DECISIONS.md) D22/D23); behaviorally validated (repo analysis, plan-next audit, decide analysis).
+- Milestone 9: intelligence v2 — repository-intelligence v2 modules, orchestration v2 rules, debug/perf/metrics/memory templates; memory MCP integrated (validated); Wave 3 deferrals recorded with triggers (D25); metrics baseline (D26); memory strategy (D27).
 
 ## In Flight
 
-Nothing. Milestone 9 (Wave 3 + intelligence v2) is scoped in [ROADMAP.md](ROADMAP.md).
+Nothing. Milestone 10 (Wave 4 experimental + production hardening) is scoped in [ROADMAP.md](ROADMAP.md).
 
 ## Blocked
 

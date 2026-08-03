@@ -212,11 +212,17 @@ The first version is implemented as composed capabilities plus platform-owned ar
 
 **When a capability should NOT be used:** the task is smaller than the capability's cost (no /deep-research for a rename); the capability is unvalidated (`installed` status); the action is privileged and not permitted by policy; context cost exceeds the task's value (criterion C4).
 
+**Orchestration v2 rules (2026-08-03):** (a) redundancy detection — never load a second capability that duplicates a role already in the chain (one orchestration engine, one browser server, one background-task mechanism); (b) loading budget — prefer the chain with the fewest always-loaded capabilities; lazy/on-demand loading wins ties; (c) explainability — every selection states the rule that fired (implemented in `/workflow` v2); (d) coordination — parallel-friendly chains run independent stages concurrently (dynamic-workflows) only when results are order-independent; (e) ordering optimization — evidence-gathering stages precede decision stages; validation gates follow every mutating stage.
+
 **Context flow:** AGENTS.md (project) → repo (skills index, names only) → load bodies on demand → registry/decisions for platform state; never load whole repositories; bounded outputs (script-variable intermediates).
 
 **Self-evaluation framework (periodic):** run `/self-eval` at milestone close or when repository health indicators degrade; assess five dimensions — capability quality, workflow effectiveness, governance compliance, architecture compliance, repository health; record recommendations in `DECISIONS.md`.
 
-**Intelligence artifacts (platform-owned):** `capabilities/skills/repository-intelligence/` · `capabilities/prompts/{workflow,decide,plan-next,review-architecture,self-eval}.md`. Validation 2026-08-03: repository-intelligence, plan-next, decide behaviorally validated; workflow and review-architecture rules exercised by those runs; self-eval behavioral run pending (environment-interrupted) — see `capabilities/index.md` and D22.
+**Intelligence artifacts (platform-owned):** `capabilities/skills/repository-intelligence/` · `capabilities/prompts/{workflow,decide,plan-next,review-architecture,self-eval,debug,perf,metrics,memory}.md`. Validation 2026-08-03: repository-intelligence (v1+v2), plan-next, decide behaviorally validated; self-eval behavioral run pending (environment-interrupted, dimensions covered by plan-next audit); debug/perf/metrics/memory load-validated — see `capabilities/index.md` and D22.
+
+**Engineering Memory Strategy (v1, 2026-08-03):** layered — repository (permanent, primary: DECISIONS/registry/SETUP/CHANGELOG via the capture loop), project memory (`AGENTS.md` per working repo), session-scale scratch (memory MCP: transient facts, entities/relations/observations, never personal, never credentials). Promotion rule: facts become repository entries the same session they become decisions or validated results; the memory store is never the authoritative copy. Protocol: `/memory`.
+
+**Engineering Quality Metrics (v1, 2026-08-03):** eight metrics with explicit purposes — repository health (scan results, git cleanliness), capability maturity (active/total), validation coverage (validated/registered), governance compliance (DECISIONS currency), documentation completeness (structure conformance), architecture compliance (structure vs matrix), tech-debt trend (carried items + UNVERIFIED licenses), intelligence coverage (validated intelligence artifacts). Computed by `/metrics`; trends from CHANGELOG/TODO history. Metrics drive recommendations only when they signal action.
 
 ---
 

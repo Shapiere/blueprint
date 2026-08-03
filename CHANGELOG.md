@@ -43,6 +43,12 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `feat`: validate intelligence layer behaviorally — repository-intelligence (repo analysis), plan-next (state audit), decide (browser decision; D23)
 - `docs`: review browser decision with evidence — keep chrome-devtools; playwright stays gated (D23); license verified Apache-2.0
 - `docs`: close milestone 8 — Engineering Intelligence Layer (verdict: successful; see completion report)
+- `feat`: intelligence v2 — repository-intelligence v2 modules, orchestration v2 rules, debug/perf/metrics/memory protocol templates (D25/D27)
+- `feat`: integrate memory MCP server — validated (entity + observation via proxy; D25)
+- `docs`: record Wave 3 deferrals with triggers — GitHub MCP, piolium, pi-background-tasks, playwright gate (D25)
+- `docs`: record engineering metrics baseline — maturity 79%, validation coverage 89% (D26)
+- `docs`: adopt engineering memory strategy — repository primary, memory MCP as session scratch (D27)
+- `docs`: close milestone 9 — Wave 3 + Intelligence v2 (verdict: successful; see completion report)
 
 ## Notes
 

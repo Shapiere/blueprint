@@ -42,23 +42,31 @@ Concrete actionable tasks. Priorities and milestone context live in [ROADMAP.md]
 - [x] Intelligence templates — workflow, decide, plan-next, review-architecture, self-eval (deployed; decide + plan-next behaviorally validated).
 - [x] Browser decision review — keep chrome-devtools; playwright stays gated (D23); license verified Apache-2.0.
 
-## Carried Forward (requires interactive session or environment stability)
+## Milestone 9 — Wave 3 + Intelligence v2 (complete 2026-08-03)
 
-- [ ] `/self-eval` behavioral run — environment-interrupted 2026-08-03 (two attempts).
+- [x] memory MCP integrated — validated (entity + observation via proxy).
+- [x] Wave 3 deferrals recorded with triggers — GitHub MCP (PAT), piolium (container), pi-background-tasks (duplication), playwright (E2E gate) — D25.
+- [x] repository-intelligence v2 — dependency relationships, module boundaries, testing maturity, security checklist, hotspots, maintainability, refactoring modules; validated.
+- [x] Orchestration v2 — redundancy detection, loading budget, explainability, coordination, ordering rules.
+- [x] debug, perf, metrics, memory protocol templates — authored and deployed.
+- [x] Engineering memory strategy adopted (D27); metrics baseline recorded (D26).
+
+## Carried Forward (requires interactive session, environment stability, or user input)
+
+- [ ] `/self-eval` behavioral run — environment-interrupted (two attempts, M8–M9).
+- [ ] `/metrics` automated run — baseline computed directly (D26); template run pending.
 - [ ] Interactive validations: plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens (TUI session).
 - [ ] Full cold-install on a fresh machine (restore steps 1–3, 6–9).
 - [ ] Interactive `/login` flow on a fresh machine.
 - [ ] Confirm open question 2 (other machines/agents consuming this repository) — requires user input.
 - [ ] pi-web-access search — activate with an API key.
 
-## Milestone 9 — Wave 3 + Intelligence v2 (next)
+## Milestone 10 — Wave 4 Experimental + Production Hardening (next)
 
-- [ ] piolium (sandboxed security audits, lite/balanced).
-- [ ] GitHub MCP (PAT via env; PR/issue/code-search).
-- [ ] Memory MCP (knowledge-graph, keyless).
-- [ ] pi-background-tasks (bg_run family only).
-- [ ] Intelligence v2 gaps: debugging integration, architecture review depth, performance profiling, prompt evals.
-- [ ] Refresh remaining UNVERIFIED registry licenses.
+- [ ] Experimental (isolated): pi-hashline-edit-pro, pi-lean-ctx, ast-grep codemod pattern.
+- [ ] Production hardening: power-tools verification (type-check + tests); pre-commit secret scan; registry license completion (pi-plan-mode).
+- [ ] Conditional integrations when triggers fire: GitHub MCP (PAT), piolium (containerized host), playwright (E2E need), trailofbits/vercel subsets.
+- [ ] Intelligence v3: debugger integration, performance profiling, prompt evaluation, `/self-eval` completion.
 
 ## Backlog (candidates, require justification before adoption)
 

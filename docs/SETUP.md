@@ -129,7 +129,7 @@ Uninstall: `pi remove <source>`.
 - `commit.md` — conventional commit message from staged changes.
 - `review.md` — consolidated four-dimension review (Wave 2).
 - `explain.md` — deep-dive explanation of a file or symbol.
-- Intelligence layer (Wave 8): `workflow.md` (orchestrator rules), `decide.md` (decision engine), `plan-next.md` (planning), `review-architecture.md` (architecture review), `self-eval.md` (self-evaluation).
+- Intelligence layer (Milestone 8+9): `workflow.md` (orchestrator rules v2), `decide.md` (decision engine), `plan-next.md` (planning), `review-architecture.md` (architecture review), `self-eval.md` (self-evaluation), `debug.md` (debugging protocol), `perf.md` (performance protocol), `metrics.md` (metrics manifest), `memory.md` (engineering memory protocol).
 - Sources: `capabilities/prompts/` (deployment copies are synced from the repository).
 
 ## MCP
@@ -139,6 +139,7 @@ Uninstall: `pi remove <source>`.
   - `chrome-devtools` (`npx -y chrome-devtools-mcp@latest`) — validated 2026-08-03
   - `sequential-thinking` (`npx -y @modelcontextprotocol/server-sequential-thinking`) — validated 2026-08-03
   - `context7` (`npx -y @upstash/context7-mcp`) — validated 2026-08-03
+  - `memory` (`npx -y @modelcontextprotocol/server-memory`) — validated 2026-08-03 (entity + observation via proxy)
 - Also read automatically: `.mcp.json`, `~/.agents/mcp.json`, host configs via `/mcp setup`.
 - Manage: `/mcp` in Pi; servers start lazily on first tool use.
 - Server notes and config fragments: [chrome-devtools](../capabilities/mcp/chrome-devtools.md), [sequential-thinking](../capabilities/mcp/sequential-thinking.md), [context7](../capabilities/mcp/context7.md).

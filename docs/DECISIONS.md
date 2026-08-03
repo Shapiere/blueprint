@@ -209,3 +209,27 @@ Decision log. Every entry uses the template below. This file owns the history of
 - Decision: Keep chrome-devtools. D17's gate ("concrete E2E need") is not met — this repository contains no application under test; D13 had already rejected playwright for the same reason; token-economy claims are contested by conflicting benchmarks. chrome-devtools license verified Apache-2.0 (registry updated). Playwright swap remains gated on a demonstrated E2E need.
 - Alternatives: Swap now, or run both — rejected: cost without need, and duplication violates the consolidation principle (D20).
 - Rationale: Challenge assumptions with evidence; a prior decision (D17 preference) is refined without a new dependency, and no change is needed to DECISIONS/decision rules — the gate already encoded this outcome.
+
+### D25 — Wave 3 integration decisions (curation over quantity)
+
+- Date: 2026-08-03
+- Context: Milestone 9 scope listed four advanced capabilities; each required justification and validation before integration.
+- Decision: (a) **memory MCP integrated and validated** — keyless, reference-quality, pairs with the engineering memory strategy (D27). (b) **GitHub MCP deferred** — requires PAT provisioning (user action) plus a Windows prebuilt-binary install; no demonstrated PR/issue workflow need yet. (c) **piolium deferred** — sandbox host requirement unmet on this machine and 0.0.x maturity; re-evaluate when a containerized environment exists. (d) **pi-background-tasks deferred** — duplicates the dynamic-workflows orchestration/background role; the consolidation principle (D20) and one-engine-per-role rule reject it. (e) **playwright swap remains gated** (D23).
+- Alternatives: Integrate all four — rejected: two lack credentials/host prerequisites, one duplicates an existing engine, none demonstrated need.
+- Rationale: Quality over quantity; every deferred item has a recorded trigger for re-evaluation (registry Notes).
+
+### D26 — Engineering quality metrics baseline
+
+- Date: 2026-08-03
+- Context: The `/metrics` protocol's behavioral run was degraded by the environment (output lost); the manifest itself is the deliverable.
+- Decision: Compute the eight metrics directly from repository evidence (no model needed): maturity 79% (22/28 active), validation coverage 89% (25/28 PASS-validated), 24 decision entries, 13 open carried items, 0 broken links/orphans (scan), 4 deferred candidates, 1 UNVERIFIED license remaining (pi-plan-mode). Baseline recorded in the M9 report; `/metrics` remains available for future automated computation.
+- Alternatives: Re-run until the environment cooperates — rejected: the numbers are deterministic arithmetic on repository state.
+- Rationale: Evidence over ceremony; the metric values are what matters, not the channel.
+
+### D27 — Engineering memory strategy adopted
+
+- Date: 2026-08-03
+- Context: Milestone 9 requires a production-ready engineering memory strategy; the memory MCP server is now integrated (D25).
+- Decision: Layered strategy — repository (permanent, primary: DECISIONS/registry/SETUP/CHANGELOG via capture loop), project memory (`AGENTS.md` per working repo), session-scale scratch (memory MCP: transient entities/relations/observations; never personal, never credentials). Promotion rule: facts become repository entries the same session they become decisions or validated results; the memory store is never authoritative. Protocol: `/memory` template.
+- Alternatives: Use the memory MCP as the primary store — rejected: violates Repository First; the repository is the source of truth.
+- Rationale: Memory assists, never replaces, the repository (recorded in `docs/ARCHITECTURE.md`).
