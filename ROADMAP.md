@@ -25,24 +25,25 @@ Additional Milestone 2 tasks in `implementation/TODO.md` (9router service startu
 
 Integrated and validated 2026-08-03: rpiv-todo, pi-permission-system (path protection), pi-plan-mode, pi-fff, sequential-thinking + context7 MCP, anthropics doc skills. Registry: `capabilities/index.md`. Layer decisions recorded: `docs/DECISIONS.md` D17.
 
-## Milestone 7 — Wave 2 (next)
+## Milestone 7 — Wave 2: Permission & Methodology (complete — see [PROJECT_STATE.md](PROJECT_STATE.md))
 
-Scope (benchmarked, decisions recorded):
+Integrated and validated 2026-08-03: permission policy deepened (bash + external-directory gates), pi-dynamic-workflows core adopted + pi-subagents retired (D17/D20), four superpowers methodology skills ported (D19), review workflow consolidated, rpiv-ask-user-question + pi-simplify + frontend-design/skill-creator registered, pdf functional validation and license verification completed (D21). Registry: `capabilities/index.md`.
 
-1. Full permission gates (allow/ask/deny, bash policy, external-directory guard).
-2. Superpowers methodology port (TDD, systematic-debugging, writing/executing-plans).
-3. Review suite consolidation (codex/gemini patterns into one review workflow).
-4. dynamic-workflows core (parallel orchestration, /code-review, /deep-research, /codebase-audit) + retire pi-subagents per D17.
-5. rpiv-ask-user-question, pi-simplify.
-6. frontend-design + skill-creator skills (anthropics).
+## Milestone 8 — Wave 3: Advanced Capabilities (next)
 
-## Milestone 8 — Wave 3 (candidate)
+Scope (benchmarked, decisions recorded; gated on Wave 2 stability):
 
-piolium (sandboxed), GitHub MCP, playwright decision execution, memory MCP, background tasks, trailofbits/vercel skill subsets. Gated on Wave 2 stability.
+1. piolium (sandboxed security audits, lite/balanced).
+2. GitHub MCP (PAT via env; PR/issue/code-search).
+3. Playwright-vs-chrome-devtools decision execution (D17) after a concrete E2E need.
+4. Memory MCP (knowledge-graph, keyless).
+5. pi-background-tasks (bg_run family only).
+6. Trailofbits security skills subset + vercel-labs frontend subset.
+7. Interactive validations completion (plan-mode enforcement, ask-user, simplify) in a TUI session.
 
 ## Next Milestone
 
-Milestone 7 as scoped above. Propose Milestone 8 scope changes only through the roadmap review at the close of Milestone 7.
+Milestone 9 onwards: Wave 4 experimental (pi-hashline-edit-pro, lean-ctx, ast-grep codemod pattern) and gap-closing discovery (debugging integration, architecture review, performance profiling, prompt evals) — each through the capability lifecycle. Propose scope changes through the roadmap review at the close of Milestone 8.
 
 ## Prioritization Rules
 

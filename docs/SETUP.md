@@ -4,7 +4,7 @@
 
 Everything required to rebuild this environment from scratch, and the current state of the Pi installation. Unknown information is marked **Pending** — never invent configuration.
 
-**Last verified: 2026-08-03** (re-verified during Milestone 6 Wave 1 integration; refresh via the capture loop on every setup change).
+**Last verified: 2026-08-03** (re-verified during Milestone 7 Wave 2; refresh via the capture loop on every setup change).
 
 ---
 
@@ -81,8 +81,8 @@ Everything required to rebuild this environment from scratch, and the current st
 | `theme` | `dark` | |
 | `compaction` | enabled, reserve 16384, keep recent 20000 | defaults, explicit |
 | `retry` | enabled, maxRetries 3, baseDelayMs 2000 | defaults, explicit |
-| `skills` | see Skills section | 14 entries |
-| `packages` | see Packages section | 9 entries |
+| `skills` | see Skills section | 20 settings entries; 26 discovered |
+| `packages` | see Packages section | 11 entries |
 
 ## Packages (managed by `pi install`)
 
@@ -94,9 +94,14 @@ Everything required to rebuild this environment from scratch, and the current st
 | `npm:pi-mcp-adapter` | MCP server support via a single proxy tool |
 | `npm:pi-lens` | LSP/linter/formatter feedback during edits |
 | `npm:@juicesharp/rpiv-todo` | todo tool + live overlay (Wave 1, validated 2026-08-03) |
-| `npm:@gotgenes/pi-permission-system` | permission gates; path protection active (Wave 1, validated 2026-08-03) |
+| `npm:@gotgenes/pi-permission-system` | permission gates; path protection + bash policy active (Wave 1+2, validated 2026-08-03) |
 | `npm:@narumitw/pi-plan-mode` | enforced read-only plan mode (Wave 1, validated 2026-08-03) |
 | `npm:@ff-labs/pi-fff` | fuzzy file/content search (Wave 1, validated 2026-08-03) |
+| `npm:@quintinshaw/pi-dynamic-workflows` | dynamic workflow execution, routed subagents (Wave 2, validated 2026-08-03 — launch; completion async) |
+| `npm:@juicesharp/rpiv-ask-user-question` | structured typed questioning (Wave 2; interactive) |
+| `npm:pi-simplify` | diff-scoped simplify pass (Wave 2; interactive; load-validated) |
+
+Removed Wave 2: `npm:pi-subagents` (retired per `docs/DECISIONS.md` D17/D20 — superseded by pi-dynamic-workflows).
 
 Uninstall: `pi remove <source>`.
 
@@ -112,8 +117,11 @@ Uninstall: `pi remove <source>`.
 | `img2threejs` | `~/.claude/skills` |
 | `frontend-design-review` | `~/.codex/skills` |
 | `brave-search`, `browser-tools`, `gccli`, `gdcli`, `gmcli`, `transcribe`, `vscode`, `youtube-transcript` | `badlogic/pi-skills` dirs (via settings `skills`) |
-| `pi-subagents` | `npm:pi-subagents` package |
-| `docx`, `pdf`, `pptx`, `xlsx` | anthropics/skills, referenced from `~/.pi/agent/vendor/anthropics/skills` (not vendored — source-available license, see `capabilities/skills/NOTES.md`) |
+| `pi-web-access` | `npm:pi-web-access` package |
+| `test-driven-development`, `systematic-debugging`, `writing-plans`, `executing-plans` | superpowers (referenced from `~/.pi/agent/vendor/superpowers/skills`; MIT, framework-free — ported as-is, D19) |
+| `frontend-design`, `skill-creator` | anthropics (referenced from `vendor/anthropics/skills`; Apache-2.0) |
+| `docx`, `pdf`, `pptx`, `xlsx` | anthropics skills; **pdf functional validated** 2026-08-03 (pypdf extraction; host deps: `pypdf`, `reportlab`) |
+| `workflow-authoring`, `workflow-patterns` | pi-dynamic-workflows package |
 
 ## Prompt Templates (`~/.pi/agent/prompts/`)
 
@@ -135,10 +143,9 @@ Uninstall: `pi remove <source>`.
 ## Permission System
 
 - Package: `@gotgenes/pi-permission-system` (installed).
-- Wave 1 scope: **path protection only** — deny rules on `.env*` (except `.env.example`), `~/.ssh/*`, `~/.pi/agent/auth.json`, `~/.pi/agent/oauth.json`; everything else `allow`.
+- Policy (Wave 2, validated 2026-08-03): tools `allow` by default; **path protection** — deny `.env*` (except `.env.example`), `~/.ssh/*`, `~/.pi/agent/auth.json`, `~/.pi/agent/oauth.json`; **bash policy** — deny `rm -rf *`/`rm -fr *`, ask `git push --force*`/`sudo *`; **external-directory guard** — ask outside `cwd`, allow known platform dirs (`~/.pi/agent/**`, `~/.config/mcp/**`, `~/.claude/**`, `~/.codex/**`).
 - Config: `~/.pi/agent/extensions/pi-permission-system/config.json`.
-- Validated 2026-08-03: `.env` read denied; normal file reads unaffected.
-- Wave 2: full allow/ask/deny gates, bash policy, external-directory guard (see `docs/DECISIONS.md` D17).
+- Validated: `.env` read denied; `rm -rf *` blocked (model correctly fell back to plain `rm`); normal reads and bash unaffected.
 
 ## Operations
 

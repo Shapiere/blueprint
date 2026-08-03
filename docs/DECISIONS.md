@@ -151,3 +151,35 @@ Decision log. Every entry uses the template below. This file owns the history of
 - Decision: (a) Subagent layer — `pi-dynamic-workflows` wins the orchestration role; installed `pi-subagents` is retired when dynamic-workflows is integrated (Wave 2). (b) Browser server — playwright-mcp is the preferred E2E server per official token-economy guidance; the swap from chrome-devtools is evaluated during Wave 2 after a concrete E2E need is demonstrated. (c) Permission policy — full allow/ask/deny gates, bash policy, and external-directory guard are configured in Wave 2; Wave 1 keeps path protection only.
 - Alternatives: Integrate both subagent layers — rejected: duplication cost exceeds benefit (benchmark).
 - Rationale: Conflict resolution before coexistence; decisions recorded here, execution gated to Wave 2.
+
+### D18 — Permission policy deepened (Wave 2)
+
+- Date: 2026-08-03
+- Context: D17 required full gates in Wave 2. Headless determinism matters (the validation battery runs `pi -p`).
+- Decision: Policy = tools `allow` by default; path protection unchanged (secrets deny); bash policy — deny `rm -rf *`/`rm -fr *`, ask `git push --force*`/`sudo *`; external-directory — `ask` outside `cwd` with allows for platform dirs (`~/.pi/agent/**`, `~/.config/mcp/**`, `~/.claude/**`, `~/.codex/**`).
+- Alternatives: external-directory `allow`-by-default — rejected: leaves a guard hole; `ask` is the designed CWD guard for interactive sessions.
+- Validation: `.env` deny re-tested; `rm -rf *` deny confirmed (model fell back to plain `rm`); normal reads and bash unaffected. PASS.
+
+### D19 — Superpowers methodology ported by reference; framework extension not adopted
+
+- Date: 2026-08-03
+- Context: Wave 2 methodology integration; obra/superpowers ships methodology skills plus a first-party Pi extension.
+- Decision: Port the four highest-value methodology skills — test-driven-development, systematic-debugging, writing-plans, executing-plans — by reference from `~/.pi/agent/vendor/superpowers` (each verified framework-free: 0 `@`-commands). The superpowers Pi extension (hooks/commands flow) is NOT adopted.
+- Alternatives: Adopt the full framework extension — rejected: its session-start hook flow couples to the whole system and adds surface without a proven need.
+- Rationale: The methodology is the value; the framework is optional complexity. "Adapt before Adopt."
+
+### D20 — Workflow consolidation and retirement executed
+
+- Date: 2026-08-03
+- Context: D17 chose pi-dynamic-workflows over pi-subagents; review duplication existed between the review template and the uninstalled Codex review suite.
+- Decision: (a) pi-subagents retired — removed, registry row marked deprecated/retired. (b) dynamic-workflows adopted — launch validated (survey → fan-out → synthesis; completion async by design). (c) review template consolidated into the four-dimension Codex-derived methodology (correctness, security, breaking/scope, testing) deployed as `capabilities/prompts/review.md`.
+- Alternatives: Keep pi-subagents installed alongside dynamic-workflows — rejected: duplication without benefit.
+- Rationale: One workflow engine, one review methodology, minimal overlap — the Phase 3 consolidation principle.
+
+### D21 — Pending validations completed
+
+- Date: 2026-08-03
+- Context: Wave-1 items remained pending: pdf functional conversion and license verification.
+- Decision: pdf skill functionally validated end-to-end (real text extracted via pypdf; host deps `pypdf`, `reportlab` added); all 7 relevant package licenses verified MIT (registry updated). Interactive-dependent validations (plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens) are load-validated and marked interactive-by-design.
+- Alternatives: Defer — rejected: the evidence was obtainable.
+- Rationale: Validation-before-promotion; honest statuses where interactive-only.

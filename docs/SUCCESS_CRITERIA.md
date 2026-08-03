@@ -16,19 +16,19 @@ A fresh Windows machine with only the documented prerequisites can rebuild the P
 
 Any setup change (package, skill, extension, template, MCP server, setting) is reflected in `docs/SETUP.md` and `CHANGELOG.md` within the same working session it was made.
 
-- Status: **validated at Milestone 2** (2026-08-02): the Milestone 2 validation updates (SETUP.md, CHANGELOG.md, DECISIONS.md) were captured in the same session as the work they describe. **Re-validated at Milestone 3** (2026-08-02): M3 updates captured same-session. **Re-validated at Milestone 6** (2026-08-03): Wave 1 integration captured same-session (registry + SETUP + CHANGELOG + DECISIONS).
+- Status: **validated at Milestone 2** (2026-08-02): the Milestone 2 validation updates (SETUP.md, CHANGELOG.md, DECISIONS.md) were captured in the same session as the work they describe. **Re-validated at Milestone 3** (2026-08-02): M3 updates captured same-session. **Re-validated at Milestone 6** (2026-08-03): Wave 1 integration captured same-session. **Re-validated at Milestone 7** (2026-08-03): Wave 2 captured same-session (registry + SETUP + CHANGELOG + DECISIONS D18–D21).
 
 ### 3. Single-Source Rule
 
 No fact is restated in more than one file; the ownership matrix in the constitution is the authoritative map and the repository structure matches it.
 
-- Status: **re-validated at Milestone 2** (2026-08-02): automated link/path/orphan scan clean; ownership matrix respected. **Re-validated at Milestone 3** (2026-08-02): scan clean. **Re-validated at Milestone 6** (2026-08-03): scan clean after Wave 1; ownership matrix extended (ARCHITECTURE.md, capabilities/index.md).
+- Status: **re-validated at Milestone 2** (2026-08-02): automated link/path/orphan scan clean. **Re-validated at Milestone 3** (2026-08-02). **Re-validated at Milestone 6** (2026-08-03): scan clean; matrix extended. **Re-validated at Milestone 7** (2026-08-03): scan clean after Wave 2.
 
 ### 4. Context Economy
 
 The assistant's always-loaded context stays lean: tools and skills load on demand (progressive disclosure) rather than all being injected. Proxy-style integrations (e.g., MCP adapter) are preferred over hundreds of direct tool definitions.
 
-- Status: **baseline unchanged** (2026-08-02): no tool or integration changes during Milestone 2; the Milestone 1 baseline stands. **Re-confirmed at Milestone 3** (2026-08-02): candidate additions were evaluated and rejected on context-economy and secrets grounds (`docs/DECISIONS.md` D13). **Measured at Milestone 6** (2026-08-03): skill index grew from 11 to 19 entries (Wave 1: +4 doc skills, +4 pi-lens skills) — within budget; MCP exposed via the single proxy tool (3 servers, lazy start); curation incident corrected (D16).
+- Status: **baseline unchanged** (2026-08-02). **Re-confirmed at Milestone 3** (2026-08-02, D13). **Measured at Milestone 6** (2026-08-03): skill index 11→19; curation incident corrected (D16). **Measured at Milestone 7** (2026-08-03): skill index 19→26 (Wave 2: +4 methodology, +2 anthropics, +2 workflow skills) — within budget; MCP behind the single proxy tool; methodology skills register on demand, framework-free (D19).
 
 ### 5. Zero Secrets in History
 

@@ -32,6 +32,13 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `feat`: version platform assets — power-tools extension and prompt templates now sourced from `capabilities/`
 - `docs`: record Wave 1 decisions — license-driven skill referencing, subagent/browser-layer decisions (D16, D17)
 - `docs`: close milestone 6 — Wave 1 integration (verdict: successful; see completion report)
+- `feat`: deepen permission policy with bash deny/ask rules and external-directory guard (Wave 2, validated)
+- `feat`: port superpowers methodology skills — test-driven-development, systematic-debugging, writing-plans, executing-plans (D19)
+- `docs`: consolidate the review workflow into the four-dimension Codex-derived methodology
+- `feat`: adopt pi-dynamic-workflows core and retire pi-subagents (D20)
+- `feat`: integrate rpiv-ask-user-question, pi-simplify, frontend-design and skill-creator skills
+- `docs`: complete pending validations — pdf functional (pypdf), package licenses verified (MIT)
+- `docs`: close milestone 7 — Wave 2 (verdict: successful; see completion report)
 
 ## Notes
 

@@ -19,7 +19,9 @@ How skills enter this platform, where they live, and why.
 | badlogic/pi-skills | `~/.pi/agent/git/github.com/badlogic/pi-skills` | brave-search, browser-tools, gccli, gdcli, gmcli, transcribe, vscode, youtube-transcript |
 | anthropics/skills (referenced) | `~/.pi/agent/vendor/anthropics/skills` | docx, pdf, pptx, xlsx (Wave 1) |
 | claude/codex dirs | `~/.claude/skills`, `~/.codex/skills` | img2threejs, frontend-design-review |
-| packages | pi-subagents, pi-lens | pi-subagents, pi-lens-* (4) |
+| packages | pi-lens | pi-lens-* (4) |
+
+`pi-subagents` (package) was retired 2026-08-03 (D20) — superseded by pi-dynamic-workflows; its skill no longer loads.
 
 ## Wave 2 Candidates (benchmarked, not yet registered)
 

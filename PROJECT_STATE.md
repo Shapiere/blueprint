@@ -6,7 +6,7 @@ Current status snapshot. History lives in [CHANGELOG.md](CHANGELOG.md); this fil
 
 ## Current Milestone
 
-**Milestone 6 — Wave 1 Capability Integration.** Status: **complete** (2026-08-03). Verdict: successful (see completion report). Committed and pushed.
+**Milestone 7 — Wave 2: Permission & Methodology.** Status: **complete** (2026-08-03). Verdict: successful (see completion report). Committed and pushed.
 
 ## Completed
 
@@ -30,10 +30,11 @@ Current status snapshot. History lives in [CHANGELOG.md](CHANGELOG.md); this fil
 - Milestone 6: Wave 1 integrated and validated — rpiv-todo, pi-permission-system (path protection), pi-plan-mode, pi-fff, sequential-thinking + context7 MCP, anthropics doc skills; all smoke tests PASS (see [capabilities/index.md](capabilities/index.md)).
 - Milestone 6: platform assets versioned — power-tools + prompt templates sourced from `capabilities/`.
 - Milestone 6: decisions recorded — license-driven skill referencing (D16), Wave 2 layer decisions (D17).
+- Milestone 7: Wave 2 — permission policy deepened (bash + external-directory gates; `rm -rf` deny validated), dynamic-workflows core adopted + pi-subagents retired (D17/D20), superpowers methodology skills ported (TDD, systematic-debugging, plans), review workflow consolidated, rpiv-ask-user-question + pi-simplify loaded, frontend-design/skill-creator skills registered, pdf functional validation completed (pypdf), licenses verified (all MIT).
 
 ## In Flight
 
-Nothing. Milestone 7 (Wave 2 — full permission gates, methodology port, review consolidation, dynamic-workflows core) is scoped in [ROADMAP.md](ROADMAP.md).
+Nothing. Milestone 8 (Wave 3 — advanced capabilities) is scoped in [ROADMAP.md](ROADMAP.md).
 
 ## Blocked
 

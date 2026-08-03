@@ -25,22 +25,32 @@ Concrete actionable tasks. Priorities and milestone context live in [ROADMAP.md]
 - [x] Bootstrap registry and architecture — done (constitution v1.2, `docs/ARCHITECTURE.md`, `capabilities/`).
 - [x] Record layer decisions (subagent, browser, permission policy) — D17.
 
-## Carried Forward (requires fresh machine or user input)
+## Milestone 7 — Wave 2 (complete 2026-08-03)
 
+- [x] Full permission gates — done: bash policy + external-directory guard; `rm -rf *` deny validated.
+- [x] Superpowers methodology port — done: TDD, systematic-debugging, writing/executing-plans registered by reference (D19).
+- [x] Review suite consolidation — done: four-dimension Codex-derived review template deployed.
+- [x] dynamic-workflows core + retire pi-subagents — done: launch validated (D20).
+- [x] rpiv-ask-user-question, pi-simplify — installed (interactive validation pending).
+- [x] frontend-design + skill-creator skills — registered, discovery validated.
+- [x] Pending validations: pdf functional PASS (pypdf), licenses verified MIT (D21).
+
+## Carried Forward (requires interactive session or fresh machine)
+
+- [ ] Interactive validations: plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens (TUI session).
 - [ ] Full cold-install on a fresh machine (restore steps 1–3, 6–9).
 - [ ] Interactive `/login` flow on a fresh machine.
 - [ ] Confirm open question 2 (other machines/agents consuming this repository) — requires user input.
 - [ ] pi-web-access search — activate with an API key.
-- [ ] pi-lens — functional validation requires an interactive session.
 
-## Milestone 7 — Wave 2 (next)
+## Milestone 8 — Wave 3 (next)
 
-- [ ] Full permission gates: allow/ask/deny, bash policy, external-directory guard (D17).
-- [ ] Superpowers methodology port: TDD, systematic-debugging, writing/executing-plans (validate first-party Pi extension on 0.83.0).
-- [ ] Review suite consolidation: codex/gemini patterns into one review workflow.
-- [ ] dynamic-workflows core: parallel orchestration, /code-review, /deep-research, /codebase-audit; retire pi-subagents (D17).
-- [ ] rpiv-ask-user-question, pi-simplify.
-- [ ] anthropics frontend-design + skill-creator skills (license-checked).
+- [ ] piolium (sandboxed security audits, lite/balanced).
+- [ ] GitHub MCP (PAT via env; PR/issue/code-search).
+- [ ] Playwright-vs-chrome-devtools decision execution (D17) after a concrete E2E need.
+- [ ] Memory MCP (knowledge-graph, keyless).
+- [ ] pi-background-tasks (bg_run family only).
+- [ ] Trailofbits + vercel-labs skill subsets.
 
 ## Backlog (candidates, require justification before adoption)
 
