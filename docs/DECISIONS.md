@@ -176,15 +176,6 @@ Decision log. Every entry uses the template below. This file owns the history of
 - Alternatives: Keep pi-subagents installed alongside dynamic-workflows — rejected: duplication without benefit.
 - Rationale: One workflow engine, one review methodology, minimal overlap — the Phase 3 consolidation principle.
 
-### D24 — Intelligence layer self-evaluation (autonomous DECISIONS write)
-
-- Date: 2026-08-03
-- Context: First `/self-eval` run. The working tree contained the intelligence-layer v1 artifacts (five prompts + `repository-intelligence` skill, deployed to `~/.pi/agent/prompts/` 8/8 in sync) and an `ARCHITECTURE.md` Phase 6 edit claiming "implemented Milestone 8", but the capture loop was open: no registry rows, no CHANGELOG entry, no decision entry, `PROJECT_STATE.md` still "In Flight: Nothing".
-- Decision: (a) Adopt the intelligence-layer v1 artifacts as platform assets (registry rows + CHANGELOG entry follow in the same session per the capture loop). (b) Resolve the Milestone-8 numbering conflict (ARCHITECTURE.md calls this "M8" while ROADMAP defined M8 as Wave 3) in favor of ROADMAP's numbering; register or remove the unregistered `firecrawl` reference in orchestration rule 3.
-- Alternatives: (a) Leave the artifacts deployed but undocumented — rejected: silent deployment violates the capture loop and the registry single-source rule. (b) Renumber Wave 3 — rejected: ROADMAP owns milestone numbering; the architecture section is the newcomer.
-- Rationale: The repository's value is reflecting reality; the capture loop and registry are its enforcement mechanisms, and this evaluation surfaced their first live gap.
-- Resolution (2026-08-03, M8 close): both recommendations executed — ROADMAP now numbers the intelligence layer as Milestone 8 and Wave 3 as Milestone 9; orchestration rule 3 no longer references the unregistered `firecrawl` (see `docs/ARCHITECTURE.md`). This entry was written by the self-evaluation run itself, demonstrating the layer's assisted-governance behavior; it was renumbered to D24 on reconciliation.
-
 ### D21 — Pending validations completed
 
 - Date: 2026-08-03
@@ -210,6 +201,16 @@ Decision log. Every entry uses the template below. This file owns the history of
 - Alternatives: Swap now, or run both — rejected: cost without need, and duplication violates the consolidation principle (D20).
 - Rationale: Challenge assumptions with evidence; a prior decision (D17 preference) is refined without a new dependency, and no change is needed to DECISIONS/decision rules — the gate already encoded this outcome.
 
+
+### D24 — Intelligence layer self-evaluation (autonomous DECISIONS write)
+
+- Date: 2026-08-03
+- Context: First `/self-eval` run. The working tree contained the intelligence-layer v1 artifacts (five prompts + `repository-intelligence` skill, deployed to `~/.pi/agent/prompts/` 8/8 in sync) and an `ARCHITECTURE.md` Phase 6 edit claiming "implemented Milestone 8", but the capture loop was open: no registry rows, no CHANGELOG entry, no decision entry, `PROJECT_STATE.md` still "In Flight: Nothing".
+- Decision: (a) Adopt the intelligence-layer v1 artifacts as platform assets (registry rows + CHANGELOG entry follow in the same session per the capture loop). (b) Resolve the Milestone-8 numbering conflict (ARCHITECTURE.md calls this "M8" while ROADMAP defined M8 as Wave 3) in favor of ROADMAP's numbering; register or remove the unregistered `firecrawl` reference in orchestration rule 3.
+- Alternatives: (a) Leave the artifacts deployed but undocumented — rejected: silent deployment violates the capture loop and the registry single-source rule. (b) Renumber Wave 3 — rejected: ROADMAP owns milestone numbering; the architecture section is the newcomer.
+- Rationale: The repository's value is reflecting reality; the capture loop and registry are its enforcement mechanisms, and this evaluation surfaced their first live gap.
+- Resolution (2026-08-03, M8 close): both recommendations executed — ROADMAP now numbers the intelligence layer as Milestone 8 and Wave 3 as Milestone 9; orchestration rule 3 no longer references the unregistered `firecrawl` (see `docs/ARCHITECTURE.md`). This entry was written by the self-evaluation run itself, demonstrating the layer's assisted-governance behavior; it was renumbered to D24 on reconciliation.
+
 ### D25 — Wave 3 integration decisions (curation over quantity)
 
 - Date: 2026-08-03
@@ -233,3 +234,27 @@ Decision log. Every entry uses the template below. This file owns the history of
 - Decision: Layered strategy — repository (permanent, primary: DECISIONS/registry/SETUP/CHANGELOG via capture loop), project memory (`AGENTS.md` per working repo), session-scale scratch (memory MCP: transient entities/relations/observations; never personal, never credentials). Promotion rule: facts become repository entries the same session they become decisions or validated results; the memory store is never authoritative. Protocol: `/memory` template.
 - Alternatives: Use the memory MCP as the primary store — rejected: violates Repository First; the repository is the source of truth.
 - Rationale: Memory assists, never replaces, the repository (recorded in `docs/ARCHITECTURE.md`).
+
+### D28 — Verification script adopted (lightweight, no CI)
+
+- Date: 2026-08-03
+- Context: Milestone 10 production hardening requires automated verification without CI complexity.
+- Decision: Adopt `capabilities/scripts/verify.py` (Python stdlib only, no network, no dependencies) — checks markdown links, orphans, secret patterns in tracked files, structure conformance, registry shape (10 columns, unique names), DECISIONS numbering, TODO section hygiene. Run before every commit (CONTRIBUTING). First run caught the D24 ordering defect; all checks green after the fix.
+- Alternatives: Full CI pipeline — rejected: violates the platform's own non-goals (no CI, D9/M5); this host has no runner.
+- Rationale: A 150-line deterministic script replaces ad-hoc milestone scans; robustness over feature growth.
+
+### D29 — Production hardening decisions
+
+- Date: 2026-08-03
+- Context: Hardening review of the only code file and the safety surfaces.
+- Decision: (a) power-tools.ts type-check deferred — runtime smoke evidence exists (tools validated behaviorally 08-02); static type-checking requires module resolution against the global pi packages, which is fragile outside a repo-local dev setup; revisit with a dev setup (TODO). (b) Permission configuration remains host-side (`~/.pi/agent/extensions/.../config.json`), described not stored in the repository (secrets policy, D2/D3). (c) Memory MCP storage confirmed outside the repository (no `memory.json` in the tree). (d) Secret scanning now enforced by the verify script (D28).
+- Alternatives: Add a dev toolchain to the repository for type-checking — rejected: adds dependency surface without a current consumer need.
+- Rationale: Honest evidence-based hardening; the two real risks (secrets, consistency) get automated guards, the cosmetic one (type-check) gets a trigger.
+
+### D30 — Foundation certification and transition to Continuous Evolution
+
+- Date: 2026-08-03
+- Context: Milestone 10 concludes the foundational phase; the platform must transition from construction to evolution.
+- Decision: Certified per the M10 engineering certification (report): architecture stable, governance mature, maintainability acceptable, overengineering under control. From this milestone on: no predefined construction milestones; changes enter via the capability lifecycle, capture loop, and trigger-based integrations, driven by real engineering needs. Stable core: architecture, governance, lifecycle, registry, ownership matrix. Evolving: capabilities, intelligence versions, prompts, templates. Experimental features: isolated until validated (Wave-4 rule). Versioning: constitution v1.x via amendment; capability pins in the registry.
+- Alternatives: Continue milestone-driven construction — rejected: the platform is built; further construction would be feature growth without need.
+- Rationale: The certification is evidence-based; evolution-by-need is the long-term sustainability posture.

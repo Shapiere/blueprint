@@ -43,6 +43,7 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | perf | platform-owned prompt | — | Prompt (performance protocol) | **active** | authored | load-validated 2026-08-03 | Maintenance | — | 2026-08-03 |
 | metrics | platform-owned prompt | — | Prompt (metrics manifest) | **active** | authored | load-validated; behavioral run environment-degraded (values computed directly, D26) | Maintenance | — | 2026-08-03 |
 | memory (protocol) | platform-owned prompt | — | Prompt (engineering memory) | **active** | authored | load-validated 2026-08-03 | Maintenance | — | 2026-08-03 |
+| verify | platform-owned script | — | Automation | **active** | authored (stdlib-only) | PASS 2026-08-03 (caught D24 ordering defect; all checks green after fix) | Maintenance | — | 2026-08-03 |
 
 ## Notes
 

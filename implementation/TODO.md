@@ -61,12 +61,23 @@ Concrete actionable tasks. Priorities and milestone context live in [ROADMAP.md]
 - [ ] Confirm open question 2 (other machines/agents consuming this repository) — requires user input.
 - [ ] pi-web-access search — activate with an API key.
 
-## Milestone 10 — Wave 4 Experimental + Production Hardening (next)
+## Milestone 10 — Production Hardening (complete 2026-08-03)
 
-- [ ] Experimental (isolated): pi-hashline-edit-pro, pi-lean-ctx, ast-grep codemod pattern.
-- [ ] Production hardening: power-tools verification (type-check + tests); pre-commit secret scan; registry license completion (pi-plan-mode).
-- [ ] Conditional integrations when triggers fire: GitHub MCP (PAT), piolium (containerized host), playwright (E2E need), trailofbits/vercel subsets.
-- [ ] Intelligence v3: debugger integration, performance profiling, prompt evaluation, `/self-eval` completion.
+- [x] Verification script adopted — `capabilities/scripts/verify.py` (stdlib-only; links, orphans, secrets, structure, registry, decisions) — caught D24 ordering defect on first run.
+- [x] Hardening review — permissions host-side (documented), memory storage outside repo, secret scan enforced (D29).
+- [x] Foundation certified — transition to Continuous Evolution (D30).
+
+## Continuous Evolution (post-foundation maintenance)
+
+- [ ] `/self-eval` behavioral run — environment-interrupted (M8–M10).
+- [ ] `/metrics` automated run — baseline computed directly (D26); scripted run pending.
+- [ ] Interactive validations: plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens (TUI session).
+- [ ] power-tools type-check — via a repo-local dev setup (D29 trigger).
+- [ ] Trigger-based integrations when they fire: GitHub MCP (PAT), piolium (container), playwright (E2E need).
+- [ ] Full cold-install on a fresh machine (restore steps 1–3, 6–9).
+- [ ] Interactive `/login` flow on a fresh machine.
+- [ ] Confirm open question 2 (other machines/agents) — requires user input.
+- [ ] pi-web-access search — activate with an API key.
 
 ## Backlog (candidates, require justification before adoption)
 

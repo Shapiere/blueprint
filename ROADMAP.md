@@ -37,14 +37,20 @@ Engineering Intelligence Layer v1 established 2026-08-03: repository-intelligenc
 
 Completed 2026-08-03: memory MCP integrated and validated; repository-intelligence v2 modules; orchestration v2 rules; debug/perf/metrics/memory protocols; engineering memory strategy; metrics baseline (D25–D27). Deferred with triggers: GitHub MCP, piolium, pi-background-tasks, playwright gate (registry Notes).
 
-## Milestone 10 — Wave 4 Experimental + Production Hardening (next)
+## Milestone 10 — Production Hardening & Real-World Readiness (complete — see [PROJECT_STATE.md](PROJECT_STATE.md))
 
-Scope:
+Completed 2026-08-03: verification script adopted (D28), hardening decisions (D29), foundation certified (D30). Platform transitions to Continuous Evolution.
 
-1. Experimental (isolated until validated): pi-hashline-edit-pro (edit dialect), pi-lean-ctx (token savings), ast-grep codemod pattern.
-2. Production hardening: automated verification for the only code file (power-tools.ts) — type-check + tests; pre-commit secret scan (CI-less, script-based); registry license completion (pi-plan-mode).
-3. Conditional integrations when triggers fire: GitHub MCP (PAT), piolium (containerized host), playwright (E2E need), trailofbits/vercel subsets.
-4. Intelligence v3: debugging integration (debugger adapter), performance profiling capability, prompt evaluation, `/self-eval` behavioral completion.
+## Continuous Evolution (post-foundation)
+
+No predefined milestones. Change enters the platform through:
+
+1. **Capability lifecycle** — any new capability passes discovery → benchmark → evaluation → adaptation → integration → validation → maintenance → deprecation (gates in `docs/ARCHITECTURE.md`).
+2. **Trigger-based integrations** — deferred candidates activate on their recorded triggers: GitHub MCP (PAT provisioned), piolium (containerized host), playwright (concrete E2E need), trailofbits/vercel subsets (justified use).
+3. **Experimental management** — new or risky capabilities enter isolated (`installed`, sandboxed where applicable) until validated; Wave-4 candidates (pi-hashline-edit-pro, pi-lean-ctx, ast-grep) remain candidates until a need fires.
+4. **Maintenance cadence** — capture loop on every change; `last-verified` refresh; verify script before commits; `/self-eval` at health degradation; metrics trend review.
+5. **Stable core (do not redesign without a decision):** architecture, governance model, capability lifecycle, registry schema, ownership matrix, secrets policy.
+6. **Evolving surface:** capabilities, intelligence protocols, prompt templates, model configuration — each through the lifecycle and capture loop.
 
 ## Next Milestone
 

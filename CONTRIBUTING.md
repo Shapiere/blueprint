@@ -25,6 +25,7 @@ Rules for changing this repository safely. This guide is agent-facing: it exists
 
 ## Before Committing
 
+- Run `python capabilities/scripts/verify.py` — links, orphans, secret patterns, structure, registry shape, decision numbering (foundation hardening, D28).
 - Verify the structure matches the constitution.
 - Verify no duplicated facts were introduced.
 - Verify no secret material is staged (`git status`, `git diff --cached`).

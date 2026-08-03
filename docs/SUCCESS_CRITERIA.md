@@ -22,7 +22,7 @@ Any setup change (package, skill, extension, template, MCP server, setting) is r
 
 No fact is restated in more than one file; the ownership matrix in the constitution is the authoritative map and the repository structure matches it.
 
-- Status: **re-validated at Milestone 2** (2026-08-02). **Re-validated at Milestone 3** (2026-08-02). **Re-validated at Milestone 6** (2026-08-03). **Re-validated at Milestone 7** (2026-08-03). **Re-validated at Milestone 9** (2026-08-03): scan clean after Wave 3 + intelligence v2.
+- Status: **re-validated at Milestone 2** (2026-08-02). **Re-validated at Milestone 3** (2026-08-02). **Re-validated at Milestone 6** (2026-08-03). **Re-validated at Milestone 7** (2026-08-03). **Re-validated at Milestone 9** (2026-08-03). **Re-validated at Milestone 10** (2026-08-03): automated scan via `capabilities/scripts/verify.py` (D28).
 
 ### 4. Context Economy
 
@@ -34,7 +34,7 @@ The assistant's always-loaded context stays lean: tools and skills load on deman
 
 No API key, auth file, OAuth token, or `.env` value ever appears in repository history.
 
-- Status: **re-validated at Milestone 2** (2026-08-02): the fresh-config test used placeholder credentials only; repository history and working tree contain no secrets.
+- Status: **re-validated at Milestone 2** (2026-08-02): the fresh-config test used placeholder credentials only; repository history and working tree contain no secrets. **Re-validated at Milestone 10** (2026-08-03): secret scanning is now enforced before every commit by `capabilities/scripts/verify.py` (D28).
 
 ## Notes
 

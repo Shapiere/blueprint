@@ -49,6 +49,10 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `docs`: record engineering metrics baseline — maturity 79%, validation coverage 89% (D26)
 - `docs`: adopt engineering memory strategy — repository primary, memory MCP as session scratch (D27)
 - `docs`: close milestone 9 — Wave 3 + Intelligence v2 (verdict: successful; see completion report)
+- `feat`: adopt verification script — `capabilities/scripts/verify.py` (stdlib-only; links, orphans, secrets, structure, registry, decisions; D28)
+- `docs`: record hardening decisions — power-tools type-check trigger, permission config stays host-side, memory storage outside repo (D29)
+- `docs`: certify foundation and transition to Continuous Evolution (D30)
+- `docs`: close milestone 10 — Production Hardening & Real-World Readiness (verdict: certified; see completion report)
 
 ## Notes
 
