@@ -29,21 +29,21 @@ Integrated and validated 2026-08-03: rpiv-todo, pi-permission-system (path prote
 
 Integrated and validated 2026-08-03: permission policy deepened (bash + external-directory gates), pi-dynamic-workflows core adopted + pi-subagents retired (D17/D20), four superpowers methodology skills ported (D19), review workflow consolidated, rpiv-ask-user-question + pi-simplify + frontend-design/skill-creator registered, pdf functional validation and license verification completed (D21). Registry: `capabilities/index.md`.
 
-## Milestone 8 — Wave 3: Advanced Capabilities (next)
+## Milestone 8 — Engineering Intelligence Layer (complete — see [PROJECT_STATE.md](PROJECT_STATE.md))
 
-Scope (benchmarked, decisions recorded; gated on Wave 2 stability):
+Engineering Intelligence Layer v1 established 2026-08-03: repository-intelligence skill, five intelligence prompt templates, orchestration rules, context strategy, self-evaluation framework (D22/D23); behaviorally validated (repo analysis, plan-next audit, decide analysis).
 
-1. piolium (sandboxed security audits, lite/balanced).
-2. GitHub MCP (PAT via env; PR/issue/code-search).
-3. Playwright-vs-chrome-devtools decision execution (D17) after a concrete E2E need.
-4. Memory MCP (knowledge-graph, keyless).
-5. pi-background-tasks (bg_run family only).
-6. Trailofbits security skills subset + vercel-labs frontend subset.
-7. Interactive validations completion (plan-mode enforcement, ask-user, simplify) in a TUI session.
+## Milestone 9 — Wave 3 + Intelligence v2 (next)
+
+Scope:
+
+1. Advance capabilities: piolium (sandboxed), GitHub MCP, memory MCP, background tasks; playwright swap only after a concrete E2E need (D23).
+2. Intelligence v2: close gaps — debugging integration, architecture review depth, performance profiling, prompt evals (each through the lifecycle); behavioral validation of `/self-eval` (pending after environment interruption); tutorial sessions for plan-mode/ask-user/simplify/pi-lens.
+3. Governance: refresh UNVERIFIED registry licenses; interactive validations; open question 2.
 
 ## Next Milestone
 
-Milestone 9 onwards: Wave 4 experimental (pi-hashline-edit-pro, lean-ctx, ast-grep codemod pattern) and gap-closing discovery (debugging integration, architecture review, performance profiling, prompt evals) — each through the capability lifecycle. Propose scope changes through the roadmap review at the close of Milestone 8.
+Milestone 10+: Wave 4 experimental (pi-hashline-edit-pro, lean-ctx, ast-grep codemod pattern), and long-term intelligence deepening. Propose scope changes through the roadmap review at the close of Milestone 9.
 
 ## Prioritization Rules
 

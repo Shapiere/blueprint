@@ -15,7 +15,7 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | pi-mcp-adapter | npm | 2.17.0 | Extension (foundation) | active | — | PASS 2026-08-03 (MCP exercises) | Maintenance | MIT | 2026-08-03 |
 | pi-lens | npm | 3.8.74 | Extension | installed | — | pending (editor-side, interactive) | Maintenance | MIT | 2026-08-03 |
 | badlogic/pi-skills | git | latest | Skills (8) | active | via settings | PASS 2026-08-02 (discovery) | Maintenance | MIT (repo) | 2026-08-02 |
-| chrome-devtools | MCP (npx) | latest | MCP server | active | — | PASS 2026-08-03 (first use) | Maintenance | UNVERIFIED | 2026-08-03 |
+| chrome-devtools | MCP (npx) | latest | MCP server | active | — | PASS 2026-08-03 (first use) | Maintenance | Apache-2.0 (verified) | 2026-08-03 |
 | commit / explain | local prompts | — | Prompt templates | active | — | PASS 2026-08-02 | Maintenance | — | 2026-08-02 |
 | **review (consolidated)** | local prompt | — | Prompt template | active | Codex dimensions merged (D20) | PASS 2026-08-03 (deployed) | Maintenance | — | 2026-08-03 |
 | img2threejs + 10 skills | claude/codex/pi dirs | — | Skills | active | — | PASS 2026-08-02 | Maintenance | — | 2026-08-02 |
@@ -32,6 +32,12 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | rpiv-ask-user-question | npm:@juicesharp/rpiv-ask-user-question | 2.3.1 | Extension | installed | as-is | load-validated; interactive | Maintenance | MIT | 2026-08-03 |
 | pi-simplify | npm:pi-simplify | 0.2.3 | Extension | installed | as-is | load-validated; interactive | Maintenance | MIT | 2026-08-03 |
 | pi-subagents | npm (removed) | — | Extension | **deprecated/retired** | — | retired 2026-08-03 (D17/D20; superseded by dynamic-workflows) | — | MIT | — |
+| repository-intelligence | platform-owned skill | — | Skill (intelligence) | **active** | authored for the platform | PASS 2026-08-03 (behavioral: full repo analysis) | Maintenance | Apache-2.0 | 2026-08-03 |
+| decide | platform-owned prompt | — | Prompt (decision engine) | **active** | authored | PASS 2026-08-03 (behavioral: browser decision) | Maintenance | — | 2026-08-03 |
+| plan-next | platform-owned prompt | — | Prompt (planning) | **active** | authored | PASS 2026-08-03 (behavioral: repo state audit) | Maintenance | — | 2026-08-03 |
+| workflow | platform-owned prompt | — | Prompt (orchestrator rules) | **active** | authored | load-validated 2026-08-03 (rules exercised by decide/plan-next runs) | Maintenance | — | 2026-08-03 |
+| review-architecture | platform-owned prompt | — | Prompt (architecture review) | **active** | authored | load-validated 2026-08-03 | Maintenance | — | 2026-08-03 |
+| self-eval | platform-owned prompt | — | Prompt (self-evaluation) | **installed** | authored | load-validated; behavioral run interrupted by environment (pending) | Maintenance | — | 2026-08-03 |
 
 ## Notes
 

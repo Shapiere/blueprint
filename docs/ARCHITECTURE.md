@@ -194,6 +194,30 @@ Intelligence is designed as **workflow composition over the capability layer** �
 
 **Design rule:** every intelligence function maps to a *composition* of capabilities, each of which passed the lifecycle gates. If a function cannot be composed from validated capabilities, it is a gap — not a reason to build custom infrastructure.
 
+## Engineering Intelligence Layer v1 (implemented Milestone 8, 2026-08-03)
+
+The first version is implemented as composed capabilities plus platform-owned artifacts — no separate engine (design rule).
+
+**Responsibilities:** repository understanding, workflow selection, technical decisions, planning, review (code/architecture/repository/docs), context assembly, periodic self-evaluation. **Decision boundaries:** the layer recommends and orchestrates; the human owns goals; the validation layer gates every action.
+
+**Orchestration rules (task class → capability chain):**
+
+1. Plan/implement → plan mode → todo overlay → TDD skill → verify.
+2. Debug → systematic-debugging skill → sequential-thinking for weak-model reasoning.
+3. Research → context7 (docs) → firecrawl (web) → /deep-research (orchestrated).
+4. Review (staged) → consolidated four-dimension review (`/review`).
+5. Architecture / repo analysis → repository-intelligence skill → `/review-architecture`.
+6. Audit / repository risk → /codebase-audit or piolium (risk-gated).
+7. Documentation → document-processing skills → docs-changelog pattern.
+
+**When a capability should NOT be used:** the task is smaller than the capability's cost (no /deep-research for a rename); the capability is unvalidated (`installed` status); the action is privileged and not permitted by policy; context cost exceeds the task's value (criterion C4).
+
+**Context flow:** AGENTS.md (project) → repo (skills index, names only) → load bodies on demand → registry/decisions for platform state; never load whole repositories; bounded outputs (script-variable intermediates).
+
+**Self-evaluation framework (periodic):** run `/self-eval` at milestone close or when repository health indicators degrade; assess five dimensions — capability quality, workflow effectiveness, governance compliance, architecture compliance, repository health; record recommendations in `DECISIONS.md`.
+
+**Intelligence artifacts (platform-owned):** `capabilities/skills/repository-intelligence/` · `capabilities/prompts/{workflow,decide,plan-next,review-architecture,self-eval}.md`. Validation 2026-08-03: repository-intelligence, plan-next, decide behaviorally validated; workflow and review-architecture rules exercised by those runs; self-eval behavioral run pending (environment-interrupted) — see `capabilities/index.md` and D22.
+
 ---
 
 # Phase 7 — Evolution Strategy

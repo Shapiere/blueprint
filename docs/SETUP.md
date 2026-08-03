@@ -81,7 +81,7 @@ Everything required to rebuild this environment from scratch, and the current st
 | `theme` | `dark` | |
 | `compaction` | enabled, reserve 16384, keep recent 20000 | defaults, explicit |
 | `retry` | enabled, maxRetries 3, baseDelayMs 2000 | defaults, explicit |
-| `skills` | see Skills section | 20 settings entries; 26 discovered |
+| `skills` | see Skills section | 21 settings entries; 27 discovered |
 | `packages` | see Packages section | 11 entries |
 
 ## Packages (managed by `pi install`)
@@ -122,12 +122,15 @@ Uninstall: `pi remove <source>`.
 | `frontend-design`, `skill-creator` | anthropics (referenced from `vendor/anthropics/skills`; Apache-2.0) |
 | `docx`, `pdf`, `pptx`, `xlsx` | anthropics skills; **pdf functional validated** 2026-08-03 (pypdf extraction; host deps: `pypdf`, `reportlab`) |
 | `workflow-authoring`, `workflow-patterns` | pi-dynamic-workflows package |
+| `repository-intelligence` | platform-owned skill (`capabilities/skills/repository-intelligence`; Apache-2.0) |
 
 ## Prompt Templates (`~/.pi/agent/prompts/`)
 
 - `commit.md` — conventional commit message from staged changes.
-- `review.md` — senior review of staged changes.
+- `review.md` — consolidated four-dimension review (Wave 2).
 - `explain.md` — deep-dive explanation of a file or symbol.
+- Intelligence layer (Wave 8): `workflow.md` (orchestrator rules), `decide.md` (decision engine), `plan-next.md` (planning), `review-architecture.md` (architecture review), `self-eval.md` (self-evaluation).
+- Sources: `capabilities/prompts/` (deployment copies are synced from the repository).
 
 ## MCP
 

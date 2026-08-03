@@ -39,6 +39,10 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `feat`: integrate rpiv-ask-user-question, pi-simplify, frontend-design and skill-creator skills
 - `docs`: complete pending validations — pdf functional (pypdf), package licenses verified (MIT)
 - `docs`: close milestone 7 — Wave 2 (verdict: successful; see completion report)
+- `feat`: establish Engineering Intelligence Layer v1 — repository-intelligence skill, orchestrator rules, five intelligence prompt templates (D22)
+- `feat`: validate intelligence layer behaviorally — repository-intelligence (repo analysis), plan-next (state audit), decide (browser decision; D23)
+- `docs`: review browser decision with evidence — keep chrome-devtools; playwright stays gated (D23); license verified Apache-2.0
+- `docs`: close milestone 8 — Engineering Intelligence Layer (verdict: successful; see completion report)
 
 ## Notes
 

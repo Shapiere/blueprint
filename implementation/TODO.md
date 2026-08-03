@@ -35,22 +35,30 @@ Concrete actionable tasks. Priorities and milestone context live in [ROADMAP.md]
 - [x] frontend-design + skill-creator skills — registered, discovery validated.
 - [x] Pending validations: pdf functional PASS (pypdf), licenses verified MIT (D21).
 
-## Carried Forward (requires interactive session or fresh machine)
+## Milestone 8 — Engineering Intelligence Layer (complete 2026-08-03)
 
+- [x] Intelligence architecture v1 — orchestration rules, context strategy, decision boundaries, self-eval framework in `docs/ARCHITECTURE.md`.
+- [x] repository-intelligence skill — authored, registered, behaviorally validated (full repo analysis).
+- [x] Intelligence templates — workflow, decide, plan-next, review-architecture, self-eval (deployed; decide + plan-next behaviorally validated).
+- [x] Browser decision review — keep chrome-devtools; playwright stays gated (D23); license verified Apache-2.0.
+
+## Carried Forward (requires interactive session or environment stability)
+
+- [ ] `/self-eval` behavioral run — environment-interrupted 2026-08-03 (two attempts).
 - [ ] Interactive validations: plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens (TUI session).
 - [ ] Full cold-install on a fresh machine (restore steps 1–3, 6–9).
 - [ ] Interactive `/login` flow on a fresh machine.
 - [ ] Confirm open question 2 (other machines/agents consuming this repository) — requires user input.
 - [ ] pi-web-access search — activate with an API key.
 
-## Milestone 8 — Wave 3 (next)
+## Milestone 9 — Wave 3 + Intelligence v2 (next)
 
 - [ ] piolium (sandboxed security audits, lite/balanced).
 - [ ] GitHub MCP (PAT via env; PR/issue/code-search).
-- [ ] Playwright-vs-chrome-devtools decision execution (D17) after a concrete E2E need.
 - [ ] Memory MCP (knowledge-graph, keyless).
 - [ ] pi-background-tasks (bg_run family only).
-- [ ] Trailofbits + vercel-labs skill subsets.
+- [ ] Intelligence v2 gaps: debugging integration, architecture review depth, performance profiling, prompt evals.
+- [ ] Refresh remaining UNVERIFIED registry licenses.
 
 ## Backlog (candidates, require justification before adoption)
 

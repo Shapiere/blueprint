@@ -28,7 +28,7 @@ No fact is restated in more than one file; the ownership matrix in the constitut
 
 The assistant's always-loaded context stays lean: tools and skills load on demand (progressive disclosure) rather than all being injected. Proxy-style integrations (e.g., MCP adapter) are preferred over hundreds of direct tool definitions.
 
-- Status: **baseline unchanged** (2026-08-02). **Re-confirmed at Milestone 3** (2026-08-02, D13). **Measured at Milestone 6** (2026-08-03): skill index 11→19; curation incident corrected (D16). **Measured at Milestone 7** (2026-08-03): skill index 19→26 (Wave 2: +4 methodology, +2 anthropics, +2 workflow skills) — within budget; MCP behind the single proxy tool; methodology skills register on demand, framework-free (D19).
+- Status: **baseline unchanged** (2026-08-02). **Re-confirmed at Milestone 3** (D13). **Measured at Milestone 6**: skill index 11→19. **Measured at Milestone 7**: 19→26. **Measured at Milestone 8** (2026-08-03): 26→27 (repository-intelligence skill); intelligence delivered as on-demand prompts — 8 templates, zero always-loaded context beyond the skill index entry.
 
 ### 5. Zero Secrets in History
 

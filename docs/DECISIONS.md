@@ -176,6 +176,14 @@ Decision log. Every entry uses the template below. This file owns the history of
 - Alternatives: Keep pi-subagents installed alongside dynamic-workflows — rejected: duplication without benefit.
 - Rationale: One workflow engine, one review methodology, minimal overlap — the Phase 3 consolidation principle.
 
+### D22 — Engineering Intelligence Layer v1 adopted (self-eval M8)
+
+- Date: 2026-08-03
+- Context: First `/self-eval` run. The working tree contained the intelligence-layer v1 artifacts (five prompts + `repository-intelligence` skill, deployed to `~/.pi/agent/prompts/` 8/8 in sync) and an `ARCHITECTURE.md` Phase 6 edit claiming "implemented Milestone 8", but the capture loop was open: no registry rows, no CHANGELOG entry, no decision entry, `PROJECT_STATE.md` still "In Flight: Nothing".
+- Decision: (a) Adopt the intelligence-layer v1 artifacts as platform assets (registry rows + CHANGELOG entry to follow in the same session per the capture loop). (b) Adopt the self-eval recommendations: resolve the Milestone-8 numbering conflict (ARCHITECTURE.md calls this "M8" while ROADMAP defines M8 as Wave 3) in favor of ROADMAP's numbering; register or remove the unregistered `firecrawl` reference in orchestration rule 3.
+- Alternatives: (a) Leave the artifacts deployed but undocumented — rejected: silent deployment violates the capture loop and the registry single-source rule. (b) Renumber Wave 3 — rejected: ROADMAP owns milestone numbering; the architecture section is the newcomer.
+- Rationale: The repository's value is reflecting reality; the capture loop and registry are its enforcement mechanisms, and this evaluation surfaced their first live gap.
+
 ### D21 — Pending validations completed
 
 - Date: 2026-08-03
@@ -183,3 +191,20 @@ Decision log. Every entry uses the template below. This file owns the history of
 - Decision: pdf skill functionally validated end-to-end (real text extracted via pypdf; host deps `pypdf`, `reportlab` added); all 7 relevant package licenses verified MIT (registry updated). Interactive-dependent validations (plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens) are load-validated and marked interactive-by-design.
 - Alternatives: Defer — rejected: the evidence was obtainable.
 - Rationale: Validation-before-promotion; honest statuses where interactive-only.
+
+### D22 — Engineering Intelligence Layer v1 established
+
+- Date: 2026-08-03
+- Context: Milestone 8 mandate — build the first version of the intelligence layer without a separate engine (architecture design rule: intelligence = workflow composition).
+- Decision: Implemented as platform-owned artifacts: `capabilities/skills/repository-intelligence/` (repo analysis protocol) and five prompt templates (`workflow`, `decide`, `plan-next`, `review-architecture`, `self-eval`), plus the orchestration rules, context strategy, and self-evaluation framework recorded in `docs/ARCHITECTURE.md`.
+- Behaviorally validated 2026-08-03: repository-intelligence (full repo analysis produced), plan-next (correctly audited the uncommitted state and flagged missing registry rows + premature validation claim), decide (evidence-based browser-decision analysis). self-eval: load-validated; behavioral run interrupted by environment — pending (its dimensions were partially exercised by the plan-next audit).
+- Alternatives: Build a dedicated decision engine service — rejected: violates the design rule; adds infrastructure without measured value.
+- Rationale: The layer assists judgment via validated, composable protocols — no new architecture.
+
+### D23 — Browser decision review (challenge confirmed)
+
+- Date: 2026-08-03
+- Context: The `/decide` protocol re-evaluated D17's playwright preference against current evidence.
+- Decision: Keep chrome-devtools. D17's gate ("concrete E2E need") is not met — this repository contains no application under test; D13 had already rejected playwright for the same reason; token-economy claims are contested by conflicting benchmarks. chrome-devtools license verified Apache-2.0 (registry updated). Playwright swap remains gated on a demonstrated E2E need.
+- Alternatives: Swap now, or run both — rejected: cost without need, and duplication violates the consolidation principle (D20).
+- Rationale: Challenge assumptions with evidence; a prior decision (D17 preference) is refined without a new dependency, and no change is needed to DECISIONS/decision rules — the gate already encoded this outcome.
