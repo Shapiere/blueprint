@@ -107,7 +107,7 @@ Uninstall: `pi remove <source>`.
 
 ## Extensions
 
-- `~/.pi/agent/extensions/power-tools.ts` — custom tools `repo_tree`, `git_log`; command `/power-tools`; hot-reload with `/reload`.
+- `~/.pi/agent/extensions/power-tools.ts` — custom tools `repo_tree`, `git_log`; command `/power-tools`; hot-reload with `/reload`. Strict type-check PASS 2026-08-21 (TypeScript 7.0.2 vs global pi type declarations; source: `capabilities/extensions/power-tools.ts`).
 - Source of truth for its content: the file itself (review before changing; extensions run with full permissions).
 
 ## Skills (11 discovered, 2026-08-02)
@@ -130,7 +130,7 @@ Uninstall: `pi remove <source>`.
 - `review.md` — consolidated four-dimension review (Wave 2).
 - `explain.md` — deep-dive explanation of a file or symbol.
 - Intelligence layer (Milestone 8+9): `workflow.md` (orchestrator rules v2), `decide.md` (decision engine), `plan-next.md` (planning), `review-architecture.md` (architecture review), `self-eval.md` (self-evaluation), `debug.md` (debugging protocol), `perf.md` (performance protocol), `metrics.md` (metrics manifest), `memory.md` (engineering memory protocol).
-- Sources: `capabilities/prompts/` (deployment copies are synced from the repository).
+- Sources: `capabilities/prompts/` (deployment copies are synced from the repository). Sync re-verified 2026-08-21: 12/12 templates identical.
 
 ## MCP
 

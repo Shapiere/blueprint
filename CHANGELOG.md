@@ -54,6 +54,15 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `docs`: certify foundation and transition to Continuous Evolution (D30)
 - `docs`: close milestone 10 — Production Hardening & Real-World Readiness (verdict: certified; see completion report)
 
+## 2026-08-21
+
+- `docs`: resolve open question — repository consumption scope: single primary Harness Pi environment, no other machines or agents consume it as their source of truth ([docs/DECISIONS.md](docs/DECISIONS.md) D31)
+- `docs`: complete `/self-eval` behavioral run — five-dimension evaluation against repository evidence, all dimensions PASS (registry: `capabilities/index.md`)
+- `docs`: complete `/metrics` behavioral run — maturity 88% (29/33 active), validation coverage 94% (31/33 validated); trend up from the D26 baseline (79%/89%)
+- `docs`: validate power-tools extension — strict type-check PASS (TypeScript 7.0.2 against the global pi installation's bundled type declarations, zero-footprint; D29 trigger satisfied without a repo-local dev setup)
+- `docs`: verify prompt deployment sync — `capabilities/prompts/` ≡ `~/.pi/agent/prompts/` (12/12 identical)
+- `docs`: consolidate TODO carried-forward items into the Continuous Evolution section (remove duplication)
+
 ## Notes
 
 - Entries must be added in the same session as the change they describe (capture loop).

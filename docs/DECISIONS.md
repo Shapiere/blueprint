@@ -250,6 +250,7 @@ Decision log. Every entry uses the template below. This file owns the history of
 - Decision: (a) power-tools.ts type-check deferred — runtime smoke evidence exists (tools validated behaviorally 08-02); static type-checking requires module resolution against the global pi packages, which is fragile outside a repo-local dev setup; revisit with a dev setup (TODO). (b) Permission configuration remains host-side (`~/.pi/agent/extensions/.../config.json`), described not stored in the repository (secrets policy, D2/D3). (c) Memory MCP storage confirmed outside the repository (no `memory.json` in the tree). (d) Secret scanning now enforced by the verify script (D28).
 - Alternatives: Add a dev toolchain to the repository for type-checking — rejected: adds dependency surface without a current consumer need.
 - Rationale: Honest evidence-based hardening; the two real risks (secrets, consistency) get automated guards, the cosmetic one (type-check) gets a trigger.
+- Resolution (2026-08-21): item (a) closed — strict type-check executed zero-footprint (TypeScript 7.0.2 via ephemeral `npx`; module resolution mapped to the global pi installation's bundled type declarations; no repo-local dev setup added). PASS, no findings; the fragility concern did not materialize.
 
 ### D30 — Foundation certification and transition to Continuous Evolution
 
@@ -258,3 +259,11 @@ Decision log. Every entry uses the template below. This file owns the history of
 - Decision: Certified per the M10 engineering certification (report): architecture stable, governance mature, maintainability acceptable, overengineering under control. From this milestone on: no predefined construction milestones; changes enter via the capability lifecycle, capture loop, and trigger-based integrations, driven by real engineering needs. Stable core: architecture, governance, lifecycle, registry, ownership matrix. Evolving: capabilities, intelligence versions, prompts, templates. Experimental features: isolated until validated (Wave-4 rule). Versioning: constitution v1.x via amendment; capability pins in the registry.
 - Alternatives: Continue milestone-driven construction — rejected: the platform is built; further construction would be feature growth without need.
 - Rationale: The certification is evidence-based; evolution-by-need is the long-term sustainability posture.
+
+### D31 — Repository consumption scope resolved: single primary environment
+
+- Date: 2026-08-21
+- Context: Open question (carried since Milestone 2 in `PROJECT_STATE.md` and `NEXT_SESSION.md`): whether other machines or agents consume this repository as their source of truth. It could not be determined from repository evidence and required user input. Consumption scope calibrates governance: multiple consumers would require stability guarantees, deprecation notice practices, and change coordination.
+- Decision: Resolved per user input (2026-08-21): the repository is the single source of truth for **one primary Harness Pi environment**; no other machines or AI agents actively consume it as their source of truth. Governance remains single-consumer: no stability/deprecation contract beyond the capture loop; ownership matrix, registry schema, and lifecycle unchanged. Re-open trigger: a second machine or agent begins consuming the repository as its source of truth — then revisit change-notice and cold-install cadence practices.
+- Alternatives: (a) Assume multi-consumer and add stability machinery (versioned contracts, deprecation windows) — rejected: complexity without a demonstrated need (Never Overengineer); (b) leave the question unresolved — rejected: governance calibration was blocked on it.
+- Rationale: Governance scope is now recorded from authoritative input rather than assumption; the re-open trigger keeps the decision honest if reality changes.

@@ -34,6 +34,7 @@ Current status snapshot. History lives in [CHANGELOG.md](CHANGELOG.md); this fil
 - Milestone 8: Engineering Intelligence Layer v1 — repository-intelligence skill + five intelligence prompt templates + orchestrator rules ([docs/DECISIONS.md](docs/DECISIONS.md) D22/D23); behaviorally validated (repo analysis, plan-next audit, decide analysis).
 - Milestone 9: intelligence v2 — repository-intelligence v2 modules, orchestration v2 rules, debug/perf/metrics/memory templates; memory MCP integrated (validated); Wave 3 deferrals recorded with triggers (D25); metrics baseline (D26); memory strategy (D27).
 - Milestone 10: production hardening — verification script adopted (D28), hardening decisions (D29), foundation certified, transition to Continuous Evolution (D30).
+- Continuous Evolution (2026-08-21): repository consumption scope resolved — single primary environment, no other consumers ([docs/DECISIONS.md](docs/DECISIONS.md) D31); `/self-eval` and `/metrics` behavioral runs completed (registry updated); power-tools strict type-check PASS (D29 trigger satisfied zero-footprint); prompt deployment sync verified (12/12 identical).
 
 ## In Flight
 
@@ -45,9 +46,9 @@ Nothing.
 
 ## Open Questions
 
-1. Whether other machines or agents consume this repository — cannot be determined from repository evidence; requires user input; **Pending**.
+None open.
 
-(Resolved during Milestone 2: remote visibility is **public** — `docs/DECISIONS.md` D11. Resolved during Milestone 6: subagent-layer and browser-server decisions recorded — D17.)
+(Resolved 2026-08-21: repository consumption scope — single primary Harness Pi environment, no other machines or agents consume it as their source of truth; `docs/DECISIONS.md` D31. Resolved during Milestone 2: remote visibility is **public** — D11. Resolved during Milestone 6: subagent-layer and browser-server decisions — D17.)
 
 ## Known Gaps
 

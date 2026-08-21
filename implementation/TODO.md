@@ -53,13 +53,11 @@ Concrete actionable tasks. Priorities and milestone context live in [ROADMAP.md]
 
 ## Carried Forward (requires interactive session, environment stability, or user input)
 
-- [ ] `/self-eval` behavioral run — environment-interrupted (two attempts, M8–M9).
-- [ ] `/metrics` automated run — baseline computed directly (D26); template run pending.
-- [ ] Interactive validations: plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens (TUI session).
-- [ ] Full cold-install on a fresh machine (restore steps 1–3, 6–9).
-- [ ] Interactive `/login` flow on a fresh machine.
-- [ ] Confirm open question 2 (other machines/agents consuming this repository) — requires user input.
-- [ ] pi-web-access search — activate with an API key.
+- [x] `/self-eval` behavioral run — done 2026-08-21 (five-dimension run against repository evidence, all PASS; registry updated).
+- [x] `/metrics` automated run — done 2026-08-21 (full manifest computed from live evidence; registry updated).
+- [x] Confirm open question 2 (other machines/agents consuming this repository) — resolved 2026-08-21: single primary environment (`docs/DECISIONS.md` D31).
+
+(Remaining open items consolidated into the Continuous Evolution section below, 2026-08-21 — this section previously duplicated them.)
 
 ## Milestone 10 — Production Hardening (complete 2026-08-03)
 
@@ -69,14 +67,14 @@ Concrete actionable tasks. Priorities and milestone context live in [ROADMAP.md]
 
 ## Continuous Evolution (post-foundation maintenance)
 
-- [ ] `/self-eval` behavioral run — environment-interrupted (M8–M10).
-- [ ] `/metrics` automated run — baseline computed directly (D26); scripted run pending.
+- [x] `/self-eval` behavioral run — done 2026-08-21 (registry: `capabilities/index.md`).
+- [x] `/metrics` automated run — done 2026-08-21 (trend vs D26 baseline: maturity 79→88%, coverage 89→94%).
+- [x] power-tools type-check — done 2026-08-21: strict type-check PASS (TypeScript 7.0.2 vs global pi type declarations, zero-footprint; D29 trigger satisfied without a repo-local dev setup).
+- [x] Confirm open question 2 (other machines/agents) — resolved 2026-08-21 (D31).
 - [ ] Interactive validations: plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens (TUI session).
-- [ ] power-tools type-check — via a repo-local dev setup (D29 trigger).
 - [ ] Trigger-based integrations when they fire: GitHub MCP (PAT), piolium (container), playwright (E2E need).
 - [ ] Full cold-install on a fresh machine (restore steps 1–3, 6–9).
 - [ ] Interactive `/login` flow on a fresh machine.
-- [ ] Confirm open question 2 (other machines/agents) — requires user input.
 - [ ] pi-web-access search — activate with an API key.
 
 ## Backlog (candidates, require justification before adoption)

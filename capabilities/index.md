@@ -4,13 +4,13 @@
 
 Single source of truth for platform capabilities: what is installed, at what version, in what lifecycle stage, with what validation evidence. Deployment paths live in `docs/SETUP.md`; this file owns status. One row per capability; status changes require the capture loop (CHANGELOG + registry in the same session).
 
-**Last updated: 2026-08-03 (Milestone 7 — Wave 2)**
+**Last updated: 2026-08-21 (Continuous Evolution — validation completions)**
 
 ## Registry
 
 | Capability | Source | Version/pin | Category | Status | Adaptation | Validation | Lifecycle stage | License | Last verified |
 |---|---|---|---|---|---|---|---|---|---|
-| power-tools | local extension | — | Extension | active | — | PASS 2026-08-02 (repo_tree, git_log) | Maintenance | — | 2026-08-02 |
+| power-tools | local extension | — | Extension | active | — | PASS 2026-08-02 (repo_tree, git_log); strict type-check PASS 2026-08-21 (TS 7.0.2 vs global pi types, zero-footprint — D29 trigger satisfied) | Maintenance | — | 2026-08-21 |
 | pi-web-access | npm | 0.17.1 | Extension | installed | — | pending (search requires API key) | Maintenance | MIT | 2026-08-03 |
 | pi-mcp-adapter | npm | 2.17.0 | Extension (foundation) | active | — | PASS 2026-08-03 (MCP exercises) | Maintenance | MIT | 2026-08-03 |
 | pi-lens | npm | 3.8.74 | Extension | installed | — | pending (editor-side, interactive) | Maintenance | MIT | 2026-08-03 |
@@ -37,11 +37,11 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | plan-next | platform-owned prompt | — | Prompt (planning) | **active** | authored | PASS 2026-08-03 (behavioral: repo state audit) | Maintenance | — | 2026-08-03 |
 | workflow | platform-owned prompt | — | Prompt (orchestrator rules) | **active** | authored, v2 rules | PASS 2026-08-03 (rules exercised by decide/plan-next/repo-intel runs) | Maintenance | — | 2026-08-03 |
 | review-architecture | platform-owned prompt | — | Prompt (architecture review) | **active** | authored | load-validated 2026-08-03 | Maintenance | — | 2026-08-03 |
-| self-eval | platform-owned prompt | — | Prompt (self-evaluation) | **installed** | authored | load-validated; behavioral run interrupted by environment (pending) | Maintenance | — | 2026-08-03 |
+| self-eval | platform-owned prompt | — | Prompt (self-evaluation) | **active** | authored | PASS 2026-08-21 (behavioral: five-dimension run against repository evidence, all dimensions PASS) | Maintenance | — | 2026-08-21 |
 | memory (MCP server) | MCP (npx) | latest | MCP server | **active** | as-is | PASS 2026-08-03 (entity + observation via proxy) | Maintenance | MIT | 2026-08-03 |
 | debug | platform-owned prompt | — | Prompt (debugging protocol) | **active** | authored | load-validated 2026-08-03 | Maintenance | — | 2026-08-03 |
 | perf | platform-owned prompt | — | Prompt (performance protocol) | **active** | authored | load-validated 2026-08-03 | Maintenance | — | 2026-08-03 |
-| metrics | platform-owned prompt | — | Prompt (metrics manifest) | **active** | authored | load-validated; behavioral run environment-degraded (values computed directly, D26) | Maintenance | — | 2026-08-03 |
+| metrics | platform-owned prompt | — | Prompt (metrics manifest) | **active** | authored | PASS 2026-08-21 (behavioral: full manifest computed from live evidence; trend vs D26 baseline) | Maintenance | — | 2026-08-21 |
 | memory (protocol) | platform-owned prompt | — | Prompt (engineering memory) | **active** | authored | load-validated 2026-08-03 | Maintenance | — | 2026-08-03 |
 | verify | platform-owned script | — | Automation | **active** | authored (stdlib-only) | PASS 2026-08-03 (caught D24 ordering defect; all checks green after fix) | Maintenance | — | 2026-08-03 |
 
