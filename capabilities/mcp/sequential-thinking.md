@@ -11,7 +11,7 @@ Config fragment and notes for the official sequential-thinking MCP server (struc
   "mcpServers": {
     "sequential-thinking": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking@2026.7.4"]
     }
   }
 }
@@ -21,7 +21,7 @@ Deployed at `~/.config/mcp/mcp.json`.
 
 ## Validation
 
-- PASS 2026-08-03: `sequential_thinking` invoked via the mcp proxy tool — thought chain ran and concluded (2+2 = 4).
+- PASS 2026-08-03: `sequential_thinking` invoked via the mcp proxy tool. Re-verified 2026-08-21: pinned 2026.7.4 tool call `sequentialthinking` executed PASS.
 - Purpose: reasoning scaffold; particularly valuable for the default free-tier model.
 
 ## Notes

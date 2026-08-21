@@ -15,7 +15,7 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | pi-mcp-adapter | npm | 2.17.0 | Extension (foundation) | active | — | PASS 2026-08-03 (MCP exercises) | Maintenance | MIT | 2026-08-03 |
 | pi-lens | npm | 3.8.74 | Extension | installed | — | pending (editor-side, interactive) | Maintenance | MIT | 2026-08-03 |
 | badlogic/pi-skills | git | latest | Skills (8) | active | via settings | PASS 2026-08-02 (discovery) | Maintenance | MIT (repo) | 2026-08-02 |
-| chrome-devtools | MCP (npx) | latest | MCP server | active | — | PASS 2026-08-03 (first use) | Maintenance | Apache-2.0 (verified) | 2026-08-03 |
+| chrome-devtools | MCP (npx) | 1.7.0 | MCP server | active | — | PASS 2026-08-03 (first use); re-verified 2026-08-21 (pinned 1.7.0 handshake + 29 tools) | Maintenance | Apache-2.0 (verified) | 2026-08-21 |
 | commit / explain | local prompts | — | Prompt templates | active | — | PASS 2026-08-02 | Maintenance | — | 2026-08-02 |
 | **review (consolidated)** | local prompt | — | Prompt template | active | Codex dimensions merged (D20) | PASS 2026-08-03 (deployed) | Maintenance | — | 2026-08-03 |
 | img2threejs + 10 skills | claude/codex/pi dirs | — | Skills | active | — | PASS 2026-08-02 | Maintenance | — | 2026-08-02 |
@@ -23,8 +23,8 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | pi-permission-system | npm:@gotgenes/pi-permission-system | 24.0.0 | Extension | active | path protection + bash + external-dir | PASS 2026-08-03 (deny tests, both waves) | Maintenance | MIT | 2026-08-03 |
 | pi-plan-mode | npm:@narumitw/pi-plan-mode | 0.44.0 | Extension | active | as-is | PASS 2026-08-03 (load); enforcement interactive | Maintenance | UNVERIFIED | 2026-08-03 |
 | pi-fff | npm:@ff-labs/pi-fff | 0.10.1 | Extension | active | as-is | PASS 2026-08-03 (fffind) | Maintenance | MIT | 2026-08-03 |
-| sequential-thinking | MCP (npx) | latest | MCP server | active | as-is | PASS 2026-08-03 | Maintenance | MIT | 2026-08-03 |
-| context7 | MCP (npx) | latest | MCP server | active | as-is | PASS 2026-08-03 | Maintenance | MIT | 2026-08-03 |
+| sequential-thinking | MCP (npx) | 2026.7.4 | MCP server | active | as-is | PASS 2026-08-03; re-verified 2026-08-21 (pinned 2026.7.4 tool call PASS) | Maintenance | MIT | 2026-08-21 |
+| context7 | MCP (npx) | 4.0.3 | MCP server | active | as-is | PASS 2026-08-03; re-verified 2026-08-21 (pinned 4.0.3 tool call PASS) | Maintenance | MIT | 2026-08-21 |
 | anthropics doc skills | anthropics/skills | latest | Skills (4) | active | referenced (license) | PASS 2026-08-03 (discovery; **pdf functional PASS** with pypdf) | Maintenance | source-available (personal use) | 2026-08-03 |
 | superpowers methodology skills | obra/superpowers | latest | Skills (4) | active | ported as-is (framework-free) | PASS 2026-08-03 (discovery) | Maintenance | MIT | 2026-08-03 |
 | frontend-design, skill-creator | anthropics/skills | latest | Skills (2) | active | referenced | PASS 2026-08-03 (discovery) | Maintenance | Apache-2.0 | 2026-08-03 |
@@ -38,7 +38,7 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | workflow | platform-owned prompt | — | Prompt (orchestrator rules) | **active** | authored, v2 rules | PASS 2026-08-03 (rules exercised by decide/plan-next/repo-intel runs) | Maintenance | — | 2026-08-03 |
 | review-architecture | platform-owned prompt | — | Prompt (architecture review) | **active** | authored | load-validated 2026-08-03 | Maintenance | — | 2026-08-03 |
 | self-eval | platform-owned prompt | — | Prompt (self-evaluation) | **active** | authored | PASS 2026-08-21 (behavioral: five-dimension run against repository evidence, all dimensions PASS) | Maintenance | — | 2026-08-21 |
-| memory (MCP server) | MCP (npx) | latest | MCP server | **active** | as-is | PASS 2026-08-03 (entity + observation via proxy) | Maintenance | MIT | 2026-08-03 |
+| memory (MCP server) | MCP (npx) | 2026.7.4 | MCP server | **active** | as-is | PASS 2026-08-03; re-verified 2026-08-21 (pinned 2026.7.4 tool call PASS) | Maintenance | MIT | 2026-08-21 |
 | debug | platform-owned prompt | — | Prompt (debugging protocol) | **active** | authored | load-validated 2026-08-03 | Maintenance | — | 2026-08-03 |
 | perf | platform-owned prompt | — | Prompt (performance protocol) | **active** | authored | load-validated 2026-08-03 | Maintenance | — | 2026-08-03 |
 | metrics | platform-owned prompt | — | Prompt (metrics manifest) | **active** | authored | PASS 2026-08-21 (behavioral: full manifest computed from live evidence; trend vs D26 baseline) | Maintenance | — | 2026-08-21 |

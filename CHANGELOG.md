@@ -62,6 +62,9 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `docs`: validate power-tools extension — strict type-check PASS (TypeScript 7.0.2 against the global pi installation's bundled type declarations, zero-footprint; D29 trigger satisfied without a repo-local dev setup)
 - `docs`: verify prompt deployment sync — `capabilities/prompts/` ≡ `~/.pi/agent/prompts/` (12/12 identical)
 - `docs`: consolidate TODO carried-forward items into the Continuous Evolution section (remove duplication)
+- `fix`: correct 9router documented version in setup inventory — 0.5.45 → 0.5.55 (verified installed and active; matches npm latest; health check HTTP 200)
+- `fix`: pin all four MCP servers to concrete verified versions — `chrome-devtools-mcp@1.7.0`, `@modelcontextprotocol/server-sequential-thinking@2026.7.4`, `@upstash/context7-mcp@4.0.3`, `@modelcontextprotocol/server-memory@2026.7.4` ([docs/DECISIONS.md](docs/DECISIONS.md) D32)
+- `docs`: add missing memory MCP server note fragment (`capabilities/mcp/memory.md`) and update server counts and validation metadata in `docs/SETUP.md` and `capabilities/index.md`
 
 ## Notes
 

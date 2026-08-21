@@ -4,7 +4,7 @@
 
 Everything required to rebuild this environment from scratch, and the current state of the Pi installation. Unknown information is marked **Pending** — never invent configuration.
 
-**Last verified: 2026-08-03** (re-verified during Milestone 7 Wave 2; refresh via the capture loop on every setup change).
+**Last verified: 2026-08-21** (9router and MCP servers re-verified; refresh via the capture loop on every setup change).
 
 ---
 
@@ -59,9 +59,9 @@ Everything required to rebuild this environment from scratch, and the current st
 
 ## 9router Service
 
-- Package: `9router@0.5.45` (npm global; binary `9router`). Install/update: `npm install -g 9router`.
+- Package: `9router@0.5.55` (npm global; binary `9router`). Install/update: `npm install -g 9router`.
 - Start: run `9router` in a terminal. The CLI spawns `node app/custom-server.js` and waits for the port (default `127.0.0.1:20128`; `-l` shows server logs, `-p <port>` overrides).
-- Verified 2026-08-02: process tree `powershell -> node cli.js -> node app/custom-server.js`; listener on `0.0.0.0:20128`. No autostart registration found (Run keys, scheduled tasks, services) — the service is started manually and must be running before Pi is used.
+- Verified 2026-08-21: installed `9router@0.5.55` (npm latest); health check HTTP 200 on `127.0.0.1:20128/v1/models`. Started manually before Pi is used.
 
 ## Auth
 
@@ -135,14 +135,14 @@ Uninstall: `pi remove <source>`.
 ## MCP
 
 - Adapter: `pi-mcp-adapter` (package, installed).
-- Config: `~/.config/mcp/mcp.json` — three servers:
-  - `chrome-devtools` (`npx -y chrome-devtools-mcp@latest`) — validated 2026-08-03
-  - `sequential-thinking` (`npx -y @modelcontextprotocol/server-sequential-thinking`) — validated 2026-08-03
-  - `context7` (`npx -y @upstash/context7-mcp`) — validated 2026-08-03
-  - `memory` (`npx -y @modelcontextprotocol/server-memory`) — validated 2026-08-03 (entity + observation via proxy)
+- Config: `~/.config/mcp/mcp.json` — four servers (pinned to concrete versions, D32):
+  - `chrome-devtools` (`npx -y chrome-devtools-mcp@1.7.0`) — validated 2026-08-03; pinned 2026-08-21 (29 tools)
+  - `sequential-thinking` (`npx -y @modelcontextprotocol/server-sequential-thinking@2026.7.4`) — validated 2026-08-03; pinned 2026-08-21
+  - `context7` (`npx -y @upstash/context7-mcp@4.0.3`) — validated 2026-08-03; pinned 2026-08-21
+  - `memory` (`npx -y @modelcontextprotocol/server-memory@2026.7.4`) — validated 2026-08-03; pinned 2026-08-21 (entity + observation via proxy)
 - Also read automatically: `.mcp.json`, `~/.agents/mcp.json`, host configs via `/mcp setup`.
 - Manage: `/mcp` in Pi; servers start lazily on first tool use.
-- Server notes and config fragments: [chrome-devtools](../capabilities/mcp/chrome-devtools.md), [sequential-thinking](../capabilities/mcp/sequential-thinking.md), [context7](../capabilities/mcp/context7.md).
+- Server notes and config fragments: [chrome-devtools](../capabilities/mcp/chrome-devtools.md), [sequential-thinking](../capabilities/mcp/sequential-thinking.md), [context7](../capabilities/mcp/context7.md), [memory](../capabilities/mcp/memory.md).
 
 ## Permission System
 
@@ -186,7 +186,7 @@ Extensions hot-reload with `/reload` inside Pi. Sessions persist under `~/.pi/ag
 6. Apply `settings.json` keys from the Settings table.
 7. `pi install` the nine packages (see Packages table).
 8. Copy `extensions/power-tools.ts` (source: `capabilities/extensions/`), `prompts/*.md` (source: `capabilities/prompts/`), and register skills per `capabilities/skills/NOTES.md`.
-9. Write `~/.config/mcp/mcp.json` (three servers; fragments in `capabilities/mcp/`) and the permission config per the Permission System section.
+9. Write `~/.config/mcp/mcp.json` (four servers; fragments in `capabilities/mcp/`) and the permission config per the Permission System section.
 
 Validation status: steps 4–5 verified via fresh-config simulation (temp agent dir, documented files, placeholder auth; output `FRESH_OK`, 2026-08-02). Steps 1–3 and 6–9 verified by checklist against the live machine. Full fresh-machine execution remains pending (see `implementation/TODO.md`).
 

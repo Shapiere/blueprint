@@ -11,7 +11,7 @@ Config fragment and notes for the chrome-devtools MCP server (browser automation
   "mcpServers": {
     "chrome-devtools": {
       "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest"]
+      "args": ["-y", "chrome-devtools-mcp@1.7.0"]
     }
   }
 }
@@ -21,7 +21,7 @@ Deployed at `~/.config/mcp/mcp.json`.
 
 ## Validation
 
-- PASS 2026-08-03: first use via the mcp proxy tool — 29 `chrome_devtools_*` tools discovered and listed (lazy start works).
+- PASS 2026-08-03: first use via the mcp proxy tool — 29 `chrome_devtools_*` tools discovered and listed (lazy start works). Re-verified 2026-08-21: pinned 1.7.0 handshake + 29 tools listed PASS.
 - Purpose: browser workflows (navigation, snapshots, screenshots, script evaluation).
 
 ## Notes
