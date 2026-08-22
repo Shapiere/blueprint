@@ -3,15 +3,17 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as child_process from "node:child_process";
 import * as os from "node:os";
+import * as crypto from "node:crypto";
 
 /**
- * runtime-orchestrator: Runtime Abstraction Layer (RAL) Foundation for Harness Pi.
+ * runtime-orchestrator: Runtime Abstraction Layer (RAL) v1 Foundation & Sync for Harness Pi.
  *
  * Responsibilities:
  * 1. Startup supervision: checks 9router health on startup, attempts auto-start if down.
  * 2. Project topology detection: fast, synchronous inspection of workspace markers.
  * 3. Minimal context injection: injects concise active workspace topology into system prompt.
  * 4. /doctor diagnostic command: verifies Pi, 9router, MCP servers, permissions, and extensions.
+ * 5. /sync command (RAL Phase 2): one-way deterministic sync from Blueprint repo to runtime.
  *
  * Designed with zero external dependencies (Node.js stdlib only).
  */
@@ -25,18 +27,132 @@ export interface ProjectTopology {
   hasTests?: boolean;
 }
 
+export type SyncActionStatus =
+  | "unchanged"
+  | "updated"
+  | "created"
+  | "conflict"
+  | "protected"
+  | "skipped"
+  | "failed";
+
+export interface SyncItemResult {
+  assetName: string;
+  category: "prompts" | "extensions" | "skills" | "mcp" | "protected";
+  sourcePath?: string;
+  runtimePath: string;
+  status: SyncActionStatus;
+  detail?: string;
+  sourceHash?: string;
+  runtimeHash?: string;
+}
+
+export interface SyncSummary {
+  dryRun: boolean;
+  repoPath?: string;
+  items: SyncItemResult[];
+  counts: Record<SyncActionStatus, number>;
+}
+
 const ROUTER_ENDPOINT = "http://127.0.0.1:20128/v1/models";
 const ROUTER_HEALTH_TIMEOUT_MS = 1500;
+const DEFAULT_BLUEPRINT_REPO_PATH = "G:/pisetup";
 
 /**
- * Cached topology per working directory to avoid redundant disk reads within a session.
+ * State store path for tracking baseline hashes of deployed assets.
  */
+const SYNC_STATE_FILE = path.join(os.homedir(), ".pi", "agent", "sync-state.json");
+
+interface SyncStateStore {
+  lastSyncTime?: string;
+  repoGitCommit?: string;
+  hashes: Record<string, { sourceHash: string; runtimeHash: string; timestamp: string }>;
+}
+
 const topologyCache = new Map<string, ProjectTopology>();
 
 function sleep(ms: number): Promise<void> {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+/**
+ * Calculates SHA256 content hash of a file or directory string.
+ */
+export function hashContent(content: string | Buffer): string {
+  return crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
+}
+
+/**
+ * Computes hash of a single file on disk (returns empty if missing).
+ */
+export function hashFile(filePath: string): string {
+  if (!fs.existsSync(filePath)) return "";
+  try {
+    const data = fs.readFileSync(filePath);
+    return hashContent(data);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Computes hash of a directory recursively (stable order).
+ */
+export function hashDirectory(dirPath: string): string {
+  if (!fs.existsSync(dirPath)) return "";
+  try {
+    const stat = fs.statSync(dirPath);
+    if (!stat.isDirectory()) return hashFile(dirPath);
+
+    const files: string[] = [];
+    function collect(d: string, rel: string) {
+      const entries = fs.readdirSync(d, { withFileTypes: true });
+      entries.sort((a, b) => a.name.localeCompare(b.name));
+      for (const entry of entries) {
+        const full = path.join(d, entry.name);
+        const r = rel ? `${rel}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          collect(full, r);
+        } else {
+          const h = hashFile(full);
+          files.push(`${r}:${h}`);
+        }
+      }
+    }
+    collect(dirPath, "");
+    return hashContent(files.join("\n"));
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Reads persistent sync state store.
+ */
+export function loadSyncState(): SyncStateStore {
+  if (!fs.existsSync(SYNC_STATE_FILE)) {
+    return { hashes: {} };
+  }
+  try {
+    return JSON.parse(fs.readFileSync(SYNC_STATE_FILE, "utf-8")) as SyncStateStore;
+  } catch {
+    return { hashes: {} };
+  }
+}
+
+/**
+ * Saves persistent sync state store.
+ */
+export function saveSyncState(state: SyncStateStore): void {
+  try {
+    const dir = path.dirname(SYNC_STATE_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(SYNC_STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+  } catch {
+    // Non-fatal
+  }
 }
 
 /**
@@ -52,7 +168,6 @@ export function detectProjectTopology(cwd: string): ProjectTopology {
     type: "Generic",
   };
 
-  // 1. Git detection (direct file read, zero subprocess overhead)
   const gitHeadPath = path.join(cwd, ".git", "HEAD");
   if (fs.existsSync(gitHeadPath)) {
     try {
@@ -60,14 +175,13 @@ export function detectProjectTopology(cwd: string): ProjectTopology {
       if (headContent.startsWith("ref: refs/heads/")) {
         topology.gitBranch = headContent.replace("ref: refs/heads/", "");
       } else {
-        topology.gitBranch = headContent.slice(0, 7); // detached commit hash
+        topology.gitBranch = headContent.slice(0, 7);
       }
     } catch {
       topology.gitBranch = "detected";
     }
   }
 
-  // 2. Node.js / TypeScript / JavaScript (package.json)
   const pkgJsonPath = path.join(cwd, "package.json");
   if (fs.existsSync(pkgJsonPath)) {
     try {
@@ -76,14 +190,12 @@ export function detectProjectTopology(cwd: string): ProjectTopology {
       topology.name = pkg.name || dirName;
       topology.type = isTs ? "TypeScript / Node" : "JavaScript / Node";
 
-      // Detect package manager from lockfiles
       if (fs.existsSync(path.join(cwd, "pnpm-lock.yaml"))) topology.packageManager = "pnpm";
       else if (fs.existsSync(path.join(cwd, "yarn.lock"))) topology.packageManager = "yarn";
       else if (fs.existsSync(path.join(cwd, "bun.lockb")) || fs.existsSync(path.join(cwd, "bun.lock"))) topology.packageManager = "bun";
       else if (fs.existsSync(path.join(cwd, "package-lock.json"))) topology.packageManager = "npm";
       else topology.packageManager = "npm";
 
-      // Framework detection from dependencies
       const deps: Record<string, string | undefined> = { ...pkg.dependencies, ...pkg.devDependencies };
       if (deps["next"]) topology.framework = "Next.js";
       else if (deps["@remix-run/react"] || deps["@remix-run/node"]) topology.framework = "Remix";
@@ -102,12 +214,9 @@ export function detectProjectTopology(cwd: string): ProjectTopology {
       }
       topologyCache.set(cwd, topology);
       return topology;
-    } catch {
-      // Malformed package.json, fallback
-    }
+    } catch {}
   }
 
-  // 3. Rust (Cargo.toml)
   const cargoPath = path.join(cwd, "Cargo.toml");
   if (fs.existsSync(cargoPath)) {
     topology.type = "Rust";
@@ -125,7 +234,6 @@ export function detectProjectTopology(cwd: string): ProjectTopology {
     } catch {}
   }
 
-  // 4. Python (pyproject.toml, requirements.txt, setup.py)
   const pyprojectPath = path.join(cwd, "pyproject.toml");
   const reqsPath = path.join(cwd, "requirements.txt");
   if (fs.existsSync(pyprojectPath) || fs.existsSync(reqsPath) || fs.existsSync(path.join(cwd, "setup.py"))) {
@@ -158,7 +266,6 @@ export function detectProjectTopology(cwd: string): ProjectTopology {
     return topology;
   }
 
-  // 5. Go (go.mod)
   const goModPath = path.join(cwd, "go.mod");
   if (fs.existsSync(goModPath)) {
     topology.type = "Go";
@@ -175,7 +282,6 @@ export function detectProjectTopology(cwd: string): ProjectTopology {
     return topology;
   }
 
-  // 6. Roblox Studio (default.project.json / Rojo)
   const rojoPath = path.join(cwd, "default.project.json");
   if (fs.existsSync(rojoPath)) {
     topology.type = "Roblox Studio (Luau)";
@@ -188,14 +294,10 @@ export function detectProjectTopology(cwd: string): ProjectTopology {
     return topology;
   }
 
-  // Fallback generic
   topologyCache.set(cwd, topology);
   return topology;
 }
 
-/**
- * Formats a concise topology string suitable for system prompt context (~30-50 tokens).
- */
 export function formatTopologyContext(topo: ProjectTopology): string {
   const parts: string[] = [`Active Workspace: ${topo.name} (${topo.type})`];
   const meta: string[] = [];
@@ -210,9 +312,6 @@ export function formatTopologyContext(topo: ProjectTopology): string {
   return parts.join("\n");
 }
 
-/**
- * Checks 9router HTTP endpoint health.
- */
 export async function check9routerHealth(): Promise<{ ok: boolean; modelCount?: number; error?: string }> {
   try {
     const controller = new AbortController();
@@ -233,13 +332,9 @@ export async function check9routerHealth(): Promise<{ ok: boolean; modelCount?: 
   }
 }
 
-/**
- * Lightweight 9router auto-start attempt.
- */
 export async function autoStart9router(ctx: ExtensionContext): Promise<boolean> {
   ctx.ui.setStatus("9router", "starting…");
   try {
-    // Spawn 9router detached so it survives outside this process
     const child = child_process.spawn("9router", [], {
       detached: true,
       stdio: "ignore",
@@ -247,7 +342,6 @@ export async function autoStart9router(ctx: ExtensionContext): Promise<boolean> 
     });
     child.unref();
 
-    // Poll for up to 3.5 seconds
     for (let i = 0; i < 7; i++) {
       await sleep(500);
       const health = await check9routerHealth();
@@ -257,22 +351,364 @@ export async function autoStart9router(ctx: ExtensionContext): Promise<boolean> 
         return true;
       }
     }
-  } catch (err) {
-    // Auto-start failed
-  }
+  } catch {}
 
   ctx.ui.setStatus("9router", "offline");
   ctx.ui.notify("9router is offline (:20128). Run '9router' in a terminal.", "warning");
   return false;
 }
 
+/**
+ * Deep recursive copy of directory or file with explicit error handling.
+ */
+function copyRecursive(src: string, dest: string): void {
+  const stat = fs.statSync(src);
+  if (stat.isDirectory()) {
+    if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+    const entries = fs.readdirSync(src);
+    for (const entry of entries) {
+      copyRecursive(path.join(src, entry), path.join(dest, entry));
+    }
+  } else {
+    const destDir = path.dirname(dest);
+    if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+    fs.copyFileSync(src, dest);
+  }
+}
+
+/**
+ * Reconciles Blueprint assets against runtime destinations (RAL Phase 2 One-Way Sync Engine).
+ */
+export function executeSync(options?: {
+  repoPath?: string;
+  agentDir?: string;
+  apply?: boolean;
+  force?: boolean;
+}): SyncSummary {
+  const apply = options?.apply ?? false;
+  const force = options?.force ?? false;
+  const repoPath = options?.repoPath || process.env.BLUEPRINT_REPO_PATH || DEFAULT_BLUEPRINT_REPO_PATH;
+  const agentDir =
+    options?.agentDir ||
+    process.env.PI_CODING_AGENT_DIR ||
+    process.env.PI_AGENT_DIR ||
+    path.join(os.homedir(), ".pi", "agent");
+
+  const state = loadSyncState();
+
+  const results: SyncItemResult[] = [];
+  const counts: Record<SyncActionStatus, number> = {
+    unchanged: 0,
+    updated: 0,
+    created: 0,
+    conflict: 0,
+    protected: 0,
+    skipped: 0,
+    failed: 0,
+  };
+
+  // Check Blueprint repo availability
+  if (!fs.existsSync(repoPath) || !fs.existsSync(path.join(repoPath, "capabilities"))) {
+    return {
+      dryRun: !apply,
+      repoPath,
+      items: [
+        {
+          assetName: "Blueprint Repo",
+          category: "prompts",
+          runtimePath: repoPath,
+          status: "failed",
+          detail: `Blueprint repository not found at '${repoPath}'`,
+        },
+      ],
+      counts: { ...counts, failed: 1 },
+    };
+  }
+
+  // 1. Protected Files Audit (explicit allowlist compliance checks)
+  const protectedPaths = [
+    { name: "auth.json", path: path.join(agentDir, "auth.json") },
+    { name: "models.json", path: path.join(agentDir, "models.json") },
+    { name: "settings.json", path: path.join(agentDir, "settings.json") },
+    { name: "oauth.json", path: path.join(agentDir, "oauth.json") },
+    { name: "mcp.json", path: path.join(os.homedir(), ".config", "mcp", "mcp.json") },
+    { name: "sessions/", path: path.join(agentDir, "sessions") },
+  ];
+
+  for (const prot of protectedPaths) {
+    if (fs.existsSync(prot.path)) {
+      results.push({
+        assetName: prot.name,
+        category: "protected",
+        runtimePath: prot.path,
+        status: "protected",
+        detail: "Runtime file protected by security policy; never overwritten by /sync",
+      });
+      counts.protected++;
+    }
+  }
+
+  // Helper for single asset sync evaluation
+  function evaluateAssetSync(
+    assetName: string,
+    category: "prompts" | "extensions" | "skills" | "mcp",
+    sourcePath: string,
+    runtimePath: string,
+    isDir = false
+  ) {
+    if (!fs.existsSync(sourcePath)) {
+      results.push({
+        assetName,
+        category,
+        sourcePath,
+        runtimePath,
+        status: "failed",
+        detail: `Source asset missing in Blueprint repo at ${sourcePath}`,
+      });
+      counts.failed++;
+      return;
+    }
+
+    const srcHash = isDir ? hashDirectory(sourcePath) : hashFile(sourcePath);
+    const runHash = isDir ? hashDirectory(runtimePath) : hashFile(runtimePath);
+    const lastRecord = state.hashes[assetName];
+
+    // Case A: Runtime missing → Create
+    if (!fs.existsSync(runtimePath)) {
+      if (apply) {
+        try {
+          copyRecursive(sourcePath, runtimePath);
+          const newRunHash = isDir ? hashDirectory(runtimePath) : hashFile(runtimePath);
+          state.hashes[assetName] = {
+            sourceHash: srcHash,
+            runtimeHash: newRunHash,
+            timestamp: new Date().toISOString(),
+          };
+          results.push({
+            assetName,
+            category,
+            sourcePath,
+            runtimePath,
+            status: "created",
+            sourceHash: srcHash,
+            runtimeHash: newRunHash,
+            detail: "Deployed missing asset from Blueprint source",
+          });
+          counts.created++;
+        } catch (err) {
+          results.push({
+            assetName,
+            category,
+            sourcePath,
+            runtimePath,
+            status: "failed",
+            detail: `Copy failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+          counts.failed++;
+        }
+      } else {
+        results.push({
+          assetName,
+          category,
+          sourcePath,
+          runtimePath,
+          status: "created",
+          sourceHash: srcHash,
+          runtimeHash: "",
+          detail: "Will deploy missing asset from Blueprint source",
+        });
+        counts.created++;
+      }
+      return;
+    }
+
+    // Case B: Hashes identical → Unchanged
+    if (srcHash === runHash) {
+      state.hashes[assetName] = {
+        sourceHash: srcHash,
+        runtimeHash: runHash,
+        timestamp: new Date().toISOString(),
+      };
+      results.push({
+        assetName,
+        category,
+        sourcePath,
+        runtimePath,
+        status: "unchanged",
+        sourceHash: srcHash,
+        runtimeHash: runHash,
+      });
+      counts.unchanged++;
+      return;
+    }
+
+    // Case C: Hashes differ -> check for drift / conflicts
+    // If runtime hash matches previous baseline (lastRecord.runtimeHash), runtime was NOT modified locally -> safe update
+    // If runtime hash differs from baseline AND from source -> runtime drifted locally -> CONFLICT unless force
+    const runtimeDrifted = lastRecord && lastRecord.runtimeHash && lastRecord.runtimeHash !== runHash;
+
+    if (runtimeDrifted && !force) {
+      results.push({
+        assetName,
+        category,
+        sourcePath,
+        runtimePath,
+        status: "conflict",
+        sourceHash: srcHash,
+        runtimeHash: runHash,
+        detail: "Runtime file modified locally since last sync. Use /sync --force to overwrite.",
+      });
+      counts.conflict++;
+      return;
+    }
+
+    // Safe update or forced update
+    if (apply) {
+      try {
+        copyRecursive(sourcePath, runtimePath);
+        const newRunHash = isDir ? hashDirectory(runtimePath) : hashFile(runtimePath);
+        state.hashes[assetName] = {
+          sourceHash: srcHash,
+          runtimeHash: newRunHash,
+          timestamp: new Date().toISOString(),
+        };
+        results.push({
+          assetName,
+          category,
+          sourcePath,
+          runtimePath,
+          status: "updated",
+          sourceHash: srcHash,
+          runtimeHash: newRunHash,
+          detail: force && runtimeDrifted ? "Forced overwrite of local runtime drift" : "Updated from Blueprint source",
+        });
+        counts.updated++;
+      } catch (err) {
+        results.push({
+          assetName,
+          category,
+          sourcePath,
+          runtimePath,
+          status: "failed",
+          detail: `Update failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+        counts.failed++;
+      }
+    } else {
+      results.push({
+        assetName,
+        category,
+        sourcePath,
+        runtimePath,
+        status: "updated",
+        sourceHash: srcHash,
+        runtimeHash: runHash,
+        detail: force && runtimeDrifted ? "Will force overwrite local runtime drift" : "Will update from Blueprint source",
+      });
+      counts.updated++;
+    }
+  }
+
+  // 2. Sync Prompts (capabilities/prompts/* -> ~/.pi/agent/prompts/*)
+  const sourcePromptsDir = path.join(repoPath, "capabilities", "prompts");
+  const runtimePromptsDir = path.join(agentDir, "prompts");
+  if (fs.existsSync(sourcePromptsDir)) {
+    const promptFiles = fs.readdirSync(sourcePromptsDir).filter((f) => f.endsWith(".md"));
+    for (const file of promptFiles) {
+      evaluateAssetSync(
+        `prompts/${file}`,
+        "prompts",
+        path.join(sourcePromptsDir, file),
+        path.join(runtimePromptsDir, file)
+      );
+    }
+  }
+
+  // 3. Sync Extensions (capabilities/extensions/* -> ~/.pi/agent/extensions/*)
+  const sourceExtDir = path.join(repoPath, "capabilities", "extensions");
+  const runtimeExtDir = path.join(agentDir, "extensions");
+  if (fs.existsSync(sourceExtDir)) {
+    const extFiles = fs.readdirSync(sourceExtDir).filter((f) => f.endsWith(".ts"));
+    for (const file of extFiles) {
+      evaluateAssetSync(
+        `extensions/${file}`,
+        "extensions",
+        path.join(sourceExtDir, file),
+        path.join(runtimeExtDir, file)
+      );
+    }
+  }
+
+  // 4. Sync Skills (capabilities/skills/repository-intelligence -> ~/.pi/agent/skills/repository-intelligence)
+  const sourceSkillPath = path.join(repoPath, "capabilities", "skills", "repository-intelligence");
+  const runtimeSkillPath = path.join(agentDir, "skills", "repository-intelligence");
+  if (fs.existsSync(sourceSkillPath)) {
+    evaluateAssetSync(
+      "skills/repository-intelligence",
+      "skills",
+      sourceSkillPath,
+      runtimeSkillPath,
+      true
+    );
+  }
+
+  if (apply) {
+    state.lastSyncTime = new Date().toISOString();
+    saveSyncState(state);
+  }
+
+  return {
+    dryRun: !apply,
+    repoPath,
+    items: results,
+    counts,
+  };
+}
+
+/**
+ * Formats SyncSummary report for terminal / UI notification.
+ */
+export function formatSyncReport(summary: SyncSummary): string {
+  const lines: string[] = [
+    `Harness Pi Sync (${summary.dryRun ? "Dry-Run Preview" : "Execution Applied"})`,
+    `Source: ${summary.repoPath}`,
+    "==========================================",
+  ];
+
+  const statusIcons: Record<SyncActionStatus, string> = {
+    unchanged: "✓",
+    created: "+",
+    updated: "↑",
+    conflict: "⚡",
+    protected: "⊘",
+    skipped: "○",
+    failed: "✗",
+  };
+
+  for (const item of summary.items) {
+    const icon = statusIcons[item.status] || "•";
+    const detail = item.detail ? ` (${item.detail})` : "";
+    lines.push(`${icon} ${item.assetName.padEnd(32)} ${item.status.toUpperCase()}${detail}`);
+  }
+
+  lines.push("------------------------------------------");
+  const c = summary.counts;
+  lines.push(
+    `Summary: ${c.created} created, ${c.updated} updated, ${c.unchanged} unchanged, ${c.conflict} conflicts, ${c.protected} protected, ${c.failed} failed`
+  );
+
+  if (summary.dryRun && (c.created > 0 || c.updated > 0 || c.conflict > 0)) {
+    lines.push("\nRun '/sync --apply' to execute changes (or '/sync --apply --force' to overwrite local conflicts).");
+  }
+
+  return lines.join("\n");
+}
+
 export default function (pi: ExtensionAPI) {
-  // 1. Session startup: inspect topology, supervise 9router, set status bar
   pi.on("session_start", async (_event, ctx) => {
     const topo = detectProjectTopology(ctx.cwd);
     ctx.ui.setStatus("topology", `${topo.name} [${topo.type}${topo.framework ? `/${topo.framework}` : ""}]`);
 
-    // Non-blocking router probe
     check9routerHealth().then(async (health) => {
       if (health.ok) {
         ctx.ui.setStatus("9router", "online");
@@ -282,7 +718,6 @@ export default function (pi: ExtensionAPI) {
     });
   });
 
-  // 2. Before turn: inject active workspace topology into system prompt
   pi.on("before_agent_start", (event, ctx) => {
     const topo = detectProjectTopology(ctx.cwd);
     const topoContext = formatTopologyContext(topo);
@@ -292,18 +727,15 @@ export default function (pi: ExtensionAPI) {
     };
   });
 
-  // 3. /doctor diagnostic command
   pi.registerCommand("doctor", {
-    description: "Run Harness Pi environment, router, MCP, and permission diagnostics",
+    description: "Run Harness Pi environment, router, MCP, permissions, and sync diagnostics",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
       ctx.ui.notify("Running Harness Pi diagnostic scan…", "info");
 
       const results: string[] = ["Harness Pi Doctor Report", "========================"];
 
-      // 1. Pi Runtime
       results.push(`✓ Pi Runtime: Node ${process.version} (${process.platform} ${process.arch})`);
 
-      // 2. 9router Health
       const routerHealth = await check9routerHealth();
       if (routerHealth.ok) {
         results.push(`✓ 9router: Online (:20128) — ${routerHealth.modelCount ?? "~200"} models available`);
@@ -311,7 +743,6 @@ export default function (pi: ExtensionAPI) {
         results.push(`✗ 9router: Offline (${routerHealth.error ?? "connection refused"})`);
       }
 
-      // 3. MCP Configuration
       const mcpPath = path.join(os.homedir(), ".config", "mcp", "mcp.json");
       if (fs.existsSync(mcpPath)) {
         try {
@@ -325,7 +756,6 @@ export default function (pi: ExtensionAPI) {
         results.push(`✗ MCP Configuration: Missing ${mcpPath}`);
       }
 
-      // 4. Permission System
       const permConfigPath = path.join(os.homedir(), ".pi", "agent", "extensions", "pi-permission-system", "config.json");
       if (fs.existsSync(permConfigPath)) {
         results.push("✓ Permission System: Active (path protection + bash deny rules)");
@@ -333,18 +763,40 @@ export default function (pi: ExtensionAPI) {
         results.push(`✗ Permission System: Missing config at ${permConfigPath}`);
       }
 
-      // 5. Core Extensions
       const extDir = path.join(os.homedir(), ".pi", "agent", "extensions");
       const powerToolsExists = fs.existsSync(path.join(extDir, "power-tools.ts"));
       results.push(`✓ Platform Extensions: power-tools (${powerToolsExists ? "active" : "missing"}), runtime-orchestrator (active)`);
 
-      // 6. Current Workspace
+      // Sync State Diagnostic
+      const syncSummary = executeSync({ apply: false });
+      const pendingChanges = syncSummary.counts.created + syncSummary.counts.updated + syncSummary.counts.conflict;
+      if (pendingChanges === 0) {
+        results.push("✓ Asset Sync: Up to date (all runtime assets match Blueprint source)");
+      } else {
+        results.push(`! Asset Sync: ${pendingChanges} pending changes (run /sync --apply to align)`);
+      }
+
       const topo = detectProjectTopology(ctx.cwd);
       results.push(`✓ Current Workspace: ${topo.name} [${topo.type}${topo.framework ? `, ${topo.framework}` : ""}${topo.packageManager ? `, ${topo.packageManager}` : ""}${topo.gitBranch ? `, branch:${topo.gitBranch}` : ""}]`);
 
-      // Print output
       const report = results.join("\n");
-      ctx.ui.notify(report, routerHealth.ok ? "info" : "warning");
+      ctx.ui.notify(report, routerHealth.ok && pendingChanges === 0 ? "info" : "warning");
+    },
+  });
+
+  pi.registerCommand("sync", {
+    description: "One-way sync platform assets from Blueprint repo to runtime (~/.pi/agent)",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const apply = args.includes("--apply");
+      const force = args.includes("--force");
+
+      ctx.ui.notify(`Running Harness Pi Sync (${apply ? "Applying Changes" : "Preview Mode"})…`, "info");
+
+      const summary = executeSync({ apply, force });
+      const reportText = formatSyncReport(summary);
+
+      const notifyType = summary.counts.failed > 0 ? "error" : summary.counts.conflict > 0 ? "warning" : "info";
+      ctx.ui.notify(reportText, notifyType);
     },
   });
 }

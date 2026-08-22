@@ -108,7 +108,7 @@ Uninstall: `pi remove <source>`.
 ## Extensions
 
 - `~/.pi/agent/extensions/power-tools.ts` — custom tools `repo_tree`, `git_log`; command `/power-tools`; hot-reload with `/reload`. Strict type-check PASS 2026-08-21 (TypeScript 7.0.2 vs global pi type declarations; source: `capabilities/extensions/power-tools.ts`).
-- `~/.pi/agent/extensions/runtime-orchestrator.ts` — Runtime Abstraction Layer (RAL) v1: `session_start` project topology detection (Node/TS, Python, Rust, Go, Roblox, Generic); 9router health probe with auto-start fallback; `before_agent_start` workspace context injection; `/doctor` diagnostic command. Source: `capabilities/extensions/runtime-orchestrator.ts`. Type-check PASS 2026-08-22 (TS 7.0.2). Decision D33.
+- `~/.pi/agent/extensions/runtime-orchestrator.ts` — Runtime Abstraction Layer (RAL) v1 (Phases 1 & 2): `session_start` project topology detection (Node/TS, Python, Rust, Go, Roblox, Generic); 9router health probe with auto-start fallback; `before_agent_start` workspace context injection; `/doctor` diagnostic command; `/sync` deterministic one-way asset deployment engine (SHA256 drift detection, dry-run preview, conflict protection, force overwrite). Source: `capabilities/extensions/runtime-orchestrator.ts`. Type-check PASS 2026-08-22 (TS 7.0.2). Decisions D33, D34.
 - Extensions run with full system permissions; keep source files reviewed (both are platform-owned and version-tracked in `capabilities/extensions/`).
 
 ## Skills (11 discovered, 2026-08-02)

@@ -73,6 +73,9 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `docs`: update `docs/ARCHITECTURE.md` with RAL v1 section (Phase 6 Runtime Abstraction Layer)
 - `docs`: update `docs/SETUP.md` Extensions section with runtime-orchestrator deployment details
 - `docs`: record architectural decision D33 (RAL v1 extension, phase-1 scope, deferred /sync and dynamic skill activation)
+- `feat`: implement RAL v1 Phase 2 — `/sync` one-way asset deployment engine inside `runtime-orchestrator.ts` (D34): SHA256 content-hash drift detection, dry-run preview by default (`/sync`), execution mode (`/sync --apply --force`), conflict protection for locally modified runtime files, strict allowlist scope (prompts, extensions, repository-intelligence skill), protected file isolation (auth/models/settings/mcp/sessions)
+- `feat`: integrate sync status indicator into `/doctor` — pending drift count reported alongside router/MCP/permission diagnostics
+- `docs`: update `docs/ARCHITECTURE.md` RAL section with Phase 2 sync scope and conflict model; update `docs/SETUP.md`; record decision D34 in [docs/DECISIONS.md](docs/DECISIONS.md)
 
 ## Notes
 

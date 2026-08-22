@@ -44,7 +44,7 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | metrics | platform-owned prompt | — | Prompt (metrics manifest) | **active** | authored | PASS 2026-08-21 (behavioral: full manifest computed from live evidence; trend vs D26 baseline) | Maintenance | — | 2026-08-21 |
 | memory (protocol) | platform-owned prompt | — | Prompt (engineering memory) | **active** | authored | load-validated 2026-08-03 | Maintenance | — | 2026-08-03 |
 | verify | platform-owned script | — | Automation | **active** | authored (stdlib-only) | PASS 2026-08-03 (caught D24 ordering defect; all checks green after fix) | Maintenance | — | 2026-08-03 |
-| runtime-orchestrator | local extension | — | Extension (RAL) | **active** | authored (RAL Foundation) | PASS 2026-08-22 (type-check TS 7.0.2 PASS; topology detection: 5 project signatures; 9router health: 202 models; /doctor: all checks pass) | Maintenance | Apache-2.0 | 2026-08-22 |
+| runtime-orchestrator | local extension | — | Extension (RAL) | **active** | authored (RAL Foundation + /sync) | PASS 2026-08-22 (type-check TS 7.0.2 PASS; topology: 5 signatures; 9router health: 202 models; /doctor: all checks pass; /sync: dry-run, conflict detection, force overwrite, idempotency 100% PASS) | Maintenance | Apache-2.0 | 2026-08-22 |
 
 ## Notes
 
