@@ -7,7 +7,7 @@ Handoff: what the next session must do first. Current state lives in [PROJECT_ST
 ## First Actions (in order)
 
 1. **Verify repository state.** Run `python capabilities/scripts/verify.py`; confirm the remote matches local `main`.
-2. **Complete pending validations.** Interactive TUI validations only: plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens — these require a TUI session.
+2. **Complete pending validations.** Interactive TUI validations only: plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens — these require a TUI session. Run `/doctor` inside a live Pi session to confirm RAL v1 runtime health.
 3. **Operate in Continuous Evolution.** No predefined milestones: adopt capabilities only via the lifecycle and their recorded triggers (GitHub MCP: PAT; piolium: container; playwright: E2E need). Run the verify script before every commit; refresh `last-verified`; keep the capture loop.
 
 ## Left Unresolved Last Session
@@ -17,6 +17,7 @@ Handoff: what the next session must do first. Current state lives in [PROJECT_ST
 - Interactive `/login` flow on a fresh machine untested.
 - Deferred capabilities pending their recorded triggers (GitHub MCP: PAT; piolium: container; playwright: E2E).
 - pi-web-access search inactive (API key required).
+- RAL v1 (`runtime-orchestrator.ts`) deployed and validated; `/sync` command (Phase 2) and dynamic skill activation remain deferred.
 
 ## Notes
 

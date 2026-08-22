@@ -35,6 +35,7 @@ Current status snapshot. History lives in [CHANGELOG.md](CHANGELOG.md); this fil
 - Milestone 9: intelligence v2 — repository-intelligence v2 modules, orchestration v2 rules, debug/perf/metrics/memory templates; memory MCP integrated (validated); Wave 3 deferrals recorded with triggers (D25); metrics baseline (D26); memory strategy (D27).
 - Milestone 10: production hardening — verification script adopted (D28), hardening decisions (D29), foundation certified, transition to Continuous Evolution (D30).
 - Continuous Evolution (2026-08-21): repository consumption scope resolved — single primary environment, no other consumers ([docs/DECISIONS.md](docs/DECISIONS.md) D31); `/self-eval` and `/metrics` behavioral runs completed (registry updated); power-tools strict type-check PASS (D29 trigger satisfied zero-footprint); prompt deployment sync verified (12/12 identical).
+- Continuous Evolution (2026-08-22): Runtime Abstraction Layer v1 implemented — `capabilities/extensions/runtime-orchestrator.ts` (`session_start` topology detection, 9router supervision, workspace context injection, `/doctor` command); deployed to runtime; type-check PASS; registry and architecture updated (D33).
 
 ## In Flight
 

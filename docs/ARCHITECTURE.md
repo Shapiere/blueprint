@@ -224,6 +224,19 @@ The first version is implemented as composed capabilities plus platform-owned ar
 
 **Engineering Quality Metrics (v1, 2026-08-03):** eight metrics with explicit purposes — repository health (scan results, git cleanliness), capability maturity (active/total), validation coverage (validated/registered), governance compliance (DECISIONS currency), documentation completeness (structure conformance), architecture compliance (structure vs matrix), tech-debt trend (carried items + UNVERIFIED licenses), intelligence coverage (validated intelligence artifacts). Computed by `/metrics`; trends from CHANGELOG/TODO history. Metrics drive recommendations only when they signal action.
 
+## Runtime Abstraction Layer v1 (implemented 2026-08-22, D33)
+
+The RAL bridges the Control Plane and the daily coding Runtime Plane. Implemented as a single platform-owned Pi extension (`capabilities/extensions/runtime-orchestrator.ts`) — no new daemon, no new framework, no new process manager.
+
+**Responsibilities (Phase 1):**
+- `session_start` hook: detect project topology from workspace manifest files; probe 9router health; attempt auto-start if offline; set status bar with project name + type.
+- `before_agent_start` hook: inject minimal workspace context string into system prompt (~30–50 tokens; never inflates context cost past C4 threshold).
+- `/doctor` command: synchronous diagnostic scan of Pi runtime, 9router, MCP configuration, permission system, and deployed extensions; output is concise, actionable, and never hidden.
+
+**Project detection (startup, read-only, synchronous):** `package.json` → TypeScript/JS + framework (Next.js, React, Remix, Astro, Vue, Svelte, NestJS, Hono, etc.) + package manager (npm/pnpm/yarn/bun); `Cargo.toml` → Rust + framework (Axum, Actix, Tokio); `pyproject.toml`/`requirements.txt` → Python + framework (FastAPI, Django, Flask, PyTorch); `go.mod` → Go + framework (Gin, Fiber, Echo); `default.project.json` → Roblox Studio / Luau / Rojo; Git `.git/HEAD` → branch (zero subprocess). Generic fallback when no marker is found.
+
+**What the RAL does NOT do (Phase 1):** dynamic skill activation, asset sync (deferred to `/sync` in Phase 2), capability registry modification, permission override, system prompt replacement (appends only), multi-session state.
+
 ---
 
 # Phase 7 — Evolution Strategy

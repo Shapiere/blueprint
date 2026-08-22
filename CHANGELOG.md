@@ -66,6 +66,14 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `fix`: pin all four MCP servers to concrete verified versions — `chrome-devtools-mcp@1.7.0`, `@modelcontextprotocol/server-sequential-thinking@2026.7.4`, `@upstash/context7-mcp@4.0.3`, `@modelcontextprotocol/server-memory@2026.7.4` ([docs/DECISIONS.md](docs/DECISIONS.md) D32)
 - `docs`: add missing memory MCP server note fragment (`capabilities/mcp/memory.md`) and update server counts and validation metadata in `docs/SETUP.md` and `capabilities/index.md`
 
+## 2026-08-22
+
+- `feat`: implement Runtime Abstraction Layer (RAL) v1 — `capabilities/extensions/runtime-orchestrator.ts`: `session_start` project topology detection (6 signatures), 9router health probe with auto-start, `before_agent_start` workspace context injection, `/doctor` diagnostic command (D33)
+- `feat`: deploy runtime-orchestrator extension to `~/.pi/agent/extensions/runtime-orchestrator.ts` — type-check PASS (TS 7.0.2 strict); `/doctor` validated against live runtime (9router 202 models, 4 MCP servers, permission system, power-tools)
+- `docs`: update `docs/ARCHITECTURE.md` with RAL v1 section (Phase 6 Runtime Abstraction Layer)
+- `docs`: update `docs/SETUP.md` Extensions section with runtime-orchestrator deployment details
+- `docs`: record architectural decision D33 (RAL v1 extension, phase-1 scope, deferred /sync and dynamic skill activation)
+
 ## Notes
 
 - Entries must be added in the same session as the change they describe (capture loop).
