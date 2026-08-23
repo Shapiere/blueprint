@@ -17,7 +17,7 @@ Handoff: what the next session must do first. Current state lives in [PROJECT_ST
 - Interactive `/login` flow on a fresh machine untested.
 - Deferred capabilities pending their recorded triggers (GitHub MCP: PAT; piolium: container; playwright: E2E).
 - pi-web-access search inactive (API key required).
-- RAL Phase 4 complete: dynamic model catalog bridge validated (203 live models mapped via native `refreshModels`; `models.json` untouched). Task-aware activation and MCP/tool scoping remain deferred.
+- RAL Phase 5 complete: complexity-aware orchestration validated (cafe-mockup fixture ≤3 agents; HEAVY approval gate; silent-switch guard). Remaining deferred: task-aware activation, AUTO model policy, MCP/tool scoping.
 
 ## Notes
 

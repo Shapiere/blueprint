@@ -922,6 +922,7 @@ export function listRuntimeSkills(agentDir?: string): Array<{ name: string; desc
           const fm = content.match(/^---\n([\s\S]*?)\n---/);
           const body = fm ? fm[1] : "";
           const name = body.match(/^name:\s*(.+)$/m)?.[1]?.trim() ?? path.basename(path.dirname(full));
+
           if (seen.has(name)) continue;
           seen.add(name);
           let desc = body.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? "";
@@ -1038,7 +1039,96 @@ async function fetchRouterCatalog(): Promise<PiModelDefinition[]> {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// RAL Phase 5 — Complexity-aware orchestration & reasoning profiles (D37)
+// Effort controls reasoning DEPTH, never agent count. Strategy caps are
+// enforced at the workflow tool boundary; HEAVY requires explicit approval.
+// ---------------------------------------------------------------------------
+
+export type ExecutionStrategy = "DIRECT" | "LIGHT" | "FULL" | "HEAVY";
+
+/** Agent ceilings per strategy (policy defaults, not runtime hard limits). */
+export const STRATEGY_CAPS: Record<Exclude<ExecutionStrategy, "HEAVY">, number> = {
+  DIRECT: 1,
+  LIGHT: 3,
+  FULL: 8,
+};
+
+export type ReasoningProfileName = "Default" | "Plan" | "Review";
+
+export const REASONING_PROFILES: readonly ReasoningProfileName[] = ["Default", "Plan", "Review"];
+
+export interface ReasoningProfileState {
+  profile: ReasoningProfileName;
+  level: string;
+}
+
+const REASONING_STATE_FILE = path.join(os.homedir(), ".pi", "agent", "harness-reasoning.json");
+
+let heavyApprovalState: { ceiling: number } | null = null;
+
+/** Parses the declared complexity tag from a workflow script header comment. */
+export function parseComplexityTag(script: string): ExecutionStrategy | undefined {
+  const m = script.match(/^\s*\/\/\s*complexity:\s*(DIRECT|LIGHT|FULL|HEAVY)\b/im);
+  return m ? (m[1] as ExecutionStrategy) : undefined;
+}
+
+/** Deterministic cap for a strategy; HEAVY has no numeric cap (approval-gated). */
+export function strategyCap(strategy: ExecutionStrategy): number | undefined {
+  return strategy === "HEAVY" ? undefined : STRATEGY_CAPS[strategy];
+}
+
+/** Clamps a requested maxAgents into the strategy's ceiling. */
+export function clampAgents(strategy: ExecutionStrategy, requested: number | undefined): number {
+  const cap = strategyCap(strategy);
+  const req = typeof requested === "number" && Number.isFinite(requested) ? Math.floor(requested) : 1;
+  return cap === undefined ? req : Math.max(1, Math.min(req, cap));
+}
+
+/**
+ * Loads persisted reasoning-profile configuration (runtime-owned state).
+ * Fail-open to Default @ medium.
+ */
+export function loadReasoningProfile(): ReasoningProfileState {
+  try {
+    const raw = JSON.parse(fs.readFileSync(REASONING_STATE_FILE, "utf-8")) as Partial<ReasoningProfileState>;
+    const profile = REASONING_PROFILES.includes(raw.profile as ReasoningProfileName)
+      ? (raw.profile as ReasoningProfileName)
+      : "Default";
+    const level = typeof raw.level === "string" ? raw.level : "medium";
+    return { profile, level };
+  } catch {
+    return { profile: "Default", level: "medium" };
+  }
+}
+
+/** Persists reasoning-profile configuration (runtime-owned state). */
+export function saveReasoningProfile(state: ReasoningProfileState): void {
+  try {
+    fs.writeFileSync(REASONING_STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+  } catch {}
+}
+
+const ORCHESTRATION_CONTRACT = `
+# Orchestration Governance (supersedes any earlier effort/fan-out directives)
+- Effort level controls REASONING DEPTH and verification rigor — NEVER agent count.
+- ULTRA/HIGH on a simple task means one agent reasoning deeply with thorough self-review.
+- Before calling the workflow tool you MUST assess complexity and declare it as the FIRST line of the script:
+  // complexity: DIRECT | LIGHT | FULL | HEAVY
+  // workstreams: <n>; parallelizable: yes|no; risk: low|medium|high
+- Caps: DIRECT=1 agent, LIGHT<=3, FULL<=8. HEAVY requires explicit user approval (you will be prompted).
+- Never set maxAgents above your declared strategy's cap.
+- Model policy: USE CURRENT MODEL. Sub-agents inherit the session model. Do NOT add model overrides
+  (model:/baseUrl:) to workflow scripts unless the user explicitly approved a different model.
+  If you believe a different model is required, ask the user first.`;
+
+/** Detects explicit model overrides in a workflow script (silent-switch guard). */
+export function scriptHasModelOverrides(script: string): boolean {
+  return /^\s*(?:\w+\.)?model\s*:/im.test(script) || /meta\.model\s*=/.test(script);
+}
 export default function (pi: ExtensionAPI) {
+
 
   // Phase 4 (D36): bridge the live 9router catalog into Pi's /model selector via
   // the native dynamic-provider mechanism. Only the "9router" provider id is
@@ -1104,9 +1194,84 @@ export default function (pi: ExtensionAPI) {
     }
 
     const basePrompt = scopedPrompt ?? event.systemPrompt;
+    const rp = loadReasoningProfile();
     return {
-      systemPrompt: `${basePrompt}\n\n# Active Workspace Environment\n${topoContext}`,
+      systemPrompt: `${basePrompt}\n\n# Active Workspace Environment\n${topoContext}\n${ORCHESTRATION_CONTRACT}\n# Reasoning Profile\nActive profile: ${rp.profile} @ reasoning level ${rp.level}. Honor this depth for planning/review/synthesis phases; when writing workflow scripts, use ":${rp.level}" thinking suffixes on agent() calls for the matching phases.`,
     };
+  });
+
+  // Phase 5 (D37): complexity-aware orchestration enforcement at the workflow
+  // tool boundary. Strategy caps are hard; HEAVY requires explicit approval.
+  pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName !== "workflow") return;
+    const input = event.input as { maxAgents?: unknown; script?: unknown };
+
+    // Model-policy guard: block silent model switching in workflow scripts.
+    if (typeof input.script === "string" && scriptHasModelOverrides(input.script)) {
+      if (ctx.hasUI) {
+        const choice = await ctx.ui.select(
+          "Model change requested",
+          [
+            "Keep current model (strip model overrides from script)",
+            "Allow these models for this workflow run",
+          ],
+        );
+        if (choice?.startsWith("Keep")) {
+          input.script = input.script
+            .split("\n")
+            .filter((l) => !/^\s*(?:\w+\.)?model\s*:/i.test(l) && !/meta\.model\s*=/i.test(l))
+            .join("\n");
+          ctx.ui.notify("Model overrides stripped — workflow will use the current session model.", "info");
+        } else if (choice?.startsWith("Allow")) {
+          ctx.ui.notify("Model overrides allowed for this workflow run.", "info");
+        } else {
+          return { block: true, reason: "Model policy unresolved: choose Keep current model or Allow in the prompt." };
+        }
+      } else {
+        return { block: true, reason: "Model overrides present but no UI available to approve them. Remove model:/meta.model from the script or run interactively." };
+      }
+    }
+
+    // Complexity strategy enforcement.
+    const script = typeof input.script === "string" ? input.script : "";
+    const declared = parseComplexityTag(script);
+    const requested = typeof input.maxAgents === "number" ? input.maxAgents : undefined;
+    let strategy: ExecutionStrategy = declared ?? (requested && requested > 8 ? "HEAVY" : "LIGHT");
+
+    if (strategy === "HEAVY" && heavyApprovalState === null) {
+      if (!ctx.hasUI) {
+        return { block: true, reason: "HEAVY fan-out requires user approval, but no interactive UI is available. Reduce maxAgents to <=8." };
+      }
+      const choice = await ctx.ui.select(
+        "Execution Strategy — HEAVY fan-out requested",
+        [
+          `Multi-agent (up to ${requested ?? "N"} agents as scripted)`,
+          "Single-agent (sequential, cap 1)",
+          "Let Harness decide (cap 8)",
+        ],
+      );
+      if (!choice || choice.startsWith("Single")) {
+        heavyApprovalState = { ceiling: 1 };
+        input.maxAgents = 1;
+        strategy = "DIRECT";
+      } else if (choice.startsWith("Let")) {
+        heavyApprovalState = { ceiling: STRATEGY_CAPS.FULL };
+        input.maxAgents = STRATEGY_CAPS.FULL;
+        strategy = "FULL";
+      } else {
+        heavyApprovalState = { ceiling: typeof requested === "number" ? requested : 16 };
+      }
+    }
+
+    const ceiling = heavyApprovalState?.ceiling;
+    if (typeof requested === "number") {
+      const capped = clampAgents(strategy, requested);
+      const effective = ceiling !== undefined ? Math.min(capped, ceiling) : capped;
+      if (effective !== requested) input.maxAgents = effective;
+    }
+    if (strategy === "HEAVY" && !heavyApprovalState) {
+      return { block: true, reason: "HEAVY fan-out requires explicit user approval." };
+    }
   });
 
   pi.registerCommand("doctor", {
@@ -1207,6 +1372,27 @@ export default function (pi: ExtensionAPI) {
 
       const notifyType = summary.counts.failed > 0 ? "error" : summary.counts.conflict > 0 ? "warning" : "info";
       ctx.ui.notify(reportText, notifyType);
+    },
+  });
+
+  pi.registerCommand("reasoning", {
+    description: "Configure reasoning profile (Default/Plan/Review) and thinking level",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const current = loadReasoningProfile();
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      if (parts.length === 0 || parts[0].toLowerCase() === "show") {
+        ctx.ui.notify(`Reasoning profile: ${current.profile} @ ${current.level}. Usage: /reasoning <Default|Plan|Review> <off|minimal|low|medium|high|xhigh|max>`, "info");
+        return;
+      }
+      const profileArg = parts[0];
+      const levelArg = parts[1]?.toLowerCase();
+      if (!REASONING_PROFILES.includes(profileArg as ReasoningProfileName)) {
+        ctx.ui.notify(`Unknown profile "${profileArg}". Profiles: ${REASONING_PROFILES.join(", ")}`, "warning");
+        return;
+      }
+      const level = levelArg ?? current.level;
+      saveReasoningProfile({ profile: profileArg as ReasoningProfileName, level });
+      ctx.ui.notify(`Reasoning profile set: ${profileArg} @ ${level} (applies to planning/review/synthesis phases via :${level} script suffixes)`, "info");
     },
   });
 }

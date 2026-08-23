@@ -4,7 +4,7 @@
 
 Single source of truth for platform capabilities: what is installed, at what version, in what lifecycle stage, with what validation evidence. Deployment paths live in `docs/SETUP.md`; this file owns status. One row per capability; status changes require the capture loop (CHANGELOG + registry in the same session).
 
-**Last updated: 2026-08-22 (Continuous Evolution — RAL Phase 4 dynamic model catalog bridge added)**
+**Last updated: 2026-08-23 (Continuous Evolution — RAL Phase 5 complexity-aware orchestration added)**
 
 ## Registry
 
@@ -44,9 +44,11 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | metrics | platform-owned prompt | — | Prompt (metrics manifest) | **active** | authored | PASS 2026-08-21 (behavioral: full manifest computed from live evidence; trend vs D26 baseline) | Maintenance | — | 2026-08-21 |
 | memory (protocol) | platform-owned prompt | — | Prompt (engineering memory) | **active** | authored | load-validated 2026-08-03 | Maintenance | — | 2026-08-03 |
 | verify | platform-owned script | — | Automation | **active** | authored (stdlib-only) | PASS 2026-08-03 (caught D24 ordering defect; all checks green after fix) | Maintenance | — | 2026-08-03 |
-| runtime-orchestrator | local extension | — | Extension (RAL) | **active** | authored (RAL Foundation + /sync + capability scoping) | PASS 2026-08-22 (type-check TS 7.0.2; topology: 6 signatures; 9router health: 202 models; /doctor: all checks pass; /sync: dry-run/conflict/force/idempotency PASS; scoping: 8 profile golden tests, fail-open verified, cross-contamination clean, live Next.js profile 9 active / 12 available) | Maintenance | Apache-2.0 | 2026-08-22 |
+| runtime-orchestrator | local extension | — | Extension (RAL) | **active** | authored (RAL Foundation + /sync + capability scoping + orchestration governance) | PASS 2026-08-22 (type-check TS 7.0.2; topology: 6 signatures; 9router health: 202 models; /doctor: all checks pass; /sync: dry-run/conflict/force/idempotency PASS; scoping: 8 profile golden tests, fail-open verified, cross-contamination clean, live Next.js profile 9 active / 12 available) | Maintenance | Apache-2.0 | 2026-08-22 |
 | scopes.json (capability scope map) | local asset | — | Configuration | **active** | authored (D35) | PASS 2026-08-22 (consumed by runtime-orchestrator resolution; synced via allowlist) | Maintenance | Apache-2.0 | 2026-08-22 |
 | runtime model catalog bridge | RAL Phase 4 (in extension) | — | Runtime integration | **active** | authored (D36) | PASS 2026-08-22 (mapping goldens: canonical passthrough, non-canonical omission, vision→input, zero-cost; malformed-entry skip + dedup; fail-open empty/null payloads; live catalog 203 mapped vs 85 static; models.json/auth.json hash-unchanged) | Maintenance | Apache-2.0 | 2026-08-22 |
+| complexity-aware orchestration | RAL Phase 5 (in extension) | — | Runtime integration | **active** | authored (D37) | PASS 2026-08-23 (strategy caps DIRECT=1/LIGHT≤3/FULL≤8 enforced at workflow tool boundary; HEAVY approval via interactive select; model silent-switch guard; cafe-mockup regression fixture classifies ≤3 agents) | Maintenance | Apache-2.0 | 2026-08-23 |
+| reasoning profiles (/reasoning) | RAL Phase 5 (in extension) | — | Runtime configuration | **active** | authored (D37) | PASS 2026-08-23 (Default/Plan/Review profiles independent of model tiers; persisted runtime-owned state; injected per-turn via system prompt) | Maintenance | Apache-2.0 | 2026-08-23 |
 
 ## Notes
 
