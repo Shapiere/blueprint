@@ -17,7 +17,7 @@ Handoff: what the next session must do first. Current state lives in [PROJECT_ST
 - Interactive `/login` flow on a fresh machine untested.
 - Deferred capabilities pending their recorded triggers (GitHub MCP: PAT; piolium: container; playwright: E2E).
 - pi-web-access search inactive (API key required).
-- RAL v1 Phase 2 complete: `/sync` one-way asset deployment validated (dry-run, apply, force, idempotency). Dynamic skill activation remains deferred.
+- RAL v1 Phase 3 complete: per-turn capability scoping validated (8 profile goldens, fail-open, cross-contamination clean). Task-aware activation and MCP/tool scoping remain deferred.
 
 ## Notes
 

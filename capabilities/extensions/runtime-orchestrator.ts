@@ -652,6 +652,18 @@ export function executeSync(options?: {
     );
   }
 
+  // 5. Sync Scope Map (capabilities/scopes.json -> runtime copy for /doctor reads)
+  const sourceScopesPath = path.join(repoPath, "capabilities", "scopes.json");
+  const runtimeScopesDir = path.join(agentDir);
+  if (fs.existsSync(sourceScopesPath)) {
+    evaluateAssetSync(
+      "capabilities/scopes.json",
+      "prompts",
+      sourceScopesPath,
+      path.join(runtimeScopesDir, "scopes.json")
+    );
+  }
+
   if (apply) {
     state.lastSyncTime = new Date().toISOString();
     saveSyncState(state);
@@ -704,6 +716,213 @@ export function formatSyncReport(summary: SyncSummary): string {
   return lines.join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// RAL Phase 3 — Dynamic Project-Aware Capability Scoping (D35)
+// In-memory, per-turn skill-index filtering. No files are ever mutated.
+// Fail-open: any scoping failure leaves the prompt unmodified (all skills visible).
+// ---------------------------------------------------------------------------
+
+export type ScopeMap = Record<string, string[]>;
+
+export interface CapabilityResolution {
+  activeNames: string[];
+  availableNames: string[];
+  coreNames: string[];
+  profileTags: string[];
+}
+
+interface ScopeMapFile {
+  core?: string[];
+  scopes?: Record<string, string[]>;
+}
+
+const SCOPE_MAP_CACHE_TTL_MS = 30_000;
+let scopeMapCache: { map: ScopeMap; core: string[]; loadedAt: number } | null = null;
+const profileCacheByCwd = new Map<string, string[]>();
+
+/**
+ * Loads capabilities/scopes.json from the Blueprint repo. Cached briefly so
+ * per-turn cost is zero I/O in steady state. Returns fail-open defaults on error.
+ */
+export function loadScopeMap(repoPath?: string): { map: ScopeMap; core: string[]; error?: string } {
+  const now = Date.now();
+  if (scopeMapCache && now - scopeMapCache.loadedAt < SCOPE_MAP_CACHE_TTL_MS) {
+    return { map: scopeMapCache.map, core: scopeMapCache.core };
+  }
+  const repo = repoPath || process.env.BLUEPRINT_REPO_PATH || DEFAULT_BLUEPRINT_REPO_PATH;
+  const scopesPath = path.join(repo, "capabilities", "scopes.json");
+  try {
+    const raw = JSON.parse(fs.readFileSync(scopesPath, "utf-8")) as ScopeMapFile;
+    const map: ScopeMap = {};
+    for (const [name, tags] of Object.entries(raw.scopes ?? {})) {
+      if (Array.isArray(tags)) map[name] = tags;
+    }
+    const core = Array.isArray(raw.core) ? raw.core : [];
+    scopeMapCache = { map, core, loadedAt: now };
+    return { map, core };
+  } catch (err) {
+    // Fail-open: empty map means nothing gets scoped out; all skills stay visible.
+    const error = err instanceof Error ? err.message : String(err);
+    scopeMapCache = { map: {}, core: [], loadedAt: now };
+    return { map: {}, core: [], error };
+  }
+}
+
+/** Static deterministic mapping from topology traits to capability-domain tags. */
+export function mapTopologyToProfile(topo: ProjectTopology): string[] {
+  const cacheKey = `${topo.type}|${topo.framework ?? ""}`;
+  const cached = profileCacheByCwd.get(cacheKey);
+  if (cached) return cached;
+
+  const tags = new Set<string>(["core"]);
+  const t = topo.type.toLowerCase();
+  const f = (topo.framework ?? "").toLowerCase();
+
+  if (t.includes("typescript") || t.includes("javascript") || t.includes("node")) {
+    tags.add("node");
+    if (t.includes("typescript")) tags.add("typescript");
+    else tags.add("javascript");
+  }
+  if (f.includes("next")) { tags.add("web"); tags.add("react"); tags.add("browser-testing"); }
+  else if (f.includes("react")) { tags.add("web"); tags.add("react"); tags.add("browser-testing"); }
+  else if (f.includes("remix") || f.includes("astro") || f.includes("nuxt") || f.includes("svelte")) { tags.add("web"); tags.add("browser-testing"); }
+  else if (f.includes("nestjs") || f.includes("hono") || f.includes("fastify") || f.includes("express")) { tags.add("backend"); tags.add("api"); }
+  else if (t.includes("node")) { tags.add("backend"); }
+
+  if (t.includes("python")) {
+    tags.add("python");
+    if (f.includes("fastapi") || f.includes("django") || f.includes("flask")) tags.add("backend");
+    else if (f.includes("torch") || f.includes("tensorflow")) { tags.add("ai-ml"); tags.add("data"); }
+  }
+  if (t.includes("rust")) { tags.add("rust"); tags.add("backend"); }
+  if (t.includes("go")) { tags.add("go"); tags.add("backend"); }
+  if (t.includes("roblox") || f.includes("rojo")) { tags.add("roblox"); tags.add("game"); tags.add("luau"); }
+
+  const result = Array.from(tags);
+  profileCacheByCwd.set(cacheKey, result);
+  return result;
+}
+
+/**
+ * Deterministic capability resolution over a loaded skill list.
+ * ACTIVE = CORE ∪ {skills whose tags ∩ profile ≠ ∅}; everything else AVAILABLE.
+ * Unmapped skills are treated as CORE (fail-open: unknown = always visible).
+ */
+export function resolveCapabilitySets(
+  skills: ReadonlyArray<{ name: string }>,
+  profileTags: readonly string[],
+  scope: { map: ScopeMap; core: readonly string[] }
+): CapabilityResolution {
+  const profile = new Set(profileTags);
+  const core = new Set(scope.core);
+  const activeNames: string[] = [];
+  const availableNames: string[] = [];
+  for (const skill of skills) {
+    if (core.has(skill.name)) { activeNames.push(skill.name); continue; }
+    const skillTags = scope.map[skill.name];
+    if (!skillTags || skillTags.some((tag) => profile.has(tag))) activeNames.push(skill.name);
+    else availableNames.push(skill.name);
+  }
+  return { activeNames, availableNames, coreNames: [...core], profileTags: [...profileTags] };
+}
+
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+/**
+ * Rebuilds the <available_skills> XML section with only ACTIVE skills,
+ * mirroring Pi's stock formatSkillsForPrompt structure. Returns undefined on
+ * fail-open (section not found in the prompt) so caller keeps original prompt.
+ */
+export function renderFilteredSystemPrompt(
+  originalPrompt: string,
+  allSkills: ReadonlyArray<{ name: string; description: string; filePath: string }>,
+  activeNames: ReadonlySet<string>
+): string | undefined {
+  const start = originalPrompt.indexOf("<available_skills>");
+  const endTag = "</available_skills>";
+  const end = originalPrompt.indexOf(endTag);
+  if (start === -1 || end === -1) return undefined;
+
+  const visible = allSkills.filter((s) => activeNames.has(s.name));
+  let replacement: string;
+  if (visible.length === 0) {
+    replacement = "";
+  } else {
+    const lines = [
+      "\n\nThe following skills provide specialized instructions for specific tasks.",
+      "Use the read tool to load a skill's file when the task matches its description.",
+      "When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
+      "",
+      "<available_skills>",
+    ];
+    for (const skill of visible) {
+      lines.push("  <skill>");
+      lines.push(`    <name>${escapeXml(skill.name)}</name>`);
+      lines.push(`    <description>${escapeXml(skill.description)}</description>`);
+      lines.push(`    <location>${escapeXml(skill.filePath)}</location>`);
+      lines.push("  </skill>");
+    }
+    lines.push("</available_skills>");
+    replacement = lines.join("\n");
+  }
+  const before = originalPrompt.slice(0, start).replace(/\n\n$/, "\n");
+  const after = originalPrompt.slice(end + endTag.length);
+  return before + replacement + after;
+}
+
+/**
+ * Lists currently deployed runtime skills by scanning the agent skills
+ * directory tree for SKILL.md files and extracting name/description from
+ * frontmatter. Used by /doctor for scoping observability (read-only).
+ */
+export function listRuntimeSkills(agentDir?: string): Array<{ name: string; description: string; filePath: string }> {
+  const base = agentDir || path.join(os.homedir(), ".pi", "agent");
+  const roots: string[] = [];
+  const settingsPath = path.join(base, "settings.json");
+  try {
+    if (fs.existsSync(settingsPath)) {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf-8")) as { skills?: string[] };
+      for (const entry of settings.skills ?? []) {
+        roots.push(entry.replace(/^~(?=\/|$)/, os.homedir()));
+      }
+    }
+  } catch {}
+  const skills: Array<{ name: string; description: string; filePath: string }> = [];
+  const seen = new Set<string>();
+  function scanDir(dir: string): void {
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+        scanDir(full);
+      } else if (entry.name === "SKILL.md") {
+        try {
+          const content = fs.readFileSync(full, "utf-8").slice(0, 4000);
+          const fm = content.match(/^---\n([\s\S]*?)\n---/);
+          const body = fm ? fm[1] : "";
+          const name = body.match(/^name:\s*(.+)$/m)?.[1]?.trim() ?? path.basename(path.dirname(full));
+          if (seen.has(name)) continue;
+          seen.add(name);
+          let desc = body.match(/^description:\s*(.+)$/m)?.[1]?.trim() ?? "";
+          if (desc.length > 160) desc = desc.slice(0, 157) + "...";
+          skills.push({ name, description: desc.replace(/\s+/g, " "), filePath: full });
+        } catch {}
+      }
+    }
+  }
+  for (const root of roots) scanDir(root);
+  return skills;
+}
+
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     const topo = detectProjectTopology(ctx.cwd);
@@ -722,8 +941,24 @@ export default function (pi: ExtensionAPI) {
     const topo = detectProjectTopology(ctx.cwd);
     const topoContext = formatTopologyContext(topo);
 
+    // Phase 3: per-turn skill-index scoping. Fail-open on any problem.
+    let scopedPrompt: string | undefined;
+    try {
+      const skills = event.systemPromptOptions?.skills ?? [];
+      if (skills.length > 0) {
+        const profileTags = mapTopologyToProfile(topo);
+        const scope = loadScopeMap();
+        const resolution = resolveCapabilitySets(skills, profileTags, scope);
+        const activeSet = new Set(resolution.activeNames);
+        scopedPrompt = renderFilteredSystemPrompt(event.systemPrompt, skills, activeSet);
+      }
+    } catch {
+      scopedPrompt = undefined; // fail-open
+    }
+
+    const basePrompt = scopedPrompt ?? event.systemPrompt;
     return {
-      systemPrompt: `${event.systemPrompt}\n\n# Active Workspace Environment\n${topoContext}`,
+      systemPrompt: `${basePrompt}\n\n# Active Workspace Environment\n${topoContext}`,
     };
   });
 
@@ -763,6 +998,20 @@ export default function (pi: ExtensionAPI) {
         results.push(`✗ Permission System: Missing config at ${permConfigPath}`);
       }
 
+      const topo = detectProjectTopology(ctx.cwd);
+      const scope = loadScopeMap();
+      const profileTags = mapTopologyToProfile(topo);
+      const allSkills = listRuntimeSkills();
+      const resolution = resolveCapabilitySets(allSkills, profileTags, scope);
+      results.push(`✓ Capability Profile: ${resolution.profileTags.join(", ")}`);
+      results.push(`  Active (${resolution.activeNames.length}): ${resolution.activeNames.join(", ") || "(none)"}`);
+      if (scope.error) {
+        results.push(`! Scope Map: failed to load (${scope.error}) — fail-open, all skills visible`);
+      } else {
+        results.push(`  Available via /skill:<name> (${resolution.availableNames.length}): ${resolution.availableNames.join(", ") || "(none)"}`);
+      }
+      results.push("✓ Governance: Blueprint-approved capabilities only; escape hatch /skill:<name>");
+
       const extDir = path.join(os.homedir(), ".pi", "agent", "extensions");
       const powerToolsExists = fs.existsSync(path.join(extDir, "power-tools.ts"));
       results.push(`✓ Platform Extensions: power-tools (${powerToolsExists ? "active" : "missing"}), runtime-orchestrator (active)`);
@@ -776,7 +1025,6 @@ export default function (pi: ExtensionAPI) {
         results.push(`! Asset Sync: ${pendingChanges} pending changes (run /sync --apply to align)`);
       }
 
-      const topo = detectProjectTopology(ctx.cwd);
       results.push(`✓ Current Workspace: ${topo.name} [${topo.type}${topo.framework ? `, ${topo.framework}` : ""}${topo.packageManager ? `, ${topo.packageManager}` : ""}${topo.gitBranch ? `, branch:${topo.gitBranch}` : ""}]`);
 
       const report = results.join("\n");

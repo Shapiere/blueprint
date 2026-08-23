@@ -1,0 +1,31 @@
+{
+  "_meta": {
+    "purpose": "Blueprint-owned capability scope classification. Maps skill names to project-domain tags. Classification only - governance/approval lives in capabilities/index.md. Consumed by runtime-orchestrator.ts for per-turn skill-index scoping.",
+    "coreNote": "Skills listed in 'core' are always ACTIVE regardless of project profile and can never be scoped out.",
+    "schema": "{ \"skill-name\": [\"tag\", ...] }"
+  },
+  "core": [
+    "repository-intelligence",
+    "test-driven-development",
+    "systematic-debugging",
+    "writing-plans",
+    "executing-plans"
+  ],
+  "scopes": {
+    "docx": ["docs", "documents"],
+    "pdf": ["docs", "documents"],
+    "pptx": ["docs", "documents"],
+    "xlsx": ["docs", "documents"],
+    "frontend-design": ["web", "frontend", "typescript", "javascript"],
+    "frontend-design-review": ["web", "frontend", "typescript", "javascript"],
+    "img2threejs": ["game", "3d", "roblox", "luau"],
+    "brave-search": ["research", "web-search"],
+    "browser-tools": ["web", "browser-testing"],
+    "gccli": ["cloud-gcp"],
+    "gdcli": ["cloud-gcp"],
+    "gmcli": ["cloud-gcp"],
+    "transcribe": ["media", "audio"],
+    "vscode": ["editor", "vscode"],
+    "youtube-transcript": ["media", "research"]
+  }
+}
