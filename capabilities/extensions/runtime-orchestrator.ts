@@ -56,6 +56,8 @@ export interface SyncSummary {
 
 const ROUTER_ENDPOINT = "http://127.0.0.1:20128/v1/models";
 const ROUTER_HEALTH_TIMEOUT_MS = 1500;
+/** Base URL for the 9router chat API (derived, single source of truth). */
+export const ROUTER_BASE_URL = ROUTER_ENDPOINT.replace(/\/models$/, "");
 const DEFAULT_BLUEPRINT_REPO_PATH = "G:/pisetup";
 
 /**
@@ -333,8 +335,10 @@ export async function check9routerHealth(): Promise<{ ok: boolean; modelCount?: 
 }
 
 export async function autoStart9router(ctx: ExtensionContext): Promise<boolean> {
-  ctx.ui.setStatus("9router", "starting…");
+  // All UI access is guarded: extension contexts go stale after the session
+  // ends (headless -p runs), and every ctx property getter throws via assertActive.
   try {
+    if (ctx.hasUI) ctx.ui.setStatus("9router", "starting…");
     const child = child_process.spawn("9router", [], {
       detached: true,
       stdio: "ignore",
@@ -346,15 +350,23 @@ export async function autoStart9router(ctx: ExtensionContext): Promise<boolean> 
       await sleep(500);
       const health = await check9routerHealth();
       if (health.ok) {
-        ctx.ui.setStatus("9router", "online");
-        ctx.ui.notify("9router auto-started successfully (:20128)", "info");
+        try {
+          if (ctx.hasUI) {
+            ctx.ui.setStatus("9router", "online");
+            ctx.ui.notify("9router auto-started successfully (:20128)", "info");
+          }
+        } catch {}
         return true;
       }
     }
   } catch {}
 
-  ctx.ui.setStatus("9router", "offline");
-  ctx.ui.notify("9router is offline (:20128). Run '9router' in a terminal.", "warning");
+  try {
+    if (ctx.hasUI) {
+      ctx.ui.setStatus("9router", "offline");
+      ctx.ui.notify("9router is offline (:20128). Run '9router' in a terminal.", "warning");
+    }
+  } catch {}
   return false;
 }
 
@@ -1027,14 +1039,14 @@ async function fetchRouterCatalog(): Promise<PiModelDefinition[]> {
 }
 
 export default function (pi: ExtensionAPI) {
+
   // Phase 4 (D36): bridge the live 9router catalog into Pi's /model selector via
   // the native dynamic-provider mechanism. Only the "9router" provider id is
   // touched; all other providers remain untouched. Fail-open: refresh errors are
   // handled by Pi's per-provider error isolation and keep the previous catalog.
   pi.registerProvider("9router", {
     name: "9router",
-    baseUrl: ROUTER_ENDPOINT.replace(/\/v1\/models$/, ""),
-    api: "openai-completions",
+    baseUrl: ROUTER_BASE_URL,
     models: [],
     async refreshModels(ctx) {
       if (ctx.allowNetwork === false) return []; // offline: serve store-only
@@ -1050,16 +1062,26 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    const topo = detectProjectTopology(ctx.cwd);
-    ctx.ui.setStatus("topology", `${topo.name} [${topo.type}${topo.framework ? `/${topo.framework}` : ""}]`);
+    // Whole body guarded: async continuations can run after the runner goes
+    // inactive (headless runs), where every ctx accessor throws assertActive.
+    try {
+      const topo = detectProjectTopology(ctx.cwd);
+      try {
+        if (ctx.hasUI) ctx.ui.setStatus("topology", `${topo.name} [${topo.type}${topo.framework ? `/${topo.framework}` : ""}]`);
+      } catch {}
 
-    check9routerHealth().then(async (health) => {
-      if (health.ok) {
-        ctx.ui.setStatus("9router", "online");
-      } else {
-        await autoStart9router(ctx);
-      }
-    });
+      check9routerHealth()
+        .then(async (health) => {
+          try {
+            if (health.ok) {
+              if (ctx.hasUI) ctx.ui.setStatus("9router", "online");
+            } else {
+              await autoStart9router(ctx);
+            }
+          } catch {}
+        })
+        .catch(() => {});
+    } catch {}
   });
 
   pi.on("before_agent_start", (event, ctx) => {
