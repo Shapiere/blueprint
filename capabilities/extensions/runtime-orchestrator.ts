@@ -1103,6 +1103,21 @@ export default function (pi: ExtensionAPI) {
         results.push(`✗ 9router: Offline (${routerHealth.error ?? "connection refused"})`);
       }
 
+      // Model catalog drift check: warn when the session's configured model is
+      // no longer served by the live router (prevents silent request failures).
+      try {
+        const liveCatalog = await fetchRouterCatalog();
+        const liveIds = new Set(liveCatalog.map((m) => m.id));
+        const currentModel = ctx.model;
+        if (currentModel && currentModel.provider === "9router" && !liveIds.has(currentModel.id)) {
+          results.push(`! Model Catalog: configured model "${currentModel.id}" is NOT in the live router catalog — select a current model via /model`);
+        } else if (currentModel) {
+          results.push(`✓ Model Catalog: current model "${currentModel.id}" is live-router current`);
+        }
+      } catch {
+        results.push("! Model Catalog: could not verify against live router (offline?)");
+      }
+
       const mcpPath = path.join(os.homedir(), ".config", "mcp", "mcp.json");
       if (fs.existsSync(mcpPath)) {
         try {
