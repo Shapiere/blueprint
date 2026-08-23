@@ -1,4 +1,13 @@
-import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
+import {
+  Container,
+  type SelectItem,
+  SelectList,
+  type SelectListTheme,
+  Spacer,
+  Text,
+  type TUI,
+} from "@earendil-works/pi-tui";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as child_process from "node:child_process";
@@ -1039,6 +1048,38 @@ async function fetchRouterCatalog(): Promise<PiModelDefinition[]> {
   }
 }
 
+/** Display metadata for reasoning profiles in the Model Control Center. */
+export const PROFILE_DESCRIPTIONS: Record<ReasoningProfileName, string> = {
+  Default: "Normal interactions",
+  Plan: "Planning & architecture",
+  Task: "Execution-oriented work",
+  Review: "Critique & verification",
+  Vision: "Visual reasoning",
+  Advisor: "Decision support",
+  Synthesis: "Deep synthesis",
+  Commit: "Commit-oriented work",
+  Research: "Research-oriented work",
+  Coding: "Implementation-oriented work",
+};
+
+/** Profile groupings for the MCC overview (information architecture only). */
+export const PROFILE_GROUPS: Array<{ title: string; items: ReasoningProfileName[] }> = [
+  { title: "GENERAL", items: ["Default", "Task", "Review"] },
+  { title: "PLANNING", items: ["Plan", "Advisor", "Research"] },
+  { title: "EXECUTION", items: ["Coding", "Synthesis", "Commit"] },
+  { title: "SPECIALIZED", items: ["Vision"] },
+];
+
+/** Lists model specs from the session registry (fail-open to []). */
+export function listAvailableModelSpecsSafe(ctx: ExtensionCommandContext): string[] {
+  try {
+    const models = ctx.modelRegistry.getAll();
+    return models.map((m) => `${m.provider}/${m.id}`);
+  } catch {
+    return [];
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // RAL Phase 5 — Complexity-aware orchestration & reasoning profiles (D37)
@@ -1121,6 +1162,55 @@ export function clampAgents(strategy: ExecutionStrategy, requested: number | und
 /** Maps a canonical runtime level back to its user-facing label. */
 export function levelLabelForRuntime(runtimeLevel: string): string | undefined {
   return Object.entries(USER_LEVEL_MAP).find(([, v]) => v === runtimeLevel)?.[0];
+}
+
+// --- Model Control Center state (v2): per-profile overrides + active selection ---
+
+export interface ReasoningStateV2 {
+  activeProfile: ReasoningProfileName;
+  activeLevel: string;
+  overrides: Partial<Record<ReasoningProfileName, string>>;
+}
+
+/** Effective level for a profile = user override, else the profile default. */
+export function effectiveLevel(profile: ReasoningProfileName, overrides: Partial<Record<ReasoningProfileName, string>>): string {
+  return overrides[profile] ?? PROFILE_DEFAULT_LEVELS[profile];
+}
+
+/** Loads full v2 reasoning state; migrates legacy {profile, level} files. */
+export function loadReasoningStateV2(): ReasoningStateV2 {
+  try {
+    const raw = JSON.parse(fs.readFileSync(REASONING_STATE_FILE, "utf-8")) as Partial<ReasoningStateV2> & Partial<ReasoningProfileState>;
+    const activeProfile = REASONING_PROFILES.includes(raw.activeProfile as ReasoningProfileName)
+      ? (raw.activeProfile as ReasoningProfileName)
+      : "Default";
+    const overrides: Partial<Record<ReasoningProfileName, string>> = {};
+    if (raw.overrides && typeof raw.overrides === "object") {
+      for (const [k, v] of Object.entries(raw.overrides)) {
+        if (REASONING_PROFILES.includes(k as ReasoningProfileName) && typeof v === "string") {
+          overrides[k as ReasoningProfileName] = v;
+        }
+      }
+    }
+    // Legacy migration: old shape stored a single active profile/level pair.
+    if (typeof raw.level === "string" && overrides[activeProfile] === undefined) {
+      overrides[activeProfile] = raw.level;
+    }
+    const activeLevel =
+      typeof raw.activeLevel === "string"
+        ? raw.activeLevel
+        : effectiveLevel(activeProfile, overrides);
+    return { activeProfile, activeLevel, overrides };
+  } catch {
+    return { activeProfile: "Default", activeLevel: PROFILE_DEFAULT_LEVELS.Default, overrides: {} };
+  }
+}
+
+/** Persists v2 reasoning state. */
+export function saveReasoningStateV2(state: ReasoningStateV2): void {
+  try {
+    fs.writeFileSync(REASONING_STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+  } catch {}
 }
 
 /**
@@ -1432,6 +1522,126 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+
+  // Phase 6 refinement (D39): /mcc — the Model Control Center. Multi-profile
+  // reasoning configuration in one re-enterable flow with cancel safety.
+  pi.registerCommand("mcc", {
+    description: "Model Control Center — inspect current model and configure reasoning profiles",
+    handler: async (_args: string, ctx: ExtensionCommandContext) => {
+      await ctx.waitForIdle();
+
+      const modelLabel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(none selected)";
+      const supportsVision =
+        !!ctx.model && Array.isArray(ctx.model.input) && ctx.model.input.includes("image");
+      let state = loadReasoningStateV2();
+
+      // Overview → editor loop. Every edit persists immediately (cancel-safe).
+      for (;;) {
+        const groups = PROFILE_GROUPS;
+
+        const items: SelectItem[] = [];
+        items.push({ value: "__model__", label: `Model · ${modelLabel}`, description: "Select a different model" });
+        items.push({ value: "__sep0__", label: "" });
+        for (const g of groups) {
+          items.push({ value: `__g_${g.title}__`, label: g.title });
+          for (const name of g.items) {
+            if (name === "Vision" && !supportsVision) {
+              items.push({ value: `__p_${name}__`, label: `${name} · unavailable`, description: "selected model does not support image input" });
+              continue;
+            }
+            const lvl = effectiveLevel(name, state.overrides);
+            const mark = state.activeProfile === name ? " ●active" : "";
+            items.push({
+              value: `__p_${name}__`,
+              label: `${name} · ${lvl}${mark}`,
+              description: PROFILE_DESCRIPTIONS[name],
+            });
+          }
+          items.push({ value: `__sep_${g.title}__`, label: "" });
+        }
+        items.push({ value: "__done__", label: "Save & Done", description: "Persist changes and exit" });
+
+        const picked = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
+          const container = new Container();
+          container.addChild(new Text(theme.fg("accent", "MODEL CONTROL CENTER"), 1, 0));
+          container.addChild(new Text(theme.fg("muted", `Current model: ${modelLabel}`), 0, 1));
+          container.addChild(new Spacer(1));
+
+          const listTheme: SelectListTheme = {
+            selectedPrefix: (t) => theme.bg("selectedBg", theme.fg("accent", t)),
+            selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
+            description: (t) => theme.fg("muted", t),
+            scrollInfo: (t) => theme.fg("dim", t),
+            noMatch: (t) => theme.fg("warning", t),
+          };
+          const visible = items.filter((i) => !i.label.startsWith("__"));
+          const list = new SelectList(visible, 14, listTheme);
+          const resolve = (label: string): string | null => {
+            const hit = items.find((i) => i.label === label);
+            return hit ? hit.value : null;
+          };
+          list.onSelect = (item) => done(resolve(item.label));
+          list.onCancel = () => done("__done__");
+
+          container.addChild(list);
+          container.addChild(new Spacer(1));
+          container.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter select · esc save & exit"), 1, 0));
+
+          return {
+            render: (w: number) => container.render(w),
+            invalidate: () => container.invalidate(),
+            handleInput: (data: string) => {
+              list.handleInput(data);
+              tui.requestRender();
+            },
+          };
+        });
+
+        if (picked === null || picked === "__done__") return;
+
+        if (picked === "__model__") {
+          const available = listAvailableModelSpecsSafe(ctx);
+          if (available.length === 0) {
+            ctx.ui.notify("No models available in the registry.", "warning");
+            continue;
+          }
+          const spec = await ctx.ui.select("Select Model", available);
+          if (!spec) continue;
+          const [provider, ...rest] = spec.split("/");
+          const id = rest.join("/");
+          const target = ctx.modelRegistry.getAll().find((mm) => `${mm.provider}/${mm.id}` === spec);
+          if (target) {
+            await pi.setModel(target as never);
+            ctx.ui.notify(`Model set to ${spec}`, "info");
+          } else {
+            ctx.ui.notify(`Could not resolve model "${spec}".`, "warning");
+          }
+          continue;
+        }
+
+        if (picked.startsWith("__p_")) {
+          const profile = picked.slice(4) as ReasoningProfileName;
+          if (profile === "Vision" && !supportsVision) {
+            ctx.ui.notify("Vision profile unavailable: selected model does not support image input.", "warning");
+            continue;
+          }
+          const currentLevel = effectiveLevel(profile, state.overrides);
+          const levelLabels = Object.keys(USER_LEVEL_MAP);
+          const levelChoice = await ctx.ui.select(
+            `Reasoning Level — ${profile} (current: ${currentLevel})`,
+            [...levelLabels, "Cancel (keep current)"],
+          );
+          if (!levelChoice || levelChoice.startsWith("Cancel")) continue; // cancel-safe
+          const runtimeLevel = USER_LEVEL_MAP[levelChoice];
+          const wasActive = state.activeProfile === profile;
+          state.overrides[profile] = runtimeLevel;
+          if (wasActive) state.activeLevel = runtimeLevel;
+          saveReasoningStateV2(state);
+          ctx.ui.notify(`${profile} → ${runtimeLevel}`, "info");
+        }
+      }
+    },
+  });
   pi.registerCommand("sync", {
     description: "One-way sync platform assets from Blueprint repo to runtime (~/.pi/agent)",
     handler: async (args: string, ctx: ExtensionCommandContext) => {

@@ -323,3 +323,11 @@ Decision log. Every entry uses the template below. This file owns the history of
 - Alternatives: (a) Injecting steps into Pi's native /model selector component — rejected: host-owned TUI component, not extension-modifiable without unsupported internals; (b) separate `/model-reasoning` command — rejected: fragments the flow the task explicitly asked to unify; (c) automatic profile inference from task type — deferred per D37.
 - Rationale: Uses only documented extension surfaces (`model_select` event, `ctx.ui.select`, `pi.setThinkingLevel`) to deliver the one-flow UX; capability gating comes free via the native clamp plus explicit Vision filtering.
 
+### D39 — Model Control Center (`/mcc`) adopted: multi-profile reasoning UX
+
+- Date: 2026-08-23
+- Context: The D38 integrated `/model` flow configures one profile per invocation. Real-world use showed users need independent persistent configuration for multiple profiles (e.g., Plan=High, Task=Medium, Commit=Low) in one session, re-enterable at any time without `/reasoning`, with current levels visible at a glance.
+- Decision: Implement the Model Control Center as the `/mcc` command in `runtime-orchestrator.ts`: a grouped overview screen (GENERAL / PLANNING / EXECUTION / SPECIALIZED) rendering all 10 profiles with their effective level at a glance plus the current model; selecting a profile opens a focused Reasoning Level editor (Off/Low/Medium/High/Ultra) that persists immediately per edit (cancel-safe); "Select Model" switches models via `ctx.modelRegistry` + `pi.setModel`; Vision is gated on image-input capability. State model upgraded to v2 (`harness-reasoning.json`: activeProfile/activeLevel/overrides), migrating legacy single-pair files. `/reasoning` and the D38 `/model` post-select flow remain for compatibility.
+- Alternatives: (a) Extending the host-owned `/model` TUI component — rejected: not extension-modifiable without unsupported internals; (b) one-shot wizard only — rejected: fails multi-profile requirement; (c) new UI framework — rejected: uses Pi-native pi-tui primitives (`ctx.ui.custom`, Container/Text/Spacer/SelectList) exactly as `/workflows-models` does.
+- Rationale: Delivers the polished, re-enterable Model Control Center UX while keeping every D36/D37/D38 invariant — no models.json/auth.json writes, no second discovery mechanism, no silent model switching.
+
