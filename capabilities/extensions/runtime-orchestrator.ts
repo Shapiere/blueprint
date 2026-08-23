@@ -1525,67 +1525,80 @@ export default function (pi: ExtensionAPI) {
 
   // Phase 6 refinement (D39): /mcc — the Model Control Center. Multi-profile
   // reasoning configuration in one re-enterable flow with cancel safety.
+  // Phase 6 refinement (D39.1): /mcc — re-enterable Model Control Center.
+  // Overview and pickers are viewport-limited SelectLists with clear highlight;
+  // every profile edit persists immediately and the overview re-renders fresh.
   pi.registerCommand("mcc", {
     description: "Model Control Center — inspect current model and configure reasoning profiles",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
       await ctx.waitForIdle();
 
-      const modelLabel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(none selected)";
-      const supportsVision =
-        !!ctx.model && Array.isArray(ctx.model.input) && ctx.model.input.includes("image");
-      let state = loadReasoningStateV2();
+      // Pi's placeholder model has provider/id/api all set to "unknown" before
+      // any real selection; treat it as "no model" rather than displaying it.
+      const isPlaceholder =
+        !!ctx.model && ctx.model.provider === "unknown" && ctx.model.id === "unknown";
 
-      // Overview → editor loop. Every edit persists immediately (cancel-safe).
+      let modelLabel = isPlaceholder || !ctx.model
+        ? "(none — choose below)"
+        : `${ctx.model.provider}/${ctx.model.id}`;
+
+      const supportsVision =
+        !!ctx.model && !isPlaceholder &&
+        Array.isArray(ctx.model.input) && ctx.model.input.includes("image");
+
       for (;;) {
+        const state = loadReasoningStateV2();
         const groups = PROFILE_GROUPS;
 
-        const items: SelectItem[] = [];
-        items.push({ value: "__model__", label: `Model · ${modelLabel}`, description: "Select a different model" });
-        items.push({ value: "__sep0__", label: "" });
-        for (const g of groups) {
-          items.push({ value: `__g_${g.title}__`, label: g.title });
+        // ---- Overview screen (viewport-limited SelectList) ----
+        type Row = { value: string; label: string; description?: string };
+        const rows: Row[] = [];
+        rows.push({
+          value: "__model__",
+          label: "Select model…",
+          description: `Current: ${modelLabel}`,
+        });
+        for (const g of PROFILE_GROUPS) {
+          rows.push({ value: `__g_${g.title}__`, label: g.title });
           for (const name of g.items) {
             if (name === "Vision" && !supportsVision) {
-              items.push({ value: `__p_${name}__`, label: `${name} · unavailable`, description: "selected model does not support image input" });
+              rows.push({
+                value: `__skip_${name}__`,
+                label: `${name} · unavailable`,
+                description: "selected model has no image input",
+              });
               continue;
             }
             const lvl = effectiveLevel(name, state.overrides);
-            const mark = state.activeProfile === name ? " ●active" : "";
-            items.push({
+            const activeMark = state.activeProfile === name ? "  ●active" : "";
+            rows.push({
               value: `__p_${name}__`,
-              label: `${name} · ${lvl}${mark}`,
+              label: `${name} · ${lvl}${activeMark}`,
               description: PROFILE_DESCRIPTIONS[name],
             });
           }
-          items.push({ value: `__sep_${g.title}__`, label: "" });
         }
-        items.push({ value: "__done__", label: "Save & Done", description: "Persist changes and exit" });
+        rows.push({ value: "__done__", label: "Done", description: "Save & exit" });
 
-        const picked = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
+        const overviewPicked = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
           const container = new Container();
-          container.addChild(new Text(theme.fg("accent", "MODEL CONTROL CENTER"), 1, 0));
-          container.addChild(new Text(theme.fg("muted", `Current model: ${modelLabel}`), 0, 1));
+          container.addChild(new Text(theme.fg("accent", theme.bold("MODEL CONTROL CENTER")), 1, 0));
+          container.addChild(new Text(theme.fg("text", modelLabel.startsWith("(") ? `Current model: ${modelLabel}` : `Current model: ${modelLabel}`), 0, 1));
           container.addChild(new Spacer(1));
 
           const listTheme: SelectListTheme = {
-            selectedPrefix: (t) => theme.bg("selectedBg", theme.fg("accent", t)),
+            selectedPrefix: (t) => theme.fg("accent", "→ "),
             selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
             description: (t) => theme.fg("muted", t),
             scrollInfo: (t) => theme.fg("dim", t),
             noMatch: (t) => theme.fg("warning", t),
           };
-          const visible = items.filter((i) => !i.label.startsWith("__"));
-          const list = new SelectList(visible, 14, listTheme);
-          const resolve = (label: string): string | null => {
-            const hit = items.find((i) => i.label === label);
-            return hit ? hit.value : null;
-          };
-          list.onSelect = (item) => done(resolve(item.label));
+          const list = new SelectList(rows, 12, listTheme);
+          list.onSelect = (item) => done(item.value);
           list.onCancel = () => done("__done__");
-
           container.addChild(list);
           container.addChild(new Spacer(1));
-          container.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter select · esc save & exit"), 1, 0));
+          container.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter select · esc done"), 1, 0));
 
           return {
             render: (w: number) => container.render(w),
@@ -1597,47 +1610,128 @@ export default function (pi: ExtensionAPI) {
           };
         });
 
-        if (picked === null || picked === "__done__") return;
+        if (overviewPicked === null || overviewPicked === "__done__") return;
 
-        if (picked === "__model__") {
-          const available = listAvailableModelSpecsSafe(ctx);
-          if (available.length === 0) {
+        // ---- Select model (scrollable, searchable picker) ----
+        if (overviewPicked === "__model__") {
+          const specs = listAvailableModelSpecsSafe(ctx);
+          if (specs.length === 0) {
             ctx.ui.notify("No models available in the registry.", "warning");
             continue;
           }
-          const spec = await ctx.ui.select("Select Model", available);
-          if (!spec) continue;
-          const [provider, ...rest] = spec.split("/");
-          const id = rest.join("/");
-          const target = ctx.modelRegistry.getAll().find((mm) => `${mm.provider}/${mm.id}` === spec);
-          if (target) {
-            await pi.setModel(target as never);
-            ctx.ui.notify(`Model set to ${spec}`, "info");
-          } else {
-            ctx.ui.notify(`Could not resolve model "${spec}".`, "warning");
+          const pickedSpec = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
+            const container = new Container();
+            container.addChild(new Text(theme.fg("accent", theme.bold("SELECT MODEL")), 1, 0));
+            container.addChild(new Text(theme.fg("muted", `Current: ${modelLabel}`), 0, 1));
+            container.addChild(new Spacer(1));
+
+            const items: SelectItem[] = specs.map((s) => ({ value: s, label: s }));
+            const listTheme: SelectListTheme = {
+              selectedPrefix: (t) => theme.fg("accent", "→ "),
+              selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
+              description: (t) => theme.fg("muted", t),
+              scrollInfo: (t) => theme.fg("dim", t),
+              noMatch: (t) => theme.fg("warning", t),
+            };
+            const list = new SelectList(items, 12, listTheme);
+            list.onSelect = (item) => done(item.value);
+            list.onCancel = () => done(null);
+
+            let filter = "";
+            const filterText = new Text(theme.fg("dim", ""), 1, 0);
+            const updateFilterRow = () => filterText.setText(theme.fg("dim", filter ? `filter: ${filter}` : "type to filter"));
+
+            container.addChild(list);
+            container.addChild(new Spacer(1));
+            container.addChild(filterText);
+            updateFilterRow();
+            container.addChild(new Text(theme.fg("dim", "↑↓ navigate · type to filter · enter select · esc cancel"), 1, 0));
+
+            return {
+              render: (w: number) => container.render(w),
+              invalidate: () => container.invalidate(),
+              handleInput: (data: string) => {
+                // Printable chars feed the native prefix filter.
+                if (data.length >= 1 && data >= " " && data <= "~" && !data.startsWith("\x1b")) {
+                  filter += data;
+                  list.setFilter(filter);
+                  updateFilterRow();
+                } else if (data === "\x7f" || data === "\b") {
+                  filter = filter.slice(0, -1);
+                  list.setFilter(filter);
+                  updateFilterRow();
+                }
+                list.handleInput(data);
+                tui.requestRender();
+              },
+            };
+          });
+          if (!pickedSpec) continue;
+          const target = ctx.modelRegistry.getAll().find((mm) => `${mm.provider}/${mm.id}` === pickedSpec);
+          if (!target) {
+            ctx.ui.notify(`Could not resolve model "${pickedSpec}".`, "warning");
+            continue;
           }
-          continue;
+          await pi.setModel(target as never);
+          modelLabel = pickedSpec;
+          ctx.ui.notify(`Model set to ${pickedSpec}`, "info");
+          continue; // back to overview, refreshed labels
         }
 
-        if (picked.startsWith("__p_")) {
-          const profile = picked.slice(4) as ReasoningProfileName;
+        // ---- Profile level editor (single-item, radio-style) ----
+        if (overviewPicked.startsWith("__p_")) {
+          const profile = overviewPicked.slice(4) as ReasoningProfileName;
           if (profile === "Vision" && !supportsVision) {
             ctx.ui.notify("Vision profile unavailable: selected model does not support image input.", "warning");
             continue;
           }
           const currentLevel = effectiveLevel(profile, state.overrides);
           const levelLabels = Object.keys(USER_LEVEL_MAP);
-          const levelChoice = await ctx.ui.select(
-            `Reasoning Level — ${profile} (current: ${currentLevel})`,
-            [...levelLabels, "Cancel (keep current)"],
-          );
-          if (!levelChoice || levelChoice.startsWith("Cancel")) continue; // cancel-safe
-          const runtimeLevel = USER_LEVEL_MAP[levelChoice];
-          const wasActive = state.activeProfile === profile;
+
+          const chosenLabel = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
+            const container = new Container();
+            container.addChild(new Text(theme.fg("accent", theme.bold(profile.toUpperCase())), 1, 0));
+            container.addChild(new Text(theme.fg("muted", PROFILE_DESCRIPTIONS[profile]), 0, 1));
+            container.addChild(new Text(theme.fg("text", `Current level: ${currentLevel}`), 0, 1));
+            container.addChild(new Spacer(1));
+
+            const items: SelectItem[] = levelLabels.map((l) => ({
+              value: l,
+              label: `${USER_LEVEL_MAP[l] === currentLevel ? "●" : "○"} ${l}`,
+            }));
+            const listTheme: SelectListTheme = {
+              selectedPrefix: (t) => theme.fg("accent", "→ "),
+              selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
+              description: (t) => theme.fg("muted", t),
+              scrollInfo: (t) => theme.fg("dim", t),
+              noMatch: (t) => theme.fg("warning", t),
+            };
+            const list = new SelectList(items, 7, listTheme);
+            const curIdx = levelLabels.findIndex((l) => USER_LEVEL_MAP[l] === currentLevel);
+            if (curIdx >= 0) list.setSelectedIndex(curIdx);
+            list.onSelect = (item) => done(item.label.replace(/^[●○] /, ""));
+            list.onCancel = () => done(null);
+
+            container.addChild(list);
+            container.addChild(new Spacer(1));
+            container.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter save · esc cancel"), 1, 0));
+
+            return {
+              render: (w: number) => container.render(w),
+              invalidate: () => container.invalidate(),
+              handleInput: (data: string) => {
+                list.handleInput(data);
+                tui.requestRender();
+              },
+            };
+          });
+          if (chosenLabel === null) continue; // Esc — cancel-safe, no change
+          const runtimeLevel = USER_LEVEL_MAP[chosenLabel];
           state.overrides[profile] = runtimeLevel;
-          if (wasActive) state.activeLevel = runtimeLevel;
+          if (state.activeProfile === profile) state.activeLevel = runtimeLevel;
           saveReasoningStateV2(state);
           ctx.ui.notify(`${profile} → ${runtimeLevel}`, "info");
+          // Loop continues → overview re-renders from fresh state (immediate update).
         }
       }
     },
