@@ -1055,9 +1055,41 @@ export const STRATEGY_CAPS: Record<Exclude<ExecutionStrategy, "HEAVY">, number> 
   FULL: 8,
 };
 
-export type ReasoningProfileName = "Default" | "Plan" | "Review";
+export type ReasoningProfileName =
+  | "Default" | "Plan" | "Task" | "Review" | "Vision"
+  | "Advisor" | "Synthesis" | "Commit" | "Research" | "Coding";
 
-export const REASONING_PROFILES: readonly ReasoningProfileName[] = ["Default", "Plan", "Review"];
+export const REASONING_PROFILES: readonly ReasoningProfileName[] = [
+  "Default", "Plan", "Task", "Review", "Vision",
+  "Advisor", "Synthesis", "Commit", "Research", "Coding",
+];
+
+/** Profile default thinking levels (user may override per selection). */
+export const PROFILE_DEFAULT_LEVELS: Record<ReasoningProfileName, string> = {
+  Default: "medium",
+  Plan: "high",
+  Task: "high",
+  Review: "high",
+  Vision: "medium",
+  Advisor: "high",
+  Synthesis: "high",
+  Commit: "low",
+  Research: "high",
+  Coding: "high",
+};
+
+/**
+ * User-facing reasoning level → canonical pi-ai/pi runtime value.
+ * "Ultra" maps to the runtime's xhigh tier; runtime `max` remains reachable
+ * via Pi's native /thinking-level command for power users.
+ */
+export const USER_LEVEL_MAP: Record<string, string> = {
+  "Off": "off",
+  "Low": "low",
+  "Medium": "medium",
+  "High": "high",
+  "Ultra": "xhigh",
+};
 
 export interface ReasoningProfileState {
   profile: ReasoningProfileName;
@@ -1086,9 +1118,14 @@ export function clampAgents(strategy: ExecutionStrategy, requested: number | und
   return cap === undefined ? req : Math.max(1, Math.min(req, cap));
 }
 
+/** Maps a canonical runtime level back to its user-facing label. */
+export function levelLabelForRuntime(runtimeLevel: string): string | undefined {
+  return Object.entries(USER_LEVEL_MAP).find(([, v]) => v === runtimeLevel)?.[0];
+}
+
 /**
  * Loads persisted reasoning-profile configuration (runtime-owned state).
- * Fail-open to Default @ medium.
+ * Fail-open: unknown profile falls back to Default with its profile default level.
  */
 export function loadReasoningProfile(): ReasoningProfileState {
   try {
@@ -1096,10 +1133,10 @@ export function loadReasoningProfile(): ReasoningProfileState {
     const profile = REASONING_PROFILES.includes(raw.profile as ReasoningProfileName)
       ? (raw.profile as ReasoningProfileName)
       : "Default";
-    const level = typeof raw.level === "string" ? raw.level : "medium";
+    const level = typeof raw.level === "string" ? raw.level : PROFILE_DEFAULT_LEVELS[profile];
     return { profile, level };
   } catch {
-    return { profile: "Default", level: "medium" };
+    return { profile: "Default", level: PROFILE_DEFAULT_LEVELS.Default };
   }
 }
 
@@ -1174,6 +1211,42 @@ export default function (pi: ExtensionAPI) {
     } catch {}
   });
 
+
+  // Phase 6 (D38): integrated /model flow — after the user selects a model via
+  // Pi's native selector (which auto-refreshes providers via D36), offer
+  // reasoning profile + level selection in one coherent flow. The session
+  // model is whatever the user just picked; profiles never change it.
+  pi.on("model_select", async (_event, ctx) => {
+    try {
+      if (!ctx.hasUI) return;
+      const model = ctx.model;
+      if (!model) return;
+
+      const supportsVision = Array.isArray(model.input) && model.input.includes("image");
+      const profileChoices = REASONING_PROFILES.filter(
+        (p) => p !== "Vision" || supportsVision,
+      );
+      const current = loadReasoningProfile();
+
+      const profile = await ctx.ui.select("Reasoning Profile", profileChoices);
+      if (!profile) return; // cancelled → keep previous configuration
+
+      const defaultLevel =
+        profile === current.profile ? current.level : PROFILE_DEFAULT_LEVELS[profile as ReasoningProfileName];
+      const levelLabels = Object.keys(USER_LEVEL_MAP);
+      const levelLabel = await ctx.ui.select(
+        `Reasoning Level (${profile})`,
+        levelLabels,
+      );
+      if (!levelLabel) return;
+
+      const runtimeLevel = USER_LEVEL_MAP[levelLabel] as never;
+      saveReasoningProfile({ profile: profile as ReasoningProfileName, level: runtimeLevel });
+      // Native setter clamps to the selected model's capabilities.
+      pi.setThinkingLevel(runtimeLevel);
+      ctx.ui.notify(`Model: ${model.provider}/${model.id} · Profile: ${profile} · Level: ${levelLabel}`, "info");
+    } catch {}
+  });
   pi.on("before_agent_start", (event, ctx) => {
     const topo = detectProjectTopology(ctx.cwd);
     const topoContext = formatTopologyContext(topo);
