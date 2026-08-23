@@ -224,23 +224,26 @@ The first version is implemented as composed capabilities plus platform-owned ar
 
 **Engineering Quality Metrics (v1, 2026-08-03):** eight metrics with explicit purposes — repository health (scan results, git cleanliness), capability maturity (active/total), validation coverage (validated/registered), governance compliance (DECISIONS currency), documentation completeness (structure conformance), architecture compliance (structure vs matrix), tech-debt trend (carried items + UNVERIFIED licenses), intelligence coverage (validated intelligence artifacts). Computed by `/metrics`; trends from CHANGELOG/TODO history. Metrics drive recommendations only when they signal action.
 
-## Runtime Abstraction Layer v1 (implemented 2026-08-22, D33, D34 & D35)
+## Runtime Abstraction Layer v1 (implemented 2026-08-22, D33–D36)
 
 The RAL bridges the Control Plane and the daily coding Runtime Plane. Implemented as a single platform-owned Pi extension (`capabilities/extensions/runtime-orchestrator.ts`) — no new daemon, no new framework, no new process manager.
 
-**Responsibilities (Phases 1–3):**
+**Responsibilities (Phases 1–4):**
 - `session_start` hook: detect project topology from workspace manifest files; probe 9router health; attempt auto-start if offline; set status bar with project name + type.
 - `before_agent_start` hook (every turn): inject minimal workspace context string (~30–50 tokens) AND perform per-turn capability scoping — rebuild the `<available_skills>` section of the system prompt so only skills relevant to the detected project profile remain visible (D35). Fail-open on any scoping failure.
 - `/doctor` command: diagnostic scan of Pi runtime, 9router, MCP configuration, permission system, core extensions, sync status, and capability scoping state (Profile / Active / Available / Evidence / Governance).
 - `/sync` command (D34): deterministic one-way asset deployment from Blueprint (`G:/pisetup`) to runtime (`~/.pi/agent/`). SHA256 drift detection; conflicts block silent overwrites unless `--force`; protected files never touched. Allowlist includes `capabilities/scopes.json` (deployed to `~/.pi/agent/scopes.json` for `/doctor` reads).
+- Dynamic model catalog bridge (Phase 4, D36): registers provider `"9router"` via Pi-native `pi.registerProvider` with a `refreshModels` implementation that fetches `/v1/models` and maps entries deterministically — `/model` then reflects the live router catalog. `models.json` and `auth.json` are never read/written by this path; refresh errors are isolated by Pi's per-provider handling and preserve the previous usable catalog; offline context serves store-only.
 
 **Capability scoping model (Phase 3, D35):** `capabilities/scopes.json` is a Blueprint-owned tag map (`core` floor + per-skill domain tags). Resolution is deterministic and in-memory: ACTIVE = CORE ∪ {skills whose tags ∩ project profile ≠ ∅}; everything else AVAILABLE (hidden from the default index but invocable via native `/skill:<name>`). The project provides evidence only — it can never authorize, install, or register capabilities. Scoping failure degrades fail-open to today's behavior (all visible).
+
+**Model catalog mapping (Phase 4, D36):** router fields map directly (`id`, `context_length → contextWindow`, `max_completion_tokens → maxTokens`, `capabilities.reasoning`, `capabilities.vision → input image`); cost is constant zero (no pricing source); only canonical pi-ai thinkingFormats pass through into `compat.thinkingFormat` — non-canonical router formats are omitted rather than fabricated. Only provider id `"9router"` is registered; user-defined custom models belong in a separate provider id that RAL never touches.
 
 **Project detection:** `package.json` → TypeScript/JS + framework (Next.js, React, Remix, Astro, Vue, Svelte, NestJS, Hono, Fastify, Express, Vite); `Cargo.toml` → Rust (Axum, Actix, Tokio); `pyproject.toml`/`requirements.txt` → Python (FastAPI, Django, Flask, PyTorch, TensorFlow); `go.mod` → Go (Gin, Fiber, Echo); `default.project.json` → Roblox Studio / Luau / Rojo; `.git/HEAD` → branch. Generic fallback otherwise.
 
 **Sync scope (strict allowlist):** `capabilities/prompts/*.md`, `capabilities/extensions/*.ts`, `capabilities/skills/repository-intelligence/`, `capabilities/scopes.json`. Protected runtime files (`auth.json`, `models.json`, `settings.json`, `oauth.json`, `mcp.json`, `sessions/`) are never overwritten.
 
-**What the RAL does NOT do:** task-aware activation (deferred), bidirectional sync, MCP enable/disable automation, capability registry modification, permission override, durable skill-file mutation.
+**What the RAL does NOT do:** task-aware activation (deferred), bidirectional sync, MCP enable/disable automation, capability registry modification, permission override, durable skill-file mutation, `models.json` writes, polling loops.
 
 ---
 

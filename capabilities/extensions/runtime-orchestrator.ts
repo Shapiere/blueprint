@@ -923,7 +923,132 @@ export function listRuntimeSkills(agentDir?: string): Array<{ name: string; desc
   return skills;
 }
 
+// ---------------------------------------------------------------------------
+// RAL Phase 4 — Runtime Model Catalog bridge (D36)
+// Pi-native dynamic provider registration: refreshModels() bridges the live
+// 9router /v1/models catalog into Pi's /model selector. models.json and
+// auth.json are never read or written by this code path.
+// ---------------------------------------------------------------------------
+
+type CanonicalThinkingFormat =
+  | "openai" | "openrouter" | "deepseek" | "together" | "zai"
+  | "qwen" | "chat-template" | "qwen-chat-template" | "string-thinking" | "ant-ling";
+
+const CANONICAL_THINKING_FORMATS: ReadonlySet<string> = new Set<CanonicalThinkingFormat>([
+  "openai", "openrouter", "deepseek", "together", "zai",
+  "qwen", "chat-template", "qwen-chat-template", "string-thinking", "ant-ling",
+]);
+
+export interface RouterModel {
+  id?: unknown;
+  context_length?: unknown;
+  max_completion_tokens?: unknown;
+  capabilities?: {
+    reasoning?: unknown;
+    vision?: unknown;
+    thinkingFormat?: unknown;
+  } | null;
+}
+
+export interface PiModelDefinition {
+  id: string;
+  name: string;
+  reasoning: boolean;
+  input: ("text" | "image")[];
+  cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  contextWindow: number;
+  maxTokens: number;
+  compat?: { thinkingFormat?: CanonicalThinkingFormat };
+}
+
+/**
+ * Pure deterministic mapping from a 9router model entry to a Pi model
+ * definition. Returns undefined for entries that cannot be mapped safely
+ * (missing id/context/tokens). Never fabricates capability semantics:
+ * non-canonical thinkingFormats are omitted rather than translated.
+ */
+export function mapRouterModelToPi(model: RouterModel): PiModelDefinition | undefined {
+  if (typeof model.id !== "string" || model.id.length === 0) return undefined;
+  const ctx = typeof model.context_length === "number" ? model.context_length : NaN;
+  const maxTok = typeof model.max_completion_tokens === "number" ? model.max_completion_tokens : NaN;
+  if (!Number.isFinite(ctx) || !Number.isFinite(maxTok)) return undefined;
+
+  const caps = model.capabilities ?? {};
+  const reasoning = caps.reasoning === true;
+  const input: ("text" | "image")[] = caps.vision === true ? ["text", "image"] : ["text"];
+
+  const def: PiModelDefinition = {
+    id: model.id,
+    name: model.id,
+    reasoning,
+    input,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: ctx,
+    maxTokens: maxTok,
+  };
+  const tf = caps.thinkingFormat;
+  if (typeof tf === "string" && CANONICAL_THINKING_FORMATS.has(tf)) {
+    def.compat = { thinkingFormat: tf as CanonicalThinkingFormat };
+  }
+  return def;
+}
+
+/** Maps a full /v1/models payload to Pi definitions, skipping malformed entries. */
+export function mapRouterCatalog(payload: unknown): PiModelDefinition[] {
+  const data = (payload as { data?: unknown[] } | null)?.data;
+  if (!Array.isArray(data)) return [];
+  const out: PiModelDefinition[] = [];
+  const seen = new Set<string>();
+  for (const entry of data) {
+    if (entry === null || typeof entry !== "object") continue;
+    const mapped = mapRouterModelToPi(entry);
+    if (mapped && !seen.has(mapped.id)) {
+      seen.add(mapped.id);
+      out.push(mapped);
+    }
+  }
+  return out;
+}
+
+/** Fetches the live router catalog via the shared transport. Throws on failure. */
+async function fetchRouterCatalog(): Promise<PiModelDefinition[]> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ROUTER_HEALTH_TIMEOUT_MS);
+  try {
+    const res = await fetch(ROUTER_ENDPOINT, {
+      signal: controller.signal,
+      headers: { Authorization: "Bearer sk_9router" },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return mapRouterCatalog(await res.json());
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export default function (pi: ExtensionAPI) {
+  // Phase 4 (D36): bridge the live 9router catalog into Pi's /model selector via
+  // the native dynamic-provider mechanism. Only the "9router" provider id is
+  // touched; all other providers remain untouched. Fail-open: refresh errors are
+  // handled by Pi's per-provider error isolation and keep the previous catalog.
+  pi.registerProvider("9router", {
+    name: "9router",
+    baseUrl: ROUTER_ENDPOINT.replace(/\/v1\/models$/, ""),
+    api: "openai-completions",
+    models: [],
+    async refreshModels(ctx) {
+      if (ctx.allowNetwork === false) return []; // offline: serve store-only
+      const models = await fetchRouterCatalog();
+      if (models.length === 0) {
+        // Entire response invalid/empty: prefer previous usable catalog.
+        const stored = await ctx.store?.read?.();
+        const prior = [...((stored?.models ?? []) as readonly PiModelDefinition[])];
+        if (prior.length > 0) return prior;
+      }
+      return models;
+    },
+  });
+
   pi.on("session_start", async (_event, ctx) => {
     const topo = detectProjectTopology(ctx.cwd);
     ctx.ui.setStatus("topology", `${topo.name} [${topo.type}${topo.framework ? `/${topo.framework}` : ""}]`);
@@ -973,7 +1098,7 @@ export default function (pi: ExtensionAPI) {
 
       const routerHealth = await check9routerHealth();
       if (routerHealth.ok) {
-        results.push(`✓ 9router: Online (:20128) — ${routerHealth.modelCount ?? "~200"} models available`);
+        results.push(`✓ 9router: Online (:20128) — ${routerHealth.modelCount ?? "~200"} models available (live refresh enabled via RAL)`);
       } else {
         results.push(`✗ 9router: Offline (${routerHealth.error ?? "connection refused"})`);
       }
