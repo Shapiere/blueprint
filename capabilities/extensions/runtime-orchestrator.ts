@@ -1523,11 +1523,9 @@ export default function (pi: ExtensionAPI) {
   });
 
 
-  // Phase 6 refinement (D39): /mcc — the Model Control Center. Multi-profile
-  // reasoning configuration in one re-enterable flow with cancel safety.
-  // Phase 6 refinement (D39.1): /mcc — re-enterable Model Control Center.
-  // Overview and pickers are viewport-limited SelectLists with clear highlight;
-  // every profile edit persists immediately and the overview re-renders fresh.
+  // Phase 6 refinement (D39.1): /mcc — re-enterable Model Control Center with
+  // viewport-limited pickers, clear selection highlight, and immediate overview
+  // updates. Section headers are structural only and never selectable.
   pi.registerCommand("mcc", {
     description: "Model Control Center — inspect current model and configure reasoning profiles",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
@@ -1548,18 +1546,17 @@ export default function (pi: ExtensionAPI) {
 
       for (;;) {
         const state = loadReasoningStateV2();
-        const groups = PROFILE_GROUPS;
 
-        // ---- Overview screen (viewport-limited SelectList) ----
-        type Row = { value: string; label: string; description?: string };
+        // ---- Overview screen (viewport-limited SelectList, headers non-selectable) ----
+        interface Row { value: string; label: string; description?: string }
         const rows: Row[] = [];
         rows.push({
           value: "__model__",
           label: "Select model…",
           description: `Current: ${modelLabel}`,
         });
+        // Only interactive profile rows go into the SelectList — no headers.
         for (const g of PROFILE_GROUPS) {
-          rows.push({ value: `__g_${g.title}__`, label: g.title });
           for (const name of g.items) {
             if (name === "Vision" && !supportsVision) {
               rows.push({
@@ -1570,7 +1567,7 @@ export default function (pi: ExtensionAPI) {
               continue;
             }
             const lvl = effectiveLevel(name, state.overrides);
-            const activeMark = state.activeProfile === name ? "  ●active" : "";
+            const activeMark = state.activeProfile === name ? " ●active" : "";
             rows.push({
               value: `__p_${name}__`,
               label: `${name} · ${lvl}${activeMark}`,
@@ -1583,7 +1580,7 @@ export default function (pi: ExtensionAPI) {
         const overviewPicked = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
           const container = new Container();
           container.addChild(new Text(theme.fg("accent", theme.bold("MODEL CONTROL CENTER")), 1, 0));
-          container.addChild(new Text(theme.fg("text", modelLabel.startsWith("(") ? `Current model: ${modelLabel}` : `Current model: ${modelLabel}`), 0, 1));
+          container.addChild(new Text(theme.fg("text", `Current model: ${modelLabel}`), 0, 1));
           container.addChild(new Spacer(1));
 
           const listTheme: SelectListTheme = {
@@ -1651,7 +1648,6 @@ export default function (pi: ExtensionAPI) {
               render: (w: number) => container.render(w),
               invalidate: () => container.invalidate(),
               handleInput: (data: string) => {
-                // Printable chars feed the native prefix filter.
                 if (data.length >= 1 && data >= " " && data <= "~" && !data.startsWith("\x1b")) {
                   filter += data;
                   list.setFilter(filter);
@@ -1675,7 +1671,7 @@ export default function (pi: ExtensionAPI) {
           await pi.setModel(target as never);
           modelLabel = pickedSpec;
           ctx.ui.notify(`Model set to ${pickedSpec}`, "info");
-          continue; // back to overview, refreshed labels
+          continue;
         }
 
         // ---- Profile level editor (single-item, radio-style) ----
@@ -1731,11 +1727,11 @@ export default function (pi: ExtensionAPI) {
           if (state.activeProfile === profile) state.activeLevel = runtimeLevel;
           saveReasoningStateV2(state);
           ctx.ui.notify(`${profile} → ${runtimeLevel}`, "info");
-          // Loop continues → overview re-renders from fresh state (immediate update).
         }
       }
     },
   });
+
   pi.registerCommand("sync", {
     description: "One-way sync platform assets from Blueprint repo to runtime (~/.pi/agent)",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
