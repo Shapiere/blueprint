@@ -4,7 +4,7 @@
 
 Single source of truth for platform capabilities: what is installed, at what version, in what lifecycle stage, with what validation evidence. Deployment paths live in `docs/SETUP.md`; this file owns status. One row per capability; status changes require the capture loop (CHANGELOG + registry in the same session).
 
-**Last updated: 2026-08-23 (Continuous Evolution — integrated /model reasoning flow added, D38)**
+**Last updated: 2026-08-24 (Continuous Evolution — /mcc Model Control Center added, D39)**
 
 ## Registry
 
@@ -50,6 +50,7 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | complexity-aware orchestration | RAL Phase 5 (in extension) | — | Runtime integration | **active** | authored (D37) | PASS 2026-08-23 (strategy caps DIRECT=1/LIGHT≤3/FULL≤8 enforced at workflow tool boundary; HEAVY approval via interactive select; model silent-switch guard; cafe-mockup regression fixture classifies ≤3 agents) | Maintenance | Apache-2.0 | 2026-08-23 |
 | reasoning profiles (/reasoning, compat.) | RAL Phase 5 (in extension) | — | Runtime configuration | **active** | authored (D37/D38) | PASS 2026-08-23 (10-profile set; retained for CLI compatibility — primary UX is the /model flow) | Maintenance | Apache-2.0 | 2026-08-23 |
 | integrated /model reasoning flow | RAL Phase 6 (in extension) | — | Runtime UX | **active** | authored (D38) | PASS 2026-08-23 (model_select hook: 10-profile selector with Vision capability gating; level mapping Ultra→xhigh documented; persistence round-trip; model/profile/tier separation verified; live router interop via kimi/kimi-k3) | Maintenance | Apache-2.0 | 2026-08-23 |
+| /mcc Model Control Center | RAL (in extension) | — | Runtime UX | **active** | authored (D39) | PASS 2026-08-23 (grouped 10-profile overview with at-a-glance levels; per-profile level editors with immediate persistence; cancel-safe; Vision capability gating; Select Model via modelRegistry + pi.setModel; v2 state migration from legacy single-pair files) | Maintenance | Apache-2.0 | 2026-08-23 |
 
 ## Notes
 
