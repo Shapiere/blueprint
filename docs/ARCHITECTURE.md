@@ -292,3 +292,22 @@ Governance first (amendment + registry) → foundations (todo, path protection, 
 ## Notes
 
 - Adopted as `docs/ARCHITECTURE.md` under constitution v1.2. The original report is archived at `G:/blueprint-report/milestone5-5-architecture.md`.
+
+
+## D42 — Model Control System Phase 1 (2026-08-25)
+
+Conceptual pipeline (Phase 1; admin-derived CONNECTED/ENABLED deferred to Phase 2):
+
+```text
+DISCOVERED (/v1/models)
+    ↓ apply VISIBLE (harness-models.json, user-owned)
+SELECTABLE ──► native /model availability snapshot
+    ↓ selection
+model_select ──► Control Center flow (profiles · default · re-selection)
+    ↓
+Reasoning v3 {defaultProfile, profiles} ──resolveEffective()──► effective level
+    ▲
+workflow tool_call: "// profile:" tag → ephemeral execution context (window-scoped, memory only)
+```
+
+Invariants: `/model` is the single entry point (`/mcc` removed); RAL never writes models.json/auth.json/settings.json; agents never silently change the model (inline options-object overrides now guarded + Keep-strip); visibility never claims connectivity (UNVERIFIED until Phase 2 admin truth); one sanitized writer + one pure resolver for reasoning state eliminates the stale-preview class.

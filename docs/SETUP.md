@@ -154,6 +154,24 @@ Uninstall: `pi remove <source>`.
 - Config: `~/.pi/agent/extensions/pi-permission-system/config.json`.
 - Validated: `.env` read denied; `rm -rf *` blocked (model correctly fell back to plain `rm`); normal reads and bash unaffected.
 
+### Runtime-owned model/reasoning state (D42)
+
+| File | Owner | Contents |
+|---|---|---|
+| `~/.pi/agent/harness-reasoning.json` | user (runtime) | `{version:3, defaultProfile, profiles{10}}` — written only by the `/model` flow |
+| `~/.pi/agent/harness-models.json` | user (runtime) | `{visible:null|[], hidden:[], names{}}` visibility curation + display-name cache |
+
+Neither file is under `/sync`; neither contains credentials. `models.json`/`auth.json` remain protected and untouched by RAL.
+
+### Extension type-check & regression tests
+
+```bash
+# strict type-check (paths mapped to the global pi installation)
+npx -y -p typescript@latest tsc -p <tsconfig-with-paths>
+# regression suite (15 checks: migration, resolver, visibility, guards, control-center UI)
+npx -y tsx --tsconfig <tsconfig-with-paths> capabilities/extensions/tests/d42.test.ts
+```
+
 ## Operations
 
 Daily start sequence:

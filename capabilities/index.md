@@ -4,7 +4,7 @@
 
 Single source of truth for platform capabilities: what is installed, at what version, in what lifecycle stage, with what validation evidence. Deployment paths live in `docs/SETUP.md`; this file owns status. One row per capability; status changes require the capture loop (CHANGELOG + registry in the same session).
 
-**Last updated: 2026-08-25 (Continuous Evolution — /mcc real-world UX defect fixes, D41)**
+**Last updated: 2026-08-25 (Continuous Evolution — Model Control System Phase 1, D42)**
 
 ## Registry
 
@@ -50,7 +50,7 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | complexity-aware orchestration | RAL Phase 5 (in extension) | — | Runtime integration | **active** | authored (D37) | PASS 2026-08-23 (strategy caps DIRECT=1/LIGHT≤3/FULL≤8 enforced at workflow tool boundary; HEAVY approval via interactive select; model silent-switch guard; cafe-mockup regression fixture classifies ≤3 agents) | Maintenance | Apache-2.0 | 2026-08-23 |
 | reasoning profiles (/reasoning, compat.) | RAL Phase 5 (in extension) | — | Runtime configuration | **active** | authored (D37/D38) | PASS 2026-08-23 (10-profile set; retained for CLI compatibility — primary UX is the /model flow) | Maintenance | Apache-2.0 | 2026-08-23 |
 | integrated /model reasoning flow | RAL Phase 6 (in extension) | — | Runtime UX | **active** | authored (D38) | PASS 2026-08-23 (model_select hook: 10-profile selector with Vision capability gating; level mapping Ultra→xhigh documented; persistence round-trip; model/profile/tier separation verified; live router interop via kimi/kimi-k3) | Maintenance | Apache-2.0 | 2026-08-23 |
-| /mcc Model Control Center | RAL (in extension) | — | Runtime UX | **active** | authored (D39/D40/D41) | PASS 2026-08-25 (grouped overview with structural never-selectable headers + disabled Vision rows; columnar rows; success-colored active marker; profile-key parse bug fixed — corrupt override keys healed on write; fuzzy router-first model picker, `stealth ox` → ox-alpha 1/1356 live; unified v2 persistence across /model, /reasoning, /mcc; strict type-check PASS; 12-check headless harness PASS; live TUI edit round-trip PASS) | Maintenance | Apache-2.0 | 2026-08-25 |
+| Model Control System (`/model` unified surface) | RAL (in extension) | — | Runtime UX | **active** | authored (D39–D42) | PASS 2026-08-25 (SELECTABLE = DISCOVERED ∩ VISIBLE via harness-models.json applied in refreshModels; connectivity honestly UNVERIFIED in Phase 1; boot-default restoration with bounded handshake; reasoning v3 {defaultProfile, profiles} + pure resolveEffective; ephemeral execution profiles via validated `// profile:` tag; inline `{model:}` override guard with Keep-strip; `/mcc` removed — `/model` post-selection flow is the single control center; strict type-check PASS; 15-check regression suite PASS; live battery: restore notice, immediate Vision low update, Set-Default marker move, workflow config-immutability, override prompt + strip) | Maintenance | Apache-2.0 | 2026-08-25 |
 
 ## Notes
 

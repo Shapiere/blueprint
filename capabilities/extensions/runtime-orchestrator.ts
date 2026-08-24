@@ -1075,17 +1075,156 @@ export const PROFILE_GROUPS: Array<{ title: string; items: ReasoningProfileName[
   { title: "SPECIALIZED", items: ["Vision"] },
 ];
 
-/** Lists model specs from the session registry (fail-open to []). */
-export function listAvailableModelSpecsSafe(ctx: ExtensionCommandContext): string[] {
+// --- D42 Phase 1: user-owned model visibility (NOT a registry — curation only) ---
+
+const MODELS_STATE_FILE = path.join(os.homedir(), ".pi", "agent", "harness-models.json");
+const ROUTER_INFO_ENDPOINT = ROUTER_BASE_URL.replace(/\/v1$/, "") + "/api/v1/models/info";
+
+export interface ModelsVisibilityState {
+  /** null = everything discovered is visible; otherwise the allowlist. */
+  visible: string[] | null;
+  hidden: string[];
+  /** Best-effort display names from the router's public info endpoint. */
+  names: Record<string, string>;
+}
+
+export function loadModelsVisibility(): ModelsVisibilityState {
   try {
-    const models = ctx.modelRegistry.getAll();
+    const raw = JSON.parse(fs.readFileSync(MODELS_STATE_FILE, "utf-8")) as Partial<ModelsVisibilityState>;
+    const strArr = (v: unknown): string[] | null =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : null;
+    const visible = strArr(raw.visible);
+    return {
+      visible: visible && visible.length > 0 ? visible : null,
+      hidden: strArr(raw.hidden) ?? [],
+      names: raw.names && typeof raw.names === "object" ? raw.names : {},
+    };
+  } catch {
+    return { visible: null, hidden: [], names: {} };
+  }
+}
+
+export function saveModelsVisibility(state: ModelsVisibilityState): void {
+  try {
+    fs.writeFileSync(MODELS_STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+  } catch {}
+}
+
+/** Applies VISIBLE to DISCOVERED: hidden removed, optional allowlist intersected. */
+export function applyVisibility(ids: readonly string[], state: ModelsVisibilityState): string[] {
+  const hidden = new Set(state.hidden);
+  const allowed = state.visible ? new Set(state.visible) : null;
+  return ids.filter((id) => !hidden.has(id) && (!allowed || allowed.has(id)));
+}
+
+/** Last refresh counters for /doctor (module-scoped, in-memory only). */
+export const catalogStats = { discovered: 0, selectable: 0 };
+
+/**
+ * Best-effort display-name enrichment for the SELECTABLE set via the router's
+ * public info endpoint. Strictly bounded (sequential, capped, short timeout),
+ * cached in harness-models.json, never blocking and never affecting selection.
+ */
+const ENRICH_CAP = 40;
+let enrichInFlight = false;
+export async function enrichModelNames(ids: readonly string[]): Promise<void> {
+  if (enrichInFlight) return;
+  enrichInFlight = true;
+  try {
+    const state = loadModelsVisibility();
+    const pending = ids.filter((id) => !state.names[id]).slice(0, ENRICH_CAP);
+    let mutated = false;
+    for (const id of pending) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1200);
+      try {
+        const res = await fetch(`${ROUTER_INFO_ENDPOINT}?id=${encodeURIComponent(id)}`, {
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          const body = (await res.json()) as { name?: unknown };
+          if (typeof body.name === "string" && body.name.length > 0 && body.name !== id) {
+            state.names[id] = body.name;
+            mutated = true;
+          }
+        }
+      } catch {
+        break; // router slow/gone: stop quietly, retry on a future refresh
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    if (mutated) saveModelsVisibility({ ...state, names: state.names });
+  } finally {
+    enrichInFlight = false;
+  }
+}
+
+/** Lists model specs from Pi's availability snapshot (provider-scoped; NEVER getAll). */
+export function listAvailableModelSpecsSafe(ctx: ExtensionContext): string[] {
+  try {
+    const models = ctx.modelRegistry.getAvailable();
     return models.map((m) => `${m.provider}/${m.id}`);
   } catch {
     return [];
   }
 }
+/**
+ * Restores the user's DECLARED default model when Pi left the session at the
+ * placeholder because the static catalog predated the dynamic one. This is
+ * restoration of existing configuration — never a model switch. Guards:
+ * only when ctx.model is the placeholder, the declared default exists in the
+ * availability snapshot, and it is currently visible per harness-models.json.
+ */
+export async function restoreDeclaredDefault(ctx: ExtensionContext): Promise<boolean> {
+  try {
+    const model = ctx.model;
+    const isPlaceholder = !!model && model.provider === "unknown" && model.id === "unknown";
+    if (!isPlaceholder) return false;
+    const settings = JSON.parse(
+      fs.readFileSync(path.join(os.homedir(), ".pi", "agent", "settings.json"), "utf-8"),
+    ) as { defaultProvider?: unknown; defaultModel?: unknown };
+    const provider = typeof settings.defaultProvider === "string" ? settings.defaultProvider : undefined;
+    const id = typeof settings.defaultModel === "string" ? settings.defaultModel : undefined;
+    if (!provider || !id) return false;
+    const available = ctx.modelRegistry.getAvailable();
+    const target = available.find((m) => m.provider === provider && m.id === id);
+    if (!target) return false;
+    const selectable = applyVisibility([`${provider}/${id}`], loadModelsVisibility());
+    if (selectable.length === 0) return false;
+    restoringBootDefault = true;
+    try {
+      await piSetModelRef?.(target);
+    } finally {
+      // Let the model_select handler swallow its own dialog for this event.
+      setTimeout(() => {
+        restoringBootDefault = false;
+      }, 0);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-/** Stable value token encoding a profile row in the /mcc overview. */
+/** Late-bound setModel bridge; assigned inside the extension bootstrap. */
+let piSetModelRef: ((m: unknown) => Promise<unknown>) | null = null;
+/** True while a boot-default restoration is in flight; suppresses the post-select dialog. */
+let restoringBootDefault = false;
+
+/** Human-readable "provider/id" of the declared default from settings.json. */
+export function declaredDefaultLabel(): string {
+  try {
+    const settings = JSON.parse(
+      fs.readFileSync(path.join(os.homedir(), ".pi", "agent", "settings.json"), "utf-8"),
+    ) as { defaultProvider?: unknown; defaultModel?: unknown };
+    return `${String(settings.defaultProvider)}/${String(settings.defaultModel)}`;
+  } catch {
+    return "(settings unavailable)";
+  }
+}
+
+/** Stable value token encoding a profile row in the /model overview. */
 export function mccProfileValue(name: ReasoningProfileName): string {
   return `profile:${name}`;
 }
@@ -1195,66 +1334,136 @@ export function effectiveLevel(profile: ReasoningProfileName, overrides: Partial
   return overrides[profile] ?? PROFILE_DEFAULT_LEVELS[profile];
 }
 
-/** Loads full v2 reasoning state; migrates legacy {profile, level} files. */
-export function loadReasoningStateV2(): ReasoningStateV2 {
-  try {
-    const raw = JSON.parse(fs.readFileSync(REASONING_STATE_FILE, "utf-8")) as Partial<ReasoningStateV2> & Partial<ReasoningProfileState>;
-    const activeProfile = REASONING_PROFILES.includes(raw.activeProfile as ReasoningProfileName)
-      ? (raw.activeProfile as ReasoningProfileName)
-      : "Default";
-    const overrides: Partial<Record<ReasoningProfileName, string>> = {};
-    if (raw.overrides && typeof raw.overrides === "object") {
-      for (const [k, v] of Object.entries(raw.overrides)) {
-        if (REASONING_PROFILES.includes(k as ReasoningProfileName) && typeof v === "string") {
-          overrides[k as ReasoningProfileName] = v;
-        }
-      }
-    }
-    // Legacy migration: old shape stored a single active profile/level pair.
-    if (typeof raw.level === "string" && overrides[activeProfile] === undefined) {
-      overrides[activeProfile] = raw.level;
-    }
-    const activeLevel =
-      typeof raw.activeLevel === "string"
-        ? raw.activeLevel
-        : effectiveLevel(activeProfile, overrides);
-    return { activeProfile, activeLevel, overrides };
-  } catch {
-    return { activeProfile: "Default", activeLevel: PROFILE_DEFAULT_LEVELS.Default, overrides: {} };
-  }
+/** v3 reasoning state: one authoritative level per profile + user-designated default. */
+export interface ReasoningStateV3 {
+  version: 3;
+  defaultProfile: ReasoningProfileName;
+  profiles: Record<ReasoningProfileName, string>;
 }
 
-/** Persists v2 reasoning state. Overrides are pruned to valid profiles/levels on write. */
-export function saveReasoningStateV2(state: ReasoningStateV2): void {
-  try {
-    const overrides: Partial<Record<ReasoningProfileName, string>> = {};
-    for (const [k, v] of Object.entries(state.overrides ?? {})) {
-      if (REASONING_PROFILES.includes(k as ReasoningProfileName) && typeof v === "string" && v.length > 0) {
-        overrides[k as ReasoningProfileName] = v;
-      }
-    }
-    const activeProfile = REASONING_PROFILES.includes(state.activeProfile) ? state.activeProfile : "Default";
-    const activeLevel =
-      typeof state.activeLevel === "string" && state.activeLevel.length > 0
-        ? state.activeLevel
-        : effectiveLevel(activeProfile, overrides);
-    fs.writeFileSync(
-      REASONING_STATE_FILE,
-      JSON.stringify({ activeProfile, activeLevel, overrides }, null, 2),
-      "utf-8",
-    );
-  } catch {}
+export interface EffectiveReasoning {
+  profile: ReasoningProfileName;
+  level: string;
+  source: "default" | "execution";
+}
+
+const RUNTIME_LEVELS = new Set<string>(Object.values(USER_LEVEL_MAP));
+
+function sanitizeProfiles(input: unknown): Record<ReasoningProfileName, string> {
+  const out = {} as Record<ReasoningProfileName, string>;
+  for (const p of REASONING_PROFILES) {
+    const candidate = (input as Record<string, unknown> | null | undefined)?.[p];
+    out[p] =
+      typeof candidate === "string" && RUNTIME_LEVELS.has(candidate)
+        ? candidate
+        : PROFILE_DEFAULT_LEVELS[p];
+  }
+  return out;
 }
 
 /**
- * Loads persisted reasoning-profile configuration (runtime-owned state).
- * Single read path over the v2 state; legacy {profile, level} files are
- * migrated by loadReasoningStateV2. Fail-open: unknown values fall back to
- * Default with its profile default level.
+ * Loads the v3 reasoning state, migrating v2 ({activeProfile, activeLevel,
+ * overrides}) and legacy v1 ({profile, level}) shapes. Existing user values
+ * are preserved; only invalid entries fall back to profile defaults.
+ */
+export function loadReasoningState(): ReasoningStateV3 {
+  try {
+    const raw = JSON.parse(fs.readFileSync(REASONING_STATE_FILE, "utf-8")) as Record<string, unknown>;
+    if (raw && raw.version === 3) {
+      const defaultProfile = REASONING_PROFILES.includes(raw.defaultProfile as ReasoningProfileName)
+        ? (raw.defaultProfile as ReasoningProfileName)
+        : "Default";
+      return { version: 3, defaultProfile, profiles: sanitizeProfiles(raw.profiles) };
+    }
+    // v2 / v1 migration: preserve every configured value we can recognize.
+    const v2 = raw as Partial<ReasoningStateV2> & Partial<ReasoningProfileState>;
+    const overrides = sanitizeProfiles(v2.overrides);
+    if (typeof v2.level === "string" && RUNTIME_LEVELS.has(v2.level)) {
+      const legacyProfile = REASONING_PROFILES.includes(v2.profile as ReasoningProfileName)
+        ? (v2.profile as ReasoningProfileName)
+        : "Default";
+      overrides[legacyProfile] = v2.level;
+    }
+    const defaultProfile = REASONING_PROFILES.includes(v2.activeProfile as ReasoningProfileName)
+      ? (v2.activeProfile as ReasoningProfileName)
+      : "Default";
+    return { version: 3, defaultProfile, profiles: overrides };
+  } catch {
+    return { version: 3, defaultProfile: "Default", profiles: sanitizeProfiles(undefined) };
+  }
+}
+
+/** Single sanitized writer for the v3 reasoning state. */
+export function saveReasoningState(state: ReasoningStateV3): void {
+  try {
+    const defaultProfile = REASONING_PROFILES.includes(state.defaultProfile)
+      ? state.defaultProfile
+      : "Default";
+    const payload: ReasoningStateV3 = {
+      version: 3,
+      defaultProfile,
+      profiles: sanitizeProfiles(state.profiles),
+    };
+    fs.writeFileSync(REASONING_STATE_FILE, JSON.stringify(payload, null, 2), "utf-8");
+  } catch {}
+}
+
+// --- Execution profile (Option C): ephemeral, run-scoped, never persisted ---
+
+export interface ExecutionContext {
+  profile: ReasoningProfileName;
+  since: number;
+}
+
+const EXECUTION_WINDOW_MS = 30 * 60 * 1000; // a workflow run never outlives this window
+let executionContext: ExecutionContext | null = null;
+
+/** Declares an execution profile for the current workflow run window. */
+export function setExecutionProfile(profile: ReasoningProfileName): void {
+  executionContext = { profile, since: Date.now() };
+}
+
+/** Clears any active execution context (used by tests and explicit resets). */
+export function clearExecutionProfile(): void {
+  executionContext = null;
+}
+
+function activeExecutionContext(): ExecutionContext | null {
+  if (!executionContext) return null;
+  if (Date.now() - executionContext.since > EXECUTION_WINDOW_MS) {
+    executionContext = null;
+    return null;
+  }
+  return executionContext;
+}
+
+/**
+ * The single authoritative resolution path for effective reasoning.
+ * Execution profile (when a fresh workflow declared one) wins over the
+ * user's Default Profile; configuration itself is never mutated.
+ */
+export function resolveEffective(state: ReasoningStateV3): EffectiveReasoning {
+  const exec = activeExecutionContext();
+  if (exec) {
+    return { profile: exec.profile, level: state.profiles[exec.profile], source: "execution" };
+  }
+  return { profile: state.defaultProfile, level: state.profiles[state.defaultProfile], source: "default" };
+}
+
+/** Parses `// profile: <Name>` from a workflow script header. */
+export function parseProfileTag(script: string): ReasoningProfileName | undefined {
+  const m = script.match(/^\s*\/\/\s*profile:\s*(\w+)\s*$/im);
+  const name = m?.[1] as ReasoningProfileName | undefined;
+  return name && REASONING_PROFILES.includes(name) ? name : undefined;
+}
+
+/**
+ * Loads persisted reasoning-profile configuration (compat view over v3).
+ * Legacy {profile, level} files are migrated by loadReasoningState.
  */
 export function loadReasoningProfile(): ReasoningProfileState {
-  const state = loadReasoningStateV2();
-  return { profile: state.activeProfile, level: state.activeLevel };
+  const resolved = resolveEffective(loadReasoningState());
+  return { profile: resolved.profile, level: resolved.level };
 }
 
 const ORCHESTRATION_CONTRACT = `
@@ -1268,11 +1477,40 @@ const ORCHESTRATION_CONTRACT = `
 - Never set maxAgents above your declared strategy's cap.
 - Model policy: USE CURRENT MODEL. Sub-agents inherit the session model. Do NOT add model overrides
   (model:/baseUrl:) to workflow scripts unless the user explicitly approved a different model.
-  If you believe a different model is required, ask the user first.`;
+  If you believe a different model is required, ask the user first.
+- Reasoning profiles: declare "// profile: <Name>" (e.g. // profile: Review) as the SECOND script line
+  to request an execution profile for this run only. This requests configuration — it never changes it.
+- NEVER read or write harness-reasoning.json or harness-models.json from workflow scripts.
+  Those are user-owned runtime state; scripts consume resolved values, they do not mutate them.`;
 
-/** Detects explicit model overrides in a workflow script (silent-switch guard). */
+/**
+ * Detects explicit model overrides in a workflow script (silent-switch guard).
+ * Covers standalone `model:` lines, `meta.model =`, and inline options-object
+ * forms like `agent(p, { model: "..." })`.
+ */
 export function scriptHasModelOverrides(script: string): boolean {
-  return /^\s*(?:\w+\.)?model\s*:/im.test(script) || /meta\.model\s*=/.test(script);
+  return (
+    /^\s*(?:\w+\.)?model\s*:/im.test(script) ||
+    /meta\.model\s*=/.test(script) ||
+    /\bmodel\s*:\s*["'`]/.test(script)
+  );
+}
+
+/** Strips inline and standalone model override fragments from a script. */
+export function stripModelOverrides(script: string): string {
+  return script
+    .split("\n")
+    .filter((l) => !/^\s*(?:\w+\.)?model\s*:/i.test(l) && !/meta\.model\s*=/i.test(l))
+    .join("\n")
+    .replace(/,\s*model\s*:\s*(["'`])[^"'`]*\1/g, "")
+    .replace(/\bmodel\s*:\s*(["'`])[^"'`]*\1\s*,\s*/g, "");
+}
+
+/** Detects workflow scripts attempting to mutate protected runtime state files. */
+export function scriptWritesProtectedState(script: string): boolean {
+  const mentions = /harness-(?:reasoning|models)\.json/.test(script);
+  const writes = /writeFileSync|appendFileSync|\.write\(|createWriteStream/.test(script);
+  return mentions && writes;
 }
 // ---------------------------------------------------------------------------
 // Model Control Center UI (D39/D41): grouped overview list with structural,
@@ -1285,8 +1523,8 @@ export interface MccItem {
   value: string;
   primary: string;
   description?: string;
-  /** Appends the success-colored ●active marker (active reasoning profile). */
-  marked?: boolean;
+  /** Appends a success-colored marker (e.g. ●active, ★default) after the label. */
+  marked?: boolean | string;
 }
 
 /** One non-selectable informational row (e.g. Vision without image input). */
@@ -1417,8 +1655,10 @@ export class MccOverviewList implements Component {
     for (const s of this.sections) {
       for (const row of s.rows) {
         const primary = row.kind === "item" ? row.item.primary : row.disabled.primary;
-        const marked = row.kind === "item" && row.item.marked ? MCC_ACTIVE_MARKER.length + 1 : 0;
-        widest = Math.max(widest, visibleWidth(primary) + marked);
+        const markedW = row.kind === "item" && row.item.marked
+          ? (typeof row.item.marked === "string" ? row.item.marked : MCC_ACTIVE_MARKER).length + 1
+          : 0;
+        widest = Math.max(widest, visibleWidth(primary) + markedW);
       }
     }
     return Math.max(16, Math.min(34, widest + 2, Math.max(16, width - 12)));
@@ -1436,9 +1676,10 @@ export class MccOverviewList implements Component {
 
   private renderItem(item: MccItem, selected: boolean, labelCol: number, width: number): string {
     const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
+    const markerText = typeof item.marked === "string" ? item.marked : item.marked ? MCC_ACTIVE_MARKER : "";
     const cell =
       truncateToWidth(item.primary, labelCol, "", true) +
-      (item.marked ? this.theme.fg("success", truncateToWidth(` ${MCC_ACTIVE_MARKER}`, Math.max(0, labelCol - visibleWidth(item.primary)), "", true)) : "");
+      (markerText ? this.theme.fg("success", truncateToWidth(` ${markerText}`, Math.max(0, labelCol - visibleWidth(item.primary)), "", true)) : "");
     let descPart = "";
     if (item.description && width > 40) {
       const remaining = width - 2 - labelCol;
@@ -1464,7 +1705,8 @@ export class MccOverviewList implements Component {
 }
 
 export default function (pi: ExtensionAPI) {
-
+  // Late-bound bridge used by boot-default restoration (setModel lives here).
+  piSetModelRef = (m) => pi.setModel(m as never);
 
   // Phase 4 (D36): bridge the live 9router catalog into Pi's /model selector via
   // the native dynamic-provider mechanism. Only the "9router" provider id is
@@ -1476,13 +1718,23 @@ export default function (pi: ExtensionAPI) {
     models: [],
     async refreshModels(ctx) {
       if (ctx.allowNetwork === false) return []; // offline: serve store-only
-      const models = await fetchRouterCatalog();
+      const mapped = await fetchRouterCatalog();
+      let models = mapped;
       if (models.length === 0) {
         // Entire response invalid/empty: prefer previous usable catalog.
         const stored = await ctx.store?.read?.();
         const prior = [...((stored?.models ?? []) as readonly PiModelDefinition[])];
-        if (prior.length > 0) return prior;
+        if (prior.length > 0) models = prior;
       }
+      // D42 Phase 1: apply user visibility curation (never claims connectivity).
+      const vis = loadModelsVisibility();
+      const ids = models.map((m) => `9router/${m.id}`);
+      catalogStats.discovered = ids.length;
+      const selectable = new Set(applyVisibility(ids, vis));
+      models = models.filter((m) => selectable.has(`9router/${m.id}`));
+      catalogStats.selectable = models.length;
+      // Cosmetic only: bounded display-name enrichment, never blocks selection.
+      void enrichModelNames([...selectable]).catch(() => {});
       return models;
     },
   });
@@ -1501,11 +1753,28 @@ export default function (pi: ExtensionAPI) {
           try {
             if (health.ok) {
               if (ctx.hasUI) ctx.ui.setStatus("9router", "online");
-              // Warm the registry so the dynamic 9router catalog is resolvable
-              // immediately (no first-visit lag, no "No models available" gap).
               try {
                 void ctx.modelRegistry.refresh();
               } catch {}
+              // D42 boot-default restoration: a bounded startup handshake.
+              // The dynamic catalog populates asynchronously after launch; a
+              // few short attempts run once at startup and then stop. This is
+              // initialization, not polling.
+              let attempts = 0;
+              const tryRestore = () => {
+                attempts++;
+                void (async () => {
+                try {
+                  if (await restoreDeclaredDefault(ctx)) {
+                    if (ctx.hasUI)
+                      ctx.ui.notify(`Restored default model:\n${declaredDefaultLabel()}`, "info");
+                    return;
+                  }
+                  if (attempts < 8) setTimeout(tryRestore, 900);
+                } catch {}
+                })();
+              };
+              setTimeout(tryRestore, 1200);
             } else {
               await autoStart9router(ctx);
             }
@@ -1514,45 +1783,232 @@ export default function (pi: ExtensionAPI) {
         .catch(() => {});
     } catch {}
   });
-
-
-  // Phase 6 (D38): integrated /model flow — after the user selects a model via
-  // Pi's native selector (which auto-refreshes providers via D36), offer
-  // reasoning profile + level selection in one coherent flow. The session
-  // model is whatever the user just picked; profiles never change it.
+  // D42: /model is the single entry point. The native selector stays
+  // authoritative for picking a model; this post-selection control center
+  // owns visibility-aware re-selection, profile configuration (Option C),
+  // and Default Profile designation — all against the one v3 store.
   pi.on("model_select", async (_event, ctx) => {
     try {
       if (!ctx.hasUI) return;
-      const model = ctx.model;
-      if (!model) return;
+      if (restoringBootDefault) {
+        restoringBootDefault = false; // boot restoration is not a user model change
+        return;
+      }
+      for (;;) {
+        const state = loadReasoningState();
+        const resolved = resolveEffective(state);
+        const isPlaceholder =
+          !!ctx.model && ctx.model.provider === "unknown" && ctx.model.id === "unknown";
+        const modelLabel =
+          isPlaceholder || !ctx.model ? "(none — choose below)" : `${ctx.model.provider}/${ctx.model.id}`;
+        const supportsVision =
+          !!ctx.model && !isPlaceholder &&
+          Array.isArray(ctx.model.input) && ctx.model.input.includes("image");
 
-      const supportsVision = Array.isArray(model.input) && model.input.includes("image");
-      const profileChoices = REASONING_PROFILES.filter(
-        (p) => p !== "Vision" || supportsVision,
-      );
-      const current = loadReasoningProfile();
+        const profileByValue: Record<string, ReasoningProfileName> = {};
+        const sections: MccSection[] = [
+          { title: "MODEL", rows: [{ kind: "item", item: { value: "__model__", primary: "Select model…" } }] },
+        ];
+        for (const g of PROFILE_GROUPS) {
+          const rows: MccRow[] = [];
+          for (const name of g.items) {
+            if (name === "Vision" && !supportsVision) {
+              rows.push({
+                kind: "disabled",
+                disabled: { primary: `${name} · unavailable`, description: "current model has no image input" },
+              });
+              continue;
+            }
+            profileByValue[mccProfileValue(name)] = name;
+            rows.push({
+              kind: "item",
+              item: {
+                value: mccProfileValue(name),
+                primary: `${name} · ${state.profiles[name]}`,
+                description: PROFILE_DESCRIPTIONS[name],
+                marked: state.defaultProfile === name ? "★default" : undefined,
+              },
+            });
+          }
+          sections.push({ title: g.title, rows });
+        }
+        sections.push({
+          title: "",
+          rows: [{ kind: "item", item: { value: "__done__", primary: "Done", description: "Save & exit" } }],
+        });
 
-      const profile = await ctx.ui.select("Reasoning Profile", profileChoices);
-      if (!profile) return; // cancelled → keep previous configuration
+        const picked = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
+          const container = new Container();
+          container.addChild(new Text(theme.fg("accent", theme.bold("MODEL CONTROL CENTER")), 1, 0));
+          container.addChild(new Text(theme.fg("text", `Current model: ${modelLabel}`), 0, 0));
+          container.addChild(new Text(
+            theme.fg("dim", "Connectivity: UNVERIFIED — router discovery filtered by your visibility settings"),
+            0, 0,
+          ));
+          container.addChild(new Text(
+            resolved.source === "execution"
+              ? theme.fg("warning", `Execution: ${resolved.profile} · ${resolved.level}`)
+              : theme.fg("muted", `Default Profile: ${state.defaultProfile} · ${state.profiles[state.defaultProfile]}`),
+            0, 1,
+          ));
+          container.addChild(new Spacer(1));
+          const list = new MccOverviewList(sections, theme, 14);
+          list.onSelect = (value) => done(value);
+          list.onCancel = () => done("__done__");
+          container.addChild(list);
+          container.addChild(new Spacer(1));
+          container.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter select · esc done"), 1, 0));
+          return {
+            render: (w: number) => container.render(w),
+            invalidate: () => container.invalidate(),
+            handleInput: (data: string) => {
+              list.handleInput(data);
+              tui.requestRender();
+            },
+          };
+        });
 
-      const defaultLevel =
-        profile === current.profile ? current.level : PROFILE_DEFAULT_LEVELS[profile as ReasoningProfileName];
-      const levelLabels = Object.keys(USER_LEVEL_MAP);
-      const levelLabel = await ctx.ui.select(
-        `Reasoning Level (${profile})`,
-        levelLabels,
-      );
-      if (!levelLabel) return;
+        if (picked === null || picked === "__done__") return;
 
-      const runtimeLevel = USER_LEVEL_MAP[levelLabel] as never;
-      const state = loadReasoningStateV2();
-      state.activeProfile = profile as ReasoningProfileName;
-      state.activeLevel = runtimeLevel;
-      state.overrides[state.activeProfile] = runtimeLevel;
-      saveReasoningStateV2(state);
-      // Native setter clamps to the selected model's capabilities.
-      pi.setThinkingLevel(runtimeLevel);
-      ctx.ui.notify(`Model: ${model.provider}/${model.id} · Profile: ${profile} · Level: ${levelLabel}`, "info");
+        if (picked === "__model__") {
+          const specs = sortModelsRouterFirst(listAvailableModelSpecsSafe(ctx));
+          if (specs.length === 0) {
+            ctx.ui.notify("No selectable models available.", "warning");
+            continue;
+          }
+          const names = loadModelsVisibility().names;
+          const pickedSpec = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
+            const makeList = (pool: string[]) => {
+              const l = new SelectList(
+                pool.map((s) => {
+                  const display = names[s];
+                  return {
+                    value: s,
+                    label: display ?? s,
+                    description: display ? s : undefined,
+                  } as SelectItem;
+                }),
+                12,
+                {
+                  selectedPrefix: (t) => theme.fg("accent", "→ "),
+                  selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
+                  description: (t) => theme.fg("muted", t),
+                  scrollInfo: (t) => theme.fg("dim", t),
+                  noMatch: (t) => theme.fg("warning", t),
+                },
+              );
+              l.onSelect = (item) => done(item.value);
+              l.onCancel = () => done(null);
+              return l;
+            };
+            let list = makeList(specs);
+            let filter = "";
+            let filterLine = theme.fg("dim", "type to filter (name · id · provider)");
+            const applyFilter = () => {
+              const pool = filter
+                ? fuzzyFilter(specs, filter.toLowerCase(), (s) => `${s} ${names[s] ?? ""}`.toLowerCase())
+                : specs;
+              list = makeList(pool);
+              filterLine = theme.fg("dim", filter ? `filter: ${filter} (${pool.length}/${specs.length})` : "type to filter (name · id · provider)");
+            };
+            return {
+              render: (w: number) => [
+                theme.fg("accent", theme.bold("SELECT MODEL")),
+                theme.fg("dim", "Connectivity: UNVERIFIED"),
+                "",
+                ...list.render(w),
+                "",
+                filterLine,
+                theme.fg("dim", "↑↓ navigate · enter select · esc cancel"),
+              ],
+              invalidate: () => list.invalidate(),
+              handleInput: (data: string) => {
+                if (!data.startsWith("\x1b") && data.length >= 1 && data >= " " && data <= "~") {
+                  filter += data;
+                  applyFilter();
+                } else if (data === "\x7f" || data === "\b" || data === "\x1b[3~") {
+                  filter = filter.slice(0, -1);
+                  applyFilter();
+                } else {
+                  list.handleInput(data);
+                }
+                tui.requestRender();
+              },
+            };
+          });
+          if (!pickedSpec) continue;
+          const [prov, ...rest] = pickedSpec.split("/");
+          const target = ctx.modelRegistry.getAvailable().find((mm) => mm.provider === prov && mm.id === rest.join("/"));
+          if (!target) {
+            ctx.ui.notify(`Could not resolve model "${pickedSpec}".`, "warning");
+            continue;
+          }
+          await pi.setModel(target as never);
+          ctx.ui.notify(`Model: ${pickedSpec}`, "info");
+          continue;
+        }
+
+        // ---- Profile editor (levels + Default Profile designation) ----
+        const profile = profileByValue[picked];
+        if (!profile) continue;
+        {
+          interface Choice { kind: "default" | "level"; label: string; runtime?: string }
+          const choices: Choice[] = [];
+          if (state.defaultProfile !== profile) {
+            choices.push({ kind: "default", label: "★ Set as Default Profile" });
+          }
+          for (const l of Object.keys(USER_LEVEL_MAP)) {
+            choices.push({
+              kind: "level",
+              runtime: USER_LEVEL_MAP[l],
+              label: `${USER_LEVEL_MAP[l] === state.profiles[profile] ? "●" : "○"} ${l}`,
+            });
+          }
+
+          const chosen = await ctx.ui.custom<Choice | null>((tui, theme, _kb, done) => {
+            const container = new Container();
+            container.addChild(new Text(theme.fg("accent", theme.bold(profile.toUpperCase())), 1, 0));
+            container.addChild(new Text(theme.fg("muted", PROFILE_DESCRIPTIONS[profile]), 0, 0));
+            container.addChild(new Text(theme.fg("text", `Current: ${state.profiles[profile]}${state.defaultProfile === profile ? "   ★default profile" : ""}`), 0, 1));
+            container.addChild(new Spacer(1));
+            const items: SelectItem[] = choices.map((c) => ({ value: c.runtime ?? c.kind, label: c.label }));
+            const list = new SelectList(items, Math.max(7, items.length), {
+              selectedPrefix: (t) => theme.fg("accent", "→ "),
+              selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
+              description: (t) => theme.fg("muted", t),
+              scrollInfo: (t) => theme.fg("dim", t),
+              noMatch: (t) => theme.fg("warning", t),
+            });
+            list.setSelectedIndex(state.defaultProfile === profile ? 0 : Math.max(0, choices.findIndex((c) => c.label.startsWith("●"))));
+            list.onSelect = (item) => {
+              const c = choices.find((cc) => (cc.runtime ?? cc.kind) === item.value && cc.label === item.label);
+              if (c) done(c);
+            };
+            list.onCancel = () => done(null);
+            container.addChild(list);
+            container.addChild(new Spacer(1));
+            container.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter save · esc cancel"), 1, 0));
+            return {
+              render: (w: number) => container.render(w),
+              invalidate: () => container.invalidate(),
+              handleInput: (data: string) => {
+                list.handleInput(data);
+                tui.requestRender();
+              },
+            };
+          });
+          if (chosen === null) continue; // Esc — cancel-safe
+          if (chosen.kind === "default") {
+            state.defaultProfile = profile;
+            saveReasoningState(state);
+            ctx.ui.notify(`Default Profile: ${profile}`, "info");
+          } else if (chosen.runtime) {
+            state.profiles[profile] = chosen.runtime;
+            saveReasoningState(state); // single sanitized writer → overview rebuilds fresh
+            ctx.ui.notify(`${profile} · ${chosen.runtime}`, "info");
+          }
+        }
+      }
     } catch {}
   });
   pi.on("before_agent_start", (event, ctx) => {
@@ -1575,9 +2031,23 @@ export default function (pi: ExtensionAPI) {
     }
 
     const basePrompt = scopedPrompt ?? event.systemPrompt;
-    const rp = loadReasoningProfile();
+    const state = loadReasoningState();
+    const resolved = resolveEffective(state);
+    try {
+      if (ctx.hasUI)
+        ctx.ui.setStatus(
+          "reasoning",
+          resolved.source === "execution"
+            ? `Execution: ${resolved.profile} · ${resolved.level}`
+            : `${resolved.profile} · ${resolved.level}`,
+        );
+    } catch {}
+    const reasoningLine =
+      resolved.source === "execution"
+        ? `Execution Profile: ${resolved.profile} @ level ${resolved.level} (workflow-scoped; your stored configuration is unchanged). Honor this depth now; use ":${resolved.level}" thinking suffixes on agent() calls.`
+        : `Default Profile: ${resolved.profile} @ level ${resolved.level}. Honor this depth for planning/review/synthesis phases; when writing workflow scripts, use ":${resolved.level}" thinking suffixes and declare "// profile: <Name>" to request an execution profile.`;
     return {
-      systemPrompt: `${basePrompt}\n\n# Active Workspace Environment\n${topoContext}\n${ORCHESTRATION_CONTRACT}\n# Reasoning Profile\nActive profile: ${rp.profile} @ reasoning level ${rp.level}. Honor this depth for planning/review/synthesis phases; when writing workflow scripts, use ":${rp.level}" thinking suffixes on agent() calls for the matching phases.`,
+      systemPrompt: `${basePrompt}\n\n# Active Workspace Environment\n${topoContext}\n${ORCHESTRATION_CONTRACT}\n# Reasoning Profile\n${reasoningLine}`,
     };
   });
 
@@ -1586,6 +2056,28 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName !== "workflow") return;
     const input = event.input as { maxAgents?: unknown; script?: unknown };
+
+    // D42: execution-profile request — validated, ephemeral, run-scoped.
+    if (typeof input.script === "string") {
+      const requested = parseProfileTag(input.script);
+      if (requested) {
+        setExecutionProfile(requested);
+      }
+      // Protected-state guard: scripts must not mutate user-owned runtime files.
+      if (scriptWritesProtectedState(input.script)) {
+        if (ctx.hasUI) {
+          const choice = await ctx.ui.select(
+            "Workflow script writes protected runtime state",
+            ["Block this workflow", "Allow this run (I accept the risk)"],
+          );
+          if (choice !== "Allow this run (I accept the risk)") {
+            return { block: true, reason: "Blocked: script attempts to write harness-reasoning.json / harness-models.json. Profiles are user-owned; scripts may only declare '// profile:' requests." };
+          }
+        } else {
+          return { block: true, reason: "Blocked headless: script writes protected runtime state files (harness-reasoning.json / harness-models.json)." };
+        }
+      }
+    }
 
     // Model-policy guard: block silent model switching in workflow scripts.
     if (typeof input.script === "string" && scriptHasModelOverrides(input.script)) {
@@ -1598,10 +2090,7 @@ export default function (pi: ExtensionAPI) {
           ],
         );
         if (choice?.startsWith("Keep")) {
-          input.script = input.script
-            .split("\n")
-            .filter((l) => !/^\s*(?:\w+\.)?model\s*:/i.test(l) && !/meta\.model\s*=/i.test(l))
-            .join("\n");
+          input.script = stripModelOverrides(input.script);
           ctx.ui.notify("Model overrides stripped — workflow will use the current session model.", "info");
         } else if (choice?.startsWith("Allow")) {
           ctx.ui.notify("Model overrides allowed for this workflow run.", "info");
@@ -1666,25 +2155,40 @@ export default function (pi: ExtensionAPI) {
 
       const routerHealth = await check9routerHealth();
       if (routerHealth.ok) {
-        results.push(`✓ 9router: Online (:20128) — ${routerHealth.modelCount ?? "~200"} models available (live refresh enabled via RAL)`);
+        results.push(`✓ 9router: Online (:20128) — ${routerHealth.modelCount ?? catalogStats.discovered} models discovered (live refresh via RAL)`);
       } else {
         results.push(`✗ 9router: Offline (${routerHealth.error ?? "connection refused"})`);
       }
 
-      // Model catalog drift check: warn when the session's configured model is
-      // no longer served by the live router (prevents silent request failures).
-      try {
-        const liveCatalog = await fetchRouterCatalog();
-        const liveIds = new Set(liveCatalog.map((m) => m.id));
-        const currentModel = ctx.model;
-        if (currentModel && currentModel.provider === "9router" && !liveIds.has(currentModel.id)) {
-          results.push(`! Model Catalog: configured model "${currentModel.id}" is NOT in the live router catalog — select a current model via /model`);
-        } else if (currentModel) {
-          results.push(`✓ Model Catalog: current model "${currentModel.id}" is live-router current`);
+      // D42: model catalog + connectivity truth (Phase 1 = UNVERIFIED by design).
+      const isPlaceholderModel =
+        !!ctx.model && ctx.model.provider === "unknown" && ctx.model.id === "unknown";
+      if (isPlaceholderModel) {
+        results.push("! Model Catalog: no session model resolved yet — open /model to choose one");
+      } else {
+        try {
+          const liveCatalog = await fetchRouterCatalog();
+          const liveIds = new Set(liveCatalog.map((m) => m.id));
+          const currentModel = ctx.model;
+          if (currentModel && currentModel.provider === "9router" && !liveIds.has(currentModel.id)) {
+            results.push(`! Model Catalog: configured model "${currentModel.id}" is NOT in the live router catalog — select a current model via /model`);
+          } else if (currentModel) {
+            results.push(`✓ Model Catalog: current model "${currentModel.provider}/${currentModel.id}" is live-router current`);
+          }
+        } catch {
+          results.push("! Model Catalog: could not verify against live router (offline?)");
         }
-      } catch {
-        results.push("! Model Catalog: could not verify against live router (offline?)");
       }
+      const visState = loadModelsVisibility();
+      results.push(
+        `• Model Selection: discovered ${catalogStats.discovered} · selectable ${catalogStats.selectable}` +
+        `${visState.hidden.length ? ` · hidden ${visState.hidden.length}` : ""}` +
+        `${visState.visible ? ` · allowlist ${visState.visible.length}` : ""}`,
+      );
+      results.push("• Connectivity: UNVERIFIED (Phase 1 — discovery + user visibility; admin verification deferred to Phase 2)");
+      const rs = loadReasoningState();
+      const rr = resolveEffective(rs);
+      results.push(`• Reasoning: default profile ${rs.defaultProfile} · effective ${rr.profile} @ ${rr.level}${rr.source === "execution" ? " (execution)" : ""}`);
 
       const mcpPath = path.join(os.homedir(), ".config", "mcp", "mcp.json");
       if (fs.existsSync(mcpPath)) {
@@ -1741,222 +2245,6 @@ export default function (pi: ExtensionAPI) {
   });
 
 
-  // D41: /mcc — re-enterable Model Control Center. Grouped overview with
-  // structural (never-selectable) section headers, columnar rows, distinct
-  // active-profile marker, fuzzy-filtered router-first model picker, and
-  // immediate overview refresh after every save.
-  pi.registerCommand("mcc", {
-    description: "Model Control Center — inspect current model and configure reasoning profiles",
-    handler: async (_args: string, ctx: ExtensionCommandContext) => {
-      await ctx.waitForIdle();
-
-      // Pi's placeholder model has provider/id/api all set to "unknown" before
-      // any real selection; treat it as "no model" rather than displaying it.
-      const isPlaceholder =
-        !!ctx.model && ctx.model.provider === "unknown" && ctx.model.id === "unknown";
-
-      let modelLabel = isPlaceholder || !ctx.model
-        ? "(none — choose below)"
-        : `${ctx.model.provider}/${ctx.model.id}`;
-
-      const supportsVision =
-        !!ctx.model && !isPlaceholder &&
-        Array.isArray(ctx.model.input) && ctx.model.input.includes("image");
-
-      for (;;) {
-        const state = loadReasoningStateV2();
-
-        // ---- Overview: grouped sections; headers/disabled rows are structural ----
-        const profileByValue: Record<string, ReasoningProfileName> = {};
-        const sections: MccSection[] = [
-          {
-            title: "MODEL",
-            rows: [{ kind: "item", item: { value: "__model__", primary: "Select model…" } }],
-          },
-        ];
-        for (const g of PROFILE_GROUPS) {
-          const rows: MccRow[] = [];
-          for (const name of g.items) {
-            if (name === "Vision" && !supportsVision) {
-              rows.push({
-                kind: "disabled",
-                disabled: { primary: `${name} · unavailable`, description: "current model has no image input" },
-              });
-              continue;
-            }
-            profileByValue[mccProfileValue(name)] = name;
-            rows.push({
-              kind: "item",
-              item: {
-                value: mccProfileValue(name),
-                primary: `${name} · ${effectiveLevel(name, state.overrides)}`,
-                description: PROFILE_DESCRIPTIONS[name],
-                marked: state.activeProfile === name,
-              },
-            });
-          }
-          sections.push({ title: g.title, rows });
-        }
-        sections.push({
-          title: "",
-          rows: [{ kind: "item", item: { value: "__done__", primary: "Done", description: "Save & exit" } }],
-        });
-
-        const overviewPicked = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
-          const container = new Container();
-          container.addChild(new Text(theme.fg("accent", theme.bold("MODEL CONTROL CENTER")), 1, 0));
-          container.addChild(new Text(theme.fg("text", `Current model: ${modelLabel}`), 0, 1));
-          container.addChild(new Spacer(1));
-          const list = new MccOverviewList(sections, theme, 14);
-          list.onSelect = (value) => done(value);
-          list.onCancel = () => done("__done__"); // esc exits the MCC
-          container.addChild(list);
-          container.addChild(new Spacer(1));
-          container.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter select · esc done"), 1, 0));
-          return {
-            render: (w: number) => container.render(w),
-            invalidate: () => container.invalidate(),
-            handleInput: (data: string) => {
-              list.handleInput(data);
-              tui.requestRender();
-            },
-          };
-        });
-
-        if (overviewPicked === null || overviewPicked === "__done__") return;
-
-        // ---- Select model (viewport-limited, fuzzy-filtered, router-first) ----
-        if (overviewPicked === "__model__") {
-          const specs = sortModelsRouterFirst(listAvailableModelSpecsSafe(ctx));
-          if (specs.length === 0) {
-            ctx.ui.notify("No models available in the registry.", "warning");
-            continue;
-          }
-          const pickedSpec = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
-            const makeList = (pool: string[]) => {
-              const l = new SelectList(pool.map((s) => ({ value: s, label: s })), 12, {
-                selectedPrefix: (t) => theme.fg("accent", "→ "),
-                selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
-                description: (t) => theme.fg("muted", t),
-                scrollInfo: (t) => theme.fg("dim", t),
-                noMatch: (t) => theme.fg("warning", t),
-              });
-              l.onSelect = (item) => done(item.value);
-              l.onCancel = () => done(null);
-              return l;
-            };
-            let list = makeList(specs);
-            let filter = "";
-            let filterLine = theme.fg("dim", "type to filter");
-            const applyFilter = () => {
-              const pool = filter ? fuzzyFilter(specs, filter.toLowerCase(), (s) => s.toLowerCase()) : specs;
-              list = makeList(pool);
-              filterLine = theme.fg("dim", filter ? `filter: ${filter} (${pool.length}/${specs.length})` : "type to filter");
-            };
-            return {
-              render: (w: number) => [
-                theme.fg("accent", theme.bold("SELECT MODEL")),
-                theme.fg("muted", `Current: ${modelLabel}`),
-                "",
-                ...list.render(w),
-                "",
-                filterLine,
-                theme.fg("dim", "↑↓ navigate · type to filter · enter select · esc cancel"),
-              ],
-              invalidate: () => list.invalidate(),
-              handleInput: (data: string) => {
-                if (!data.startsWith("\x1b") && data.length >= 1 && data >= " " && data <= "~") {
-                  filter += data;
-                  applyFilter();
-                } else if (data === "\x7f" || data === "\b" || data === "\x1b[3~") {
-                  filter = filter.slice(0, -1);
-                  applyFilter();
-                } else {
-                  list.handleInput(data);
-                }
-                tui.requestRender();
-              },
-            };
-          });
-          if (!pickedSpec) continue;
-          const target = ctx.modelRegistry.getAll().find((mm) => `${mm.provider}/${mm.id}` === pickedSpec);
-          if (!target) {
-            ctx.ui.notify(`Could not resolve model "${pickedSpec}".`, "warning");
-            continue;
-          }
-          await pi.setModel(target as never);
-          modelLabel = pickedSpec;
-          ctx.ui.notify(`Model set to ${pickedSpec}`, "info");
-          continue;
-        }
-
-        // ---- Profile level editor (single-profile, radio-style) ----
-        const profile = profileByValue[overviewPicked];
-        if (!profile) continue;
-        {
-          const currentLevel = effectiveLevel(profile, state.overrides);
-          const levelLabels = Object.keys(USER_LEVEL_MAP);
-          const curIdx = levelLabels.findIndex((l) => USER_LEVEL_MAP[l] === currentLevel);
-
-          interface LevelChoice { label: string; runtime: string }
-          const choices: LevelChoice[] = [];
-          if (curIdx < 0) {
-            // Stored level outside the user-facing map (e.g. legacy "max"):
-            // offer keeping it explicitly instead of silently defaulting.
-            choices.push({ label: `Keep current (${currentLevel})`, runtime: currentLevel });
-          }
-          for (const l of levelLabels) {
-            choices.push({
-              label: `${USER_LEVEL_MAP[l] === currentLevel ? "●" : "○"} ${l}`,
-              runtime: USER_LEVEL_MAP[l],
-            });
-          }
-
-          const chosen = await ctx.ui.custom<LevelChoice | null>((tui, theme, _kb, done) => {
-            const container = new Container();
-            container.addChild(new Text(theme.fg("accent", theme.bold(profile.toUpperCase())), 1, 0));
-            container.addChild(new Text(theme.fg("muted", PROFILE_DESCRIPTIONS[profile]), 0, 1));
-            container.addChild(new Text(theme.fg("text", `Current level: ${currentLevel}`), 0, 1));
-            container.addChild(new Spacer(1));
-
-            const items: SelectItem[] = choices.map((c) => ({ value: c.runtime, label: c.label }));
-            const listTheme: SelectListTheme = {
-              selectedPrefix: (t) => theme.fg("accent", "→ "),
-              selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
-              description: (t) => theme.fg("muted", t),
-              scrollInfo: (t) => theme.fg("dim", t),
-              noMatch: (t) => theme.fg("warning", t),
-            };
-            const list = new SelectList(items, Math.max(7, items.length), listTheme);
-            list.setSelectedIndex(curIdx >= 0 ? curIdx : 0);
-            list.onSelect = (item) => {
-              const c = choices.find((cc) => cc.runtime === item.value);
-              if (c) done(c);
-            };
-            list.onCancel = () => done(null);
-
-            container.addChild(list);
-            container.addChild(new Spacer(1));
-            container.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter save · esc cancel"), 1, 0));
-
-            return {
-              render: (w: number) => container.render(w),
-              invalidate: () => container.invalidate(),
-              handleInput: (data: string) => {
-                list.handleInput(data);
-                tui.requestRender();
-              },
-            };
-          });
-          if (chosen === null) continue; // Esc — cancel-safe, no change
-          state.overrides[profile] = chosen.runtime;
-          if (state.activeProfile === profile) state.activeLevel = chosen.runtime;
-          saveReasoningStateV2(state); // sanitized write; overview rebuilds next loop pass
-          ctx.ui.notify(`${profile} → ${chosen.runtime}`, "info");
-        }
-      }
-    },
-  });
 
   pi.registerCommand("sync", {
     description: "One-way sync platform assets from Blueprint repo to runtime (~/.pi/agent)",
@@ -1989,12 +2277,11 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Unknown profile "${profileArg}". Profiles: ${REASONING_PROFILES.join(", ")}`, "warning");
         return;
       }
-      const state = loadReasoningStateV2();
-      state.activeProfile = profileArg as ReasoningProfileName;
-      state.activeLevel = levelArg ?? effectiveLevel(state.activeProfile, state.overrides);
-      state.overrides[state.activeProfile] = state.activeLevel;
-      saveReasoningStateV2(state);
-      ctx.ui.notify(`Reasoning profile set: ${state.activeProfile} @ ${state.activeLevel} (applies to planning/review/synthesis phases via :${state.activeLevel} script suffixes)`, "info");
+      const state = loadReasoningState();
+      state.defaultProfile = profileArg as ReasoningProfileName;
+      if (levelArg) state.profiles[state.defaultProfile] = levelArg;
+      saveReasoningState(state);
+      ctx.ui.notify(`Default Profile: ${state.defaultProfile} · ${state.profiles[state.defaultProfile]} (applies via :${state.profiles[state.defaultProfile]} script suffixes)`, "info");
     },
   });
 }

@@ -97,6 +97,9 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `fix`: unify reasoning persistence on v2 state — `model_select` and `/reasoning` no longer clobber `overrides` via legacy v1 writes; `loadReasoningProfile()` reads v2; `saveReasoningStateV2()` sanitizes keys/levels on write (heals corrupt state files); legacy writer removed
 - `fix`: level editor preselects current radio and offers explicit "Keep current (<raw>)" for out-of-map stored levels (removes silent Off trap); `session_start` warms `ctx.modelRegistry.refresh()` after router health OK
 - `docs`: validation evidence — strict type-check PASS (TS latest); 12-check headless component harness PASS; live TUI round-trip PASS (Commit low→High saved, overview updated in place, state file healed, reopen preserved, `stealth ox` → ox-alpha 1/1356)
+- `feat`: implement Model Control System Phase 1 (D42) — visibility trust state (`harness-models.json`) filtering inside refreshModels; SELECTABLE = DISCOVERED ∩ VISIBLE with honest `Connectivity: UNVERIFIED`; boot-default restoration (bounded handshake, notice, no dialog); reasoning v3 {defaultProfile, profiles} with migration + pure resolveEffective; ephemeral execution profiles via `// profile:` tag at the workflow boundary; inline `{model:}` override detection + Keep-strip; `/mcc` removed — `/model` post-selection flow is the unified control center ([docs/DECISIONS.md](docs/DECISIONS.md) D42)
+- `fix`: `/doctor` placeholder blind spot (no more `current model "unknown" is live-router current`) + catalog counts / connectivity / reasoning diagnostics
+- `docs`: validation evidence — strict type-check PASS; 15-check regression suite PASS; live battery PASS (boot restore → footer ox-alpha; Vision high→low immediate; Set-Default persisted; workflow config-immutability; override prompt + Keep-strip)
 
  ## Notes
 
