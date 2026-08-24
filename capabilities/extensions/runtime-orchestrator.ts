@@ -1,12 +1,17 @@
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
 import {
   Container,
+  fuzzyFilter,
+  getKeybindings,
+  type Component,
   type SelectItem,
   SelectList,
   type SelectListTheme,
   Spacer,
   Text,
+  truncateToWidth,
   type TUI,
+  visibleWidth,
 } from "@earendil-works/pi-tui";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -1080,6 +1085,19 @@ export function listAvailableModelSpecsSafe(ctx: ExtensionCommandContext): strin
   }
 }
 
+/** Stable value token encoding a profile row in the /mcc overview. */
+export function mccProfileValue(name: ReasoningProfileName): string {
+  return `profile:${name}`;
+}
+
+/** Orders model specs: 9router catalog first (alphabetical), then the rest. */
+export function sortModelsRouterFirst(specs: readonly string[]): string[] {
+  const isRouter = (s: string) => s.startsWith("9router/");
+  return [...specs].sort((a, b) =>
+    isRouter(a) === isRouter(b) ? a.localeCompare(b) : isRouter(a) ? -1 : 1,
+  );
+}
+
 
 // ---------------------------------------------------------------------------
 // RAL Phase 5 — Complexity-aware orchestration & reasoning profiles (D37)
@@ -1206,35 +1224,37 @@ export function loadReasoningStateV2(): ReasoningStateV2 {
   }
 }
 
-/** Persists v2 reasoning state. */
+/** Persists v2 reasoning state. Overrides are pruned to valid profiles/levels on write. */
 export function saveReasoningStateV2(state: ReasoningStateV2): void {
   try {
-    fs.writeFileSync(REASONING_STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+    const overrides: Partial<Record<ReasoningProfileName, string>> = {};
+    for (const [k, v] of Object.entries(state.overrides ?? {})) {
+      if (REASONING_PROFILES.includes(k as ReasoningProfileName) && typeof v === "string" && v.length > 0) {
+        overrides[k as ReasoningProfileName] = v;
+      }
+    }
+    const activeProfile = REASONING_PROFILES.includes(state.activeProfile) ? state.activeProfile : "Default";
+    const activeLevel =
+      typeof state.activeLevel === "string" && state.activeLevel.length > 0
+        ? state.activeLevel
+        : effectiveLevel(activeProfile, overrides);
+    fs.writeFileSync(
+      REASONING_STATE_FILE,
+      JSON.stringify({ activeProfile, activeLevel, overrides }, null, 2),
+      "utf-8",
+    );
   } catch {}
 }
 
 /**
  * Loads persisted reasoning-profile configuration (runtime-owned state).
- * Fail-open: unknown profile falls back to Default with its profile default level.
+ * Single read path over the v2 state; legacy {profile, level} files are
+ * migrated by loadReasoningStateV2. Fail-open: unknown values fall back to
+ * Default with its profile default level.
  */
 export function loadReasoningProfile(): ReasoningProfileState {
-  try {
-    const raw = JSON.parse(fs.readFileSync(REASONING_STATE_FILE, "utf-8")) as Partial<ReasoningProfileState>;
-    const profile = REASONING_PROFILES.includes(raw.profile as ReasoningProfileName)
-      ? (raw.profile as ReasoningProfileName)
-      : "Default";
-    const level = typeof raw.level === "string" ? raw.level : PROFILE_DEFAULT_LEVELS[profile];
-    return { profile, level };
-  } catch {
-    return { profile: "Default", level: PROFILE_DEFAULT_LEVELS.Default };
-  }
-}
-
-/** Persists reasoning-profile configuration (runtime-owned state). */
-export function saveReasoningProfile(state: ReasoningProfileState): void {
-  try {
-    fs.writeFileSync(REASONING_STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
-  } catch {}
+  const state = loadReasoningStateV2();
+  return { profile: state.activeProfile, level: state.activeLevel };
 }
 
 const ORCHESTRATION_CONTRACT = `
@@ -1254,6 +1274,195 @@ const ORCHESTRATION_CONTRACT = `
 export function scriptHasModelOverrides(script: string): boolean {
   return /^\s*(?:\w+\.)?model\s*:/im.test(script) || /meta\.model\s*=/.test(script);
 }
+// ---------------------------------------------------------------------------
+// Model Control Center UI (D39/D41): grouped overview list with structural,
+// never-selectable section headers, columnar rows, and a distinct active-
+// profile marker. Built on pi-tui primitives only — no new UI framework.
+// ---------------------------------------------------------------------------
+
+/** One selectable row in the MCC overview. */
+export interface MccItem {
+  value: string;
+  primary: string;
+  description?: string;
+  /** Appends the success-colored ●active marker (active reasoning profile). */
+  marked?: boolean;
+}
+
+/** One non-selectable informational row (e.g. Vision without image input). */
+export interface MccDisabled {
+  primary: string;
+  description?: string;
+}
+
+export type MccRow = { kind: "item"; item: MccItem } | { kind: "disabled"; disabled: MccDisabled };
+
+export interface MccSection {
+  /** Rendered as a structural header rule; "" renders no header. */
+  title: string;
+  rows: MccRow[];
+}
+
+type MccLine =
+  | { kind: "spacer" }
+  | { kind: "header"; title: string }
+  | { kind: "item"; item: MccItem; index: number }
+  | { kind: "disabled"; disabled: MccDisabled };
+
+const MCC_ACTIVE_MARKER = "●active";
+
+/**
+ * Grouped selection list for the /mcc overview. Headers and disabled rows are
+ * rendered but skipped by navigation; arrow keys wrap across selectable items
+ * only. Viewport-limited to maxLines rendered lines with a scroll indicator.
+ */
+export class MccOverviewList implements Component {
+  private readonly items: MccItem[] = [];
+  private selectedIndex = 0;
+  onSelect?: (value: string) => void;
+  onCancel?: () => void;
+
+  constructor(
+    private readonly sections: readonly MccSection[],
+    private readonly theme: Theme,
+    private readonly maxLines = 14,
+  ) {
+    for (const s of sections) {
+      for (const row of s.rows) {
+        if (row.kind === "item") this.items.push(row.item);
+      }
+    }
+  }
+
+  invalidate(): void {}
+
+  handleInput(data: string): void {
+    const kb = getKeybindings();
+    const count = this.items.length;
+    if (count === 0) return;
+    if (kb.matches(data, "tui.select.up")) {
+      this.selectedIndex = (this.selectedIndex - 1 + count) % count;
+    } else if (kb.matches(data, "tui.select.down")) {
+      this.selectedIndex = (this.selectedIndex + 1) % count;
+    } else if (kb.matches(data, "tui.select.confirm")) {
+      const item = this.items[this.selectedIndex];
+      if (item && this.onSelect) this.onSelect(item.value);
+    } else if (kb.matches(data, "tui.select.cancel")) {
+      if (this.onCancel) this.onCancel();
+    }
+  }
+
+  render(width: number): string[] {
+    const lines = this.layout();
+    const labelCol = this.labelColumnWidth(width);
+    const selectedLine = lines.findIndex((l) => l.kind === "item" && l.item.value === this.items[this.selectedIndex]?.value);
+    const start = Math.max(
+      0,
+      Math.min(selectedLine - Math.floor((this.maxLines - 1) / 2), Math.max(0, lines.length - this.maxLines)),
+    );
+    const visible = lines.slice(start, start + this.maxLines);
+    // Never open the window on blank space, and never end it on an orphan
+    // header/spacer (a header with none of its rows visible reads as broken).
+    while (visible.length > 0 && visible[0].kind === "spacer") visible.shift();
+    while (
+      visible.length > 1 &&
+      visible[visible.length - 1].kind !== "item" &&
+      visible.some((l) => l.kind === "item")
+    ) {
+      visible.pop();
+    }
+
+    const out: string[] = [];
+    for (const line of visible) {
+      switch (line.kind) {
+        case "spacer":
+          out.push("");
+          break;
+        case "header":
+          out.push(this.renderHeader(line.title, width));
+          break;
+        case "item":
+          out.push(this.renderItem(line.item, line.index === this.selectedIndex, labelCol, width));
+          break;
+        case "disabled":
+          out.push(this.renderDisabled(line.disabled, labelCol, width));
+          break;
+      }
+    }
+    if (lines.length > this.maxLines && this.items.length > 0) {
+      out.push(this.theme.fg("dim", `  (${this.selectedIndex + 1}/${this.items.length})`));
+    }
+    return out;
+  }
+
+  private layout(): MccLine[] {
+    const lines: MccLine[] = [];
+    let nextIndex = 0;
+    this.sections.forEach((section, si) => {
+      if (si > 0) lines.push({ kind: "spacer" });
+      if (section.title) lines.push({ kind: "header", title: section.title });
+      for (const row of section.rows) {
+        if (row.kind === "item") {
+          lines.push({ kind: "item", item: row.item, index: nextIndex++ });
+        } else {
+          lines.push({ kind: "disabled", disabled: row.disabled });
+        }
+      }
+    });
+    return lines;
+  }
+
+  private labelColumnWidth(width: number): number {
+    let widest = 0;
+    for (const s of this.sections) {
+      for (const row of s.rows) {
+        const primary = row.kind === "item" ? row.item.primary : row.disabled.primary;
+        const marked = row.kind === "item" && row.item.marked ? MCC_ACTIVE_MARKER.length + 1 : 0;
+        widest = Math.max(widest, visibleWidth(primary) + marked);
+      }
+    }
+    return Math.max(16, Math.min(34, widest + 2, Math.max(16, width - 12)));
+  }
+
+  private renderHeader(title: string, width: number): string {
+    const text = ` ${title} `;
+    const w = visibleWidth(text);
+    if (width <= w + 3) return this.theme.fg("accent", this.theme.bold(truncateToWidth(text, width, "")));
+    return (
+      this.theme.fg("accent", this.theme.bold(text)) +
+      this.theme.fg("dim", "─".repeat(Math.max(0, width - w)))
+    );
+  }
+
+  private renderItem(item: MccItem, selected: boolean, labelCol: number, width: number): string {
+    const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
+    const cell =
+      truncateToWidth(item.primary, labelCol, "", true) +
+      (item.marked ? this.theme.fg("success", truncateToWidth(` ${MCC_ACTIVE_MARKER}`, Math.max(0, labelCol - visibleWidth(item.primary)), "", true)) : "");
+    let descPart = "";
+    if (item.description && width > 40) {
+      const remaining = width - 2 - labelCol;
+      if (remaining >= 10) descPart = this.theme.fg("muted", truncateToWidth(item.description, remaining));
+    }
+    const line = prefix + cell + descPart;
+    if (selected) {
+      const padTo = Math.max(0, width - 2 - labelCol - visibleWidth(descPart));
+      return this.theme.bg("selectedBg", this.theme.bold(prefix + cell + descPart + " ".repeat(padTo)));
+    }
+    return line;
+  }
+
+  private renderDisabled(disabled: MccDisabled, labelCol: number, width: number): string {
+    const cell = truncateToWidth(disabled.primary, labelCol, "", true);
+    let descPlain = "";
+    if (disabled.description && width > 40) {
+      const remaining = width - 2 - labelCol;
+      if (remaining >= 10) descPlain = truncateToWidth(disabled.description, remaining);
+    }
+    return this.theme.fg("dim", "  " + cell + descPlain);
+  }
+}
+
 export default function (pi: ExtensionAPI) {
 
 
@@ -1292,6 +1501,11 @@ export default function (pi: ExtensionAPI) {
           try {
             if (health.ok) {
               if (ctx.hasUI) ctx.ui.setStatus("9router", "online");
+              // Warm the registry so the dynamic 9router catalog is resolvable
+              // immediately (no first-visit lag, no "No models available" gap).
+              try {
+                void ctx.modelRegistry.refresh();
+              } catch {}
             } else {
               await autoStart9router(ctx);
             }
@@ -1331,7 +1545,11 @@ export default function (pi: ExtensionAPI) {
       if (!levelLabel) return;
 
       const runtimeLevel = USER_LEVEL_MAP[levelLabel] as never;
-      saveReasoningProfile({ profile: profile as ReasoningProfileName, level: runtimeLevel });
+      const state = loadReasoningStateV2();
+      state.activeProfile = profile as ReasoningProfileName;
+      state.activeLevel = runtimeLevel;
+      state.overrides[state.activeProfile] = runtimeLevel;
+      saveReasoningStateV2(state);
       // Native setter clamps to the selected model's capabilities.
       pi.setThinkingLevel(runtimeLevel);
       ctx.ui.notify(`Model: ${model.provider}/${model.id} · Profile: ${profile} · Level: ${levelLabel}`, "info");
@@ -1523,9 +1741,10 @@ export default function (pi: ExtensionAPI) {
   });
 
 
-  // Phase 6 refinement (D39.1): /mcc — re-enterable Model Control Center with
-  // viewport-limited pickers, clear selection highlight, and immediate overview
-  // updates. Section headers are structural only and never selectable.
+  // D41: /mcc — re-enterable Model Control Center. Grouped overview with
+  // structural (never-selectable) section headers, columnar rows, distinct
+  // active-profile marker, fuzzy-filtered router-first model picker, and
+  // immediate overview refresh after every save.
   pi.registerCommand("mcc", {
     description: "Model Control Center — inspect current model and configure reasoning profiles",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
@@ -1547,56 +1766,53 @@ export default function (pi: ExtensionAPI) {
       for (;;) {
         const state = loadReasoningStateV2();
 
-        // ---- Overview screen (viewport-limited SelectList, headers non-selectable) ----
-        interface Row { value: string; label: string; description?: string }
-        const rows: Row[] = [];
-        rows.push({
-          value: "__model__",
-          label: "Select model…",
-          description: `Current: ${modelLabel}`,
-        });
-        // Only interactive profile rows go into the SelectList — no headers.
+        // ---- Overview: grouped sections; headers/disabled rows are structural ----
+        const profileByValue: Record<string, ReasoningProfileName> = {};
+        const sections: MccSection[] = [
+          {
+            title: "MODEL",
+            rows: [{ kind: "item", item: { value: "__model__", primary: "Select model…" } }],
+          },
+        ];
         for (const g of PROFILE_GROUPS) {
+          const rows: MccRow[] = [];
           for (const name of g.items) {
             if (name === "Vision" && !supportsVision) {
               rows.push({
-                value: `__skip_${name}__`,
-                label: `${name} · unavailable`,
-                description: "selected model has no image input",
+                kind: "disabled",
+                disabled: { primary: `${name} · unavailable`, description: "current model has no image input" },
               });
               continue;
             }
-            const lvl = effectiveLevel(name, state.overrides);
-            const activeMark = state.activeProfile === name ? " ●active" : "";
+            profileByValue[mccProfileValue(name)] = name;
             rows.push({
-              value: `__p_${name}__`,
-              label: `${name} · ${lvl}${activeMark}`,
-              description: PROFILE_DESCRIPTIONS[name],
+              kind: "item",
+              item: {
+                value: mccProfileValue(name),
+                primary: `${name} · ${effectiveLevel(name, state.overrides)}`,
+                description: PROFILE_DESCRIPTIONS[name],
+                marked: state.activeProfile === name,
+              },
             });
           }
+          sections.push({ title: g.title, rows });
         }
-        rows.push({ value: "__done__", label: "Done", description: "Save & exit" });
+        sections.push({
+          title: "",
+          rows: [{ kind: "item", item: { value: "__done__", primary: "Done", description: "Save & exit" } }],
+        });
 
         const overviewPicked = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
           const container = new Container();
           container.addChild(new Text(theme.fg("accent", theme.bold("MODEL CONTROL CENTER")), 1, 0));
           container.addChild(new Text(theme.fg("text", `Current model: ${modelLabel}`), 0, 1));
           container.addChild(new Spacer(1));
-
-          const listTheme: SelectListTheme = {
-            selectedPrefix: (t) => theme.fg("accent", "→ "),
-            selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
-            description: (t) => theme.fg("muted", t),
-            scrollInfo: (t) => theme.fg("dim", t),
-            noMatch: (t) => theme.fg("warning", t),
-          };
-          const list = new SelectList(rows, 12, listTheme);
-          list.onSelect = (item) => done(item.value);
-          list.onCancel = () => done("__done__");
+          const list = new MccOverviewList(sections, theme, 14);
+          list.onSelect = (value) => done(value);
+          list.onCancel = () => done("__done__"); // esc exits the MCC
           container.addChild(list);
           container.addChild(new Spacer(1));
           container.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter select · esc done"), 1, 0));
-
           return {
             render: (w: number) => container.render(w),
             invalidate: () => container.invalidate(),
@@ -1609,55 +1825,55 @@ export default function (pi: ExtensionAPI) {
 
         if (overviewPicked === null || overviewPicked === "__done__") return;
 
-        // ---- Select model (scrollable, searchable picker) ----
+        // ---- Select model (viewport-limited, fuzzy-filtered, router-first) ----
         if (overviewPicked === "__model__") {
-          const specs = listAvailableModelSpecsSafe(ctx);
+          const specs = sortModelsRouterFirst(listAvailableModelSpecsSafe(ctx));
           if (specs.length === 0) {
             ctx.ui.notify("No models available in the registry.", "warning");
             continue;
           }
           const pickedSpec = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
-            const container = new Container();
-            container.addChild(new Text(theme.fg("accent", theme.bold("SELECT MODEL")), 1, 0));
-            container.addChild(new Text(theme.fg("muted", `Current: ${modelLabel}`), 0, 1));
-            container.addChild(new Spacer(1));
-
-            const items: SelectItem[] = specs.map((s) => ({ value: s, label: s }));
-            const listTheme: SelectListTheme = {
-              selectedPrefix: (t) => theme.fg("accent", "→ "),
-              selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
-              description: (t) => theme.fg("muted", t),
-              scrollInfo: (t) => theme.fg("dim", t),
-              noMatch: (t) => theme.fg("warning", t),
+            const makeList = (pool: string[]) => {
+              const l = new SelectList(pool.map((s) => ({ value: s, label: s })), 12, {
+                selectedPrefix: (t) => theme.fg("accent", "→ "),
+                selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
+                description: (t) => theme.fg("muted", t),
+                scrollInfo: (t) => theme.fg("dim", t),
+                noMatch: (t) => theme.fg("warning", t),
+              });
+              l.onSelect = (item) => done(item.value);
+              l.onCancel = () => done(null);
+              return l;
             };
-            const list = new SelectList(items, 12, listTheme);
-            list.onSelect = (item) => done(item.value);
-            list.onCancel = () => done(null);
-
+            let list = makeList(specs);
             let filter = "";
-            const filterText = new Text(theme.fg("dim", ""), 1, 0);
-            const updateFilterRow = () => filterText.setText(theme.fg("dim", filter ? `filter: ${filter}` : "type to filter"));
-
-            container.addChild(list);
-            container.addChild(new Spacer(1));
-            container.addChild(filterText);
-            updateFilterRow();
-            container.addChild(new Text(theme.fg("dim", "↑↓ navigate · type to filter · enter select · esc cancel"), 1, 0));
-
+            let filterLine = theme.fg("dim", "type to filter");
+            const applyFilter = () => {
+              const pool = filter ? fuzzyFilter(specs, filter.toLowerCase(), (s) => s.toLowerCase()) : specs;
+              list = makeList(pool);
+              filterLine = theme.fg("dim", filter ? `filter: ${filter} (${pool.length}/${specs.length})` : "type to filter");
+            };
             return {
-              render: (w: number) => container.render(w),
-              invalidate: () => container.invalidate(),
+              render: (w: number) => [
+                theme.fg("accent", theme.bold("SELECT MODEL")),
+                theme.fg("muted", `Current: ${modelLabel}`),
+                "",
+                ...list.render(w),
+                "",
+                filterLine,
+                theme.fg("dim", "↑↓ navigate · type to filter · enter select · esc cancel"),
+              ],
+              invalidate: () => list.invalidate(),
               handleInput: (data: string) => {
-                if (data.length >= 1 && data >= " " && data <= "~" && !data.startsWith("\x1b")) {
+                if (!data.startsWith("\x1b") && data.length >= 1 && data >= " " && data <= "~") {
                   filter += data;
-                  list.setFilter(filter);
-                  updateFilterRow();
-                } else if (data === "\x7f" || data === "\b") {
+                  applyFilter();
+                } else if (data === "\x7f" || data === "\b" || data === "\x1b[3~") {
                   filter = filter.slice(0, -1);
-                  list.setFilter(filter);
-                  updateFilterRow();
+                  applyFilter();
+                } else {
+                  list.handleInput(data);
                 }
-                list.handleInput(data);
                 tui.requestRender();
               },
             };
@@ -1674,27 +1890,36 @@ export default function (pi: ExtensionAPI) {
           continue;
         }
 
-        // ---- Profile level editor (single-item, radio-style) ----
-        if (overviewPicked.startsWith("__p_")) {
-          const profile = overviewPicked.slice(4) as ReasoningProfileName;
-          if (profile === "Vision" && !supportsVision) {
-            ctx.ui.notify("Vision profile unavailable: selected model does not support image input.", "warning");
-            continue;
-          }
+        // ---- Profile level editor (single-profile, radio-style) ----
+        const profile = profileByValue[overviewPicked];
+        if (!profile) continue;
+        {
           const currentLevel = effectiveLevel(profile, state.overrides);
           const levelLabels = Object.keys(USER_LEVEL_MAP);
+          const curIdx = levelLabels.findIndex((l) => USER_LEVEL_MAP[l] === currentLevel);
 
-          const chosenLabel = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
+          interface LevelChoice { label: string; runtime: string }
+          const choices: LevelChoice[] = [];
+          if (curIdx < 0) {
+            // Stored level outside the user-facing map (e.g. legacy "max"):
+            // offer keeping it explicitly instead of silently defaulting.
+            choices.push({ label: `Keep current (${currentLevel})`, runtime: currentLevel });
+          }
+          for (const l of levelLabels) {
+            choices.push({
+              label: `${USER_LEVEL_MAP[l] === currentLevel ? "●" : "○"} ${l}`,
+              runtime: USER_LEVEL_MAP[l],
+            });
+          }
+
+          const chosen = await ctx.ui.custom<LevelChoice | null>((tui, theme, _kb, done) => {
             const container = new Container();
             container.addChild(new Text(theme.fg("accent", theme.bold(profile.toUpperCase())), 1, 0));
             container.addChild(new Text(theme.fg("muted", PROFILE_DESCRIPTIONS[profile]), 0, 1));
             container.addChild(new Text(theme.fg("text", `Current level: ${currentLevel}`), 0, 1));
             container.addChild(new Spacer(1));
 
-            const items: SelectItem[] = levelLabels.map((l) => ({
-              value: l,
-              label: `${USER_LEVEL_MAP[l] === currentLevel ? "●" : "○"} ${l}`,
-            }));
+            const items: SelectItem[] = choices.map((c) => ({ value: c.runtime, label: c.label }));
             const listTheme: SelectListTheme = {
               selectedPrefix: (t) => theme.fg("accent", "→ "),
               selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
@@ -1702,10 +1927,12 @@ export default function (pi: ExtensionAPI) {
               scrollInfo: (t) => theme.fg("dim", t),
               noMatch: (t) => theme.fg("warning", t),
             };
-            const list = new SelectList(items, 7, listTheme);
-            const curIdx = levelLabels.findIndex((l) => USER_LEVEL_MAP[l] === currentLevel);
-            if (curIdx >= 0) list.setSelectedIndex(curIdx);
-            list.onSelect = (item) => done(item.label.replace(/^[●○] /, ""));
+            const list = new SelectList(items, Math.max(7, items.length), listTheme);
+            list.setSelectedIndex(curIdx >= 0 ? curIdx : 0);
+            list.onSelect = (item) => {
+              const c = choices.find((cc) => cc.runtime === item.value);
+              if (c) done(c);
+            };
             list.onCancel = () => done(null);
 
             container.addChild(list);
@@ -1721,12 +1948,11 @@ export default function (pi: ExtensionAPI) {
               },
             };
           });
-          if (chosenLabel === null) continue; // Esc — cancel-safe, no change
-          const runtimeLevel = USER_LEVEL_MAP[chosenLabel];
-          state.overrides[profile] = runtimeLevel;
-          if (state.activeProfile === profile) state.activeLevel = runtimeLevel;
-          saveReasoningStateV2(state);
-          ctx.ui.notify(`${profile} → ${runtimeLevel}`, "info");
+          if (chosen === null) continue; // Esc — cancel-safe, no change
+          state.overrides[profile] = chosen.runtime;
+          if (state.activeProfile === profile) state.activeLevel = chosen.runtime;
+          saveReasoningStateV2(state); // sanitized write; overview rebuilds next loop pass
+          ctx.ui.notify(`${profile} → ${chosen.runtime}`, "info");
         }
       }
     },
@@ -1763,9 +1989,12 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Unknown profile "${profileArg}". Profiles: ${REASONING_PROFILES.join(", ")}`, "warning");
         return;
       }
-      const level = levelArg ?? current.level;
-      saveReasoningProfile({ profile: profileArg as ReasoningProfileName, level });
-      ctx.ui.notify(`Reasoning profile set: ${profileArg} @ ${level} (applies to planning/review/synthesis phases via :${level} script suffixes)`, "info");
+      const state = loadReasoningStateV2();
+      state.activeProfile = profileArg as ReasoningProfileName;
+      state.activeLevel = levelArg ?? effectiveLevel(state.activeProfile, state.overrides);
+      state.overrides[state.activeProfile] = state.activeLevel;
+      saveReasoningStateV2(state);
+      ctx.ui.notify(`Reasoning profile set: ${state.activeProfile} @ ${state.activeLevel} (applies to planning/review/synthesis phases via :${state.activeLevel} script suffixes)`, "info");
     },
   });
 }

@@ -85,6 +85,19 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `feat`: implement RAL Phase 6 — integrated `/model` reasoning flow (D38): after native model selection, RAL presents Reasoning Profile (10 profiles, Vision gated on image input) then Reasoning Level (Off/Low/Medium/High/Ultra → canonical runtime values) via the native `model_select` event + `pi.setThinkingLevel()`; profile/level persist to `harness-reasoning.json`; `/reasoning` retained for CLI compatibility; model/profile/tier separation preserved
 - `feat`: implement `/mcc` Model Control Center (D39) — grouped multi-profile reasoning overview (GENERAL/PLANNING/EXECUTION/SPECIALIZED) with effective levels at a glance, per-profile level editors with immediate persistence, inline model selection via `ctx.modelRegistry` + `pi.setModel`, Vision capability gating, v2 state migration in `harness-reasoning.json`
 
-## Notes
+## 2026-08-23
+
+- `fix`: refine `/mcc` UX (D40/D39.1) — viewport-limited model picker on pi-tui SelectList (maxVisible 12), placeholder `unknown/unknown` shown as `(none — choose below)`, immediate overview re-render after each profile save, selectable section headers removed ([docs/DECISIONS.md](docs/DECISIONS.md) D40)
+
+## 2026-08-25
+
+- `fix`: repair `/mcc` profile-key parse defect found in real-world validation — row values `__p_<Name>__` parsed with `slice(4)` wrote overrides under corrupted keys (`Task__`, live `Plan__`), so saves never displayed and were silently discarded by load sanitization; values now flow through one exported token helper and a value→profile Record ([docs/DECISIONS.md](docs/DECISIONS.md) D41)
+- `feat`: rebuild `/mcc` overview as grouped structural list (`MccOverviewList`) — GENERAL/PLANNING/EXECUTION/SPECIALIZED headers render but are never selectable; Vision-without-image rows render disabled and skipped; columnar label/description layout; success-colored `●active` marker distinct from the selection highlight; viewport cap with scroll indicator and orphan-header trim
+- `feat`: model picker fuzzy filter (pi-tui `fuzzyFilter`, mid-string and multi-token match), 9router-first sort, live match counts, Delete-key editing — replaces prefix-only `setFilter` that returned "No matching commands" for "stealth" in a 1356-model catalog
+- `fix`: unify reasoning persistence on v2 state — `model_select` and `/reasoning` no longer clobber `overrides` via legacy v1 writes; `loadReasoningProfile()` reads v2; `saveReasoningStateV2()` sanitizes keys/levels on write (heals corrupt state files); legacy writer removed
+- `fix`: level editor preselects current radio and offers explicit "Keep current (<raw>)" for out-of-map stored levels (removes silent Off trap); `session_start` warms `ctx.modelRegistry.refresh()` after router health OK
+- `docs`: validation evidence — strict type-check PASS (TS latest); 12-check headless component harness PASS; live TUI round-trip PASS (Commit low→High saved, overview updated in place, state file healed, reopen preserved, `stealth ox` → ox-alpha 1/1356)
+
+ ## Notes
 
 - Entries must be added in the same session as the change they describe (capture loop).
