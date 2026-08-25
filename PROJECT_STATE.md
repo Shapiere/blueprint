@@ -63,3 +63,4 @@ None open.
 
 - Full cold-install on a fresh machine not executed (no fresh machine available during Milestone 2; simulated validation completed — `docs/DECISIONS.md` D12).
 - Interactive `/login` flow on a fresh machine untested (stored-credential path verified).
+- Continuous Evolution (2026-08-25): `/model` same-model dead-end root-caused to a Pi host skip (`_emitModelSelect` early-return on equal models; interactive `/model` hard-coded pre-extension; identical in 0.84.3) and mitigated (D43): Alt+M shortcut + bare `/reasoning` open the same control center/v3 state, handler errors surface visibly, doctor tip added; also clarified `/effort` is a workflow auto-arm toggle unrelated to reasoning state.

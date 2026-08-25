@@ -9,6 +9,7 @@ Handoff: what the next session must do first. Current state lives in [PROJECT_ST
 1. **Verify repository state.** Run `python capabilities/scripts/verify.py`; confirm remote matches local `main`.
 2. **Operate in Continuous Evolution.** Adopt capabilities only via lifecycle triggers; verify.py before every commit; keep the capture loop.
 3. **D42 Phase 1 shipped (2026-08-25).** `/model` post-selection flow = unified control center; visibility trust state live; boot-default restoration on; reasoning v3. Do not reintroduce getAll()-based surfaces or `/mcc`.
+4. **D43 (2026-08-25):** Pi skips `model_select` for same-model picks (host, verified to 0.84.3) — reasoning-only access is Alt+M or bare `/reasoning`; upstream ask recorded in DECISIONS D43.
 
 ## Left Unresolved / Deferred
 

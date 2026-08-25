@@ -311,3 +311,8 @@ workflow tool_call: "// profile:" tag → ephemeral execution context (window-sc
 ```
 
 Invariants: `/model` is the single entry point (`/mcc` removed); RAL never writes models.json/auth.json/settings.json; agents never silently change the model (inline options-object overrides now guarded + Keep-strip); visibility never claims connectivity (UNVERIFIED until Phase 2 admin truth); one sanitized writer + one pure resolver for reasoning state eliminates the stale-preview class.
+
+
+### D43 addendum — same-model constraint (2026-08-25)
+
+Pi host skips `model_select` when the selected model equals the current one (`agent-session.js::_emitModelSelect`), and interactive `/model` is handled textually before extension dispatch. Consequence: re-confirming the current model cannot trigger any post-selection extension flow. Mitigation: Alt+M shortcut and bare `/reasoning` open the identical control center against the single v3 store; changed-model selections continue to auto-open it. Upstream ask recorded: always emit (or allow override).

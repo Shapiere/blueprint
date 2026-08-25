@@ -1783,18 +1783,329 @@ export default function (pi: ExtensionAPI) {
         .catch(() => {});
     } catch {}
   });
-  // D42: /model is the single entry point. The native selector stays
-  // authoritative for picking a model; this post-selection control center
-  // owns visibility-aware re-selection, profile configuration (Option C),
-  // and Default Profile designation — all against the one v3 store.
+  // D42/D43: /model is the single entry point. Native selector stays
+  // authoritative for picking a model; on a CHANGED selection Pi emits
+  // model_select and we open the control center. NOTE (host constraint,
+  // agent-session.js _emitModelSelect): Pi SKIPS the event when the selected
+  // model equals the current one, so re-confirming the current model cannot
+  // trigger any extension hook. Ctrl+G and `/reasoning` open the identical
+  // control center for reasoning-only access.
   pi.on("model_select", async (_event, ctx) => {
+    if (!ctx.hasUI) return;
+    if (restoringBootDefault) {
+      restoringBootDefault = false; // boot restoration is not a user model change
+      return;
+    }
     try {
-      if (!ctx.hasUI) return;
-      if (restoringBootDefault) {
-        restoringBootDefault = false; // boot restoration is not a user model change
+      await runModelControlCenter(pi, ctx);
+    } catch (e) {
+      try {
+        ctx.ui.notify(`Model control center error: ${e instanceof Error ? e.message : String(e)}`, "error");
+      } catch {}
+    }
+  });
+
+  // D43: direct control-center access without requiring a model change.
+  pi.registerShortcut("alt+m", {
+    description: "Model Control Center (reasoning profiles & levels)",
+    handler: async (ctx) => {
+      try {
+        await runModelControlCenter(pi, ctx);
+      } catch (e) {
+        try {
+          ctx.ui.notify(`Model control center error: ${e instanceof Error ? e.message : String(e)}`, "error");
+        } catch {}
+      }
+    },
+  });
+
+  pi.on("before_agent_start", (event, ctx) => {
+    const topo = detectProjectTopology(ctx.cwd);
+    const topoContext = formatTopologyContext(topo);
+
+    // Phase 3: per-turn skill-index scoping. Fail-open on any problem.
+    let scopedPrompt: string | undefined;
+    try {
+      const skills = event.systemPromptOptions?.skills ?? [];
+      if (skills.length > 0) {
+        const profileTags = mapTopologyToProfile(topo);
+        const scope = loadScopeMap();
+        const resolution = resolveCapabilitySets(skills, profileTags, scope);
+        const activeSet = new Set(resolution.activeNames);
+        scopedPrompt = renderFilteredSystemPrompt(event.systemPrompt, skills, activeSet);
+      }
+    } catch {
+      scopedPrompt = undefined; // fail-open
+    }
+
+    const basePrompt = scopedPrompt ?? event.systemPrompt;
+    const state = loadReasoningState();
+    const resolved = resolveEffective(state);
+    try {
+      if (ctx.hasUI)
+        ctx.ui.setStatus(
+          "reasoning",
+          resolved.source === "execution"
+            ? `Execution: ${resolved.profile} · ${resolved.level}`
+            : `${resolved.profile} · ${resolved.level}`,
+        );
+    } catch {}
+    const reasoningLine =
+      resolved.source === "execution"
+        ? `Execution Profile: ${resolved.profile} @ level ${resolved.level} (workflow-scoped; your stored configuration is unchanged). Honor this depth now; use ":${resolved.level}" thinking suffixes on agent() calls.`
+        : `Default Profile: ${resolved.profile} @ level ${resolved.level}. Honor this depth for planning/review/synthesis phases; when writing workflow scripts, use ":${resolved.level}" thinking suffixes and declare "// profile: <Name>" to request an execution profile.`;
+    return {
+      systemPrompt: `${basePrompt}\n\n# Active Workspace Environment\n${topoContext}\n${ORCHESTRATION_CONTRACT}\n# Reasoning Profile\n${reasoningLine}`,
+    };
+  });
+
+  // Phase 5 (D37): complexity-aware orchestration enforcement at the workflow
+  // tool boundary. Strategy caps are hard; HEAVY requires explicit approval.
+  pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName !== "workflow") return;
+    const input = event.input as { maxAgents?: unknown; script?: unknown };
+
+    // D42: execution-profile request — validated, ephemeral, run-scoped.
+    if (typeof input.script === "string") {
+      const requested = parseProfileTag(input.script);
+      if (requested) {
+        setExecutionProfile(requested);
+      }
+      // Protected-state guard: scripts must not mutate user-owned runtime files.
+      if (scriptWritesProtectedState(input.script)) {
+        if (ctx.hasUI) {
+          const choice = await ctx.ui.select(
+            "Workflow script writes protected runtime state",
+            ["Block this workflow", "Allow this run (I accept the risk)"],
+          );
+          if (choice !== "Allow this run (I accept the risk)") {
+            return { block: true, reason: "Blocked: script attempts to write harness-reasoning.json / harness-models.json. Profiles are user-owned; scripts may only declare '// profile:' requests." };
+          }
+        } else {
+          return { block: true, reason: "Blocked headless: script writes protected runtime state files (harness-reasoning.json / harness-models.json)." };
+        }
+      }
+    }
+
+    // Model-policy guard: block silent model switching in workflow scripts.
+    if (typeof input.script === "string" && scriptHasModelOverrides(input.script)) {
+      if (ctx.hasUI) {
+        const choice = await ctx.ui.select(
+          "Model change requested",
+          [
+            "Keep current model (strip model overrides from script)",
+            "Allow these models for this workflow run",
+          ],
+        );
+        if (choice?.startsWith("Keep")) {
+          input.script = stripModelOverrides(input.script);
+          ctx.ui.notify("Model overrides stripped — workflow will use the current session model.", "info");
+        } else if (choice?.startsWith("Allow")) {
+          ctx.ui.notify("Model overrides allowed for this workflow run.", "info");
+        } else {
+          return { block: true, reason: "Model policy unresolved: choose Keep current model or Allow in the prompt." };
+        }
+      } else {
+        return { block: true, reason: "Model overrides present but no UI available to approve them. Remove model:/meta.model from the script or run interactively." };
+      }
+    }
+
+    // Complexity strategy enforcement.
+    const script = typeof input.script === "string" ? input.script : "";
+    const declared = parseComplexityTag(script);
+    const requested = typeof input.maxAgents === "number" ? input.maxAgents : undefined;
+    let strategy: ExecutionStrategy = declared ?? (requested && requested > 8 ? "HEAVY" : "LIGHT");
+
+    if (strategy === "HEAVY" && heavyApprovalState === null) {
+      if (!ctx.hasUI) {
+        return { block: true, reason: "HEAVY fan-out requires user approval, but no interactive UI is available. Reduce maxAgents to <=8." };
+      }
+      const choice = await ctx.ui.select(
+        "Execution Strategy — HEAVY fan-out requested",
+        [
+          `Multi-agent (up to ${requested ?? "N"} agents as scripted)`,
+          "Single-agent (sequential, cap 1)",
+          "Let Harness decide (cap 8)",
+        ],
+      );
+      if (!choice || choice.startsWith("Single")) {
+        heavyApprovalState = { ceiling: 1 };
+        input.maxAgents = 1;
+        strategy = "DIRECT";
+      } else if (choice.startsWith("Let")) {
+        heavyApprovalState = { ceiling: STRATEGY_CAPS.FULL };
+        input.maxAgents = STRATEGY_CAPS.FULL;
+        strategy = "FULL";
+      } else {
+        heavyApprovalState = { ceiling: typeof requested === "number" ? requested : 16 };
+      }
+    }
+
+    const ceiling = heavyApprovalState?.ceiling;
+    if (typeof requested === "number") {
+      const capped = clampAgents(strategy, requested);
+      const effective = ceiling !== undefined ? Math.min(capped, ceiling) : capped;
+      if (effective !== requested) input.maxAgents = effective;
+    }
+    if (strategy === "HEAVY" && !heavyApprovalState) {
+      return { block: true, reason: "HEAVY fan-out requires explicit user approval." };
+    }
+  });
+
+  pi.registerCommand("doctor", {
+    description: "Run Harness Pi environment, router, MCP, permissions, and sync diagnostics",
+    handler: async (_args: string, ctx: ExtensionCommandContext) => {
+      ctx.ui.notify("Running Harness Pi diagnostic scan…", "info");
+
+      const results: string[] = ["Harness Pi Doctor Report", "========================"];
+
+      results.push(`✓ Pi Runtime: Node ${process.version} (${process.platform} ${process.arch})`);
+
+      const routerHealth = await check9routerHealth();
+      if (routerHealth.ok) {
+        results.push(`✓ 9router: Online (:20128) — ${routerHealth.modelCount ?? catalogStats.discovered} models discovered (live refresh via RAL)`);
+      } else {
+        results.push(`✗ 9router: Offline (${routerHealth.error ?? "connection refused"})`);
+      }
+
+      // D42: model catalog + connectivity truth (Phase 1 = UNVERIFIED by design).
+      const isPlaceholderModel =
+        !!ctx.model && ctx.model.provider === "unknown" && ctx.model.id === "unknown";
+      if (isPlaceholderModel) {
+        results.push("! Model Catalog: no session model resolved yet — open /model to choose one");
+      } else {
+        try {
+          const liveCatalog = await fetchRouterCatalog();
+          const liveIds = new Set(liveCatalog.map((m) => m.id));
+          const currentModel = ctx.model;
+          if (currentModel && currentModel.provider === "9router" && !liveIds.has(currentModel.id)) {
+            results.push(`! Model Catalog: configured model "${currentModel.id}" is NOT in the live router catalog — select a current model via /model`);
+          } else if (currentModel) {
+            results.push(`✓ Model Catalog: current model "${currentModel.provider}/${currentModel.id}" is live-router current`);
+          }
+        } catch {
+          results.push("! Model Catalog: could not verify against live router (offline?)");
+        }
+      }
+      const visState = loadModelsVisibility();
+      results.push(
+        `• Model Selection: discovered ${catalogStats.discovered} · selectable ${catalogStats.selectable}` +
+        `${visState.hidden.length ? ` · hidden ${visState.hidden.length}` : ""}` +
+        `${visState.visible ? ` · allowlist ${visState.visible.length}` : ""}`,
+      );
+      results.push("• Connectivity: UNVERIFIED (Phase 1 — discovery + user visibility; admin verification deferred to Phase 2)");
+      results.push("Tip: Alt+M or /reasoning opens the Model Control Center — profiles, levels, default");
+      const rs = loadReasoningState();
+      const rr = resolveEffective(rs);
+      results.push(`• Reasoning: default profile ${rs.defaultProfile} · effective ${rr.profile} @ ${rr.level}${rr.source === "execution" ? " (execution)" : ""}`);
+
+      const mcpPath = path.join(os.homedir(), ".config", "mcp", "mcp.json");
+      if (fs.existsSync(mcpPath)) {
+        try {
+          const mcp = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
+          const servers = Object.keys(mcp.mcpServers || {});
+          results.push(`✓ MCP Configuration: ${servers.length} pinned servers configured (${servers.join(", ")})`);
+        } catch {
+          results.push(`✗ MCP Configuration: Invalid JSON in ${mcpPath}`);
+        }
+      } else {
+        results.push(`✗ MCP Configuration: Missing ${mcpPath}`);
+      }
+
+      const permConfigPath = path.join(os.homedir(), ".pi", "agent", "extensions", "pi-permission-system", "config.json");
+      if (fs.existsSync(permConfigPath)) {
+        results.push("✓ Permission System: Active (path protection + bash deny rules)");
+      } else {
+        results.push(`✗ Permission System: Missing config at ${permConfigPath}`);
+      }
+
+      const topo = detectProjectTopology(ctx.cwd);
+      const scope = loadScopeMap();
+      const profileTags = mapTopologyToProfile(topo);
+      const allSkills = listRuntimeSkills();
+      const resolution = resolveCapabilitySets(allSkills, profileTags, scope);
+      results.push(`✓ Capability Profile: ${resolution.profileTags.join(", ")}`);
+      results.push(`  Active (${resolution.activeNames.length}): ${resolution.activeNames.join(", ") || "(none)"}`);
+      if (scope.error) {
+        results.push(`! Scope Map: failed to load (${scope.error}) — fail-open, all skills visible`);
+      } else {
+        results.push(`  Available via /skill:<name> (${resolution.availableNames.length}): ${resolution.availableNames.join(", ") || "(none)"}`);
+      }
+      results.push("✓ Governance: Blueprint-approved capabilities only; escape hatch /skill:<name>");
+
+      const extDir = path.join(os.homedir(), ".pi", "agent", "extensions");
+      const powerToolsExists = fs.existsSync(path.join(extDir, "power-tools.ts"));
+      results.push(`✓ Platform Extensions: power-tools (${powerToolsExists ? "active" : "missing"}), runtime-orchestrator (active)`);
+
+      // Sync State Diagnostic
+      const syncSummary = executeSync({ apply: false });
+      const pendingChanges = syncSummary.counts.created + syncSummary.counts.updated + syncSummary.counts.conflict;
+      if (pendingChanges === 0) {
+        results.push("✓ Asset Sync: Up to date (all runtime assets match Blueprint source)");
+      } else {
+        results.push(`! Asset Sync: ${pendingChanges} pending changes (run /sync --apply to align)`);
+      }
+
+      results.push(`✓ Current Workspace: ${topo.name} [${topo.type}${topo.framework ? `, ${topo.framework}` : ""}${topo.packageManager ? `, ${topo.packageManager}` : ""}${topo.gitBranch ? `, branch:${topo.gitBranch}` : ""}]`);
+
+      const report = results.join("\n");
+      ctx.ui.notify(report, routerHealth.ok && pendingChanges === 0 ? "info" : "warning");
+    },
+  });
+
+
+
+  pi.registerCommand("sync", {
+    description: "One-way sync platform assets from Blueprint repo to runtime (~/.pi/agent)",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const apply = args.includes("--apply");
+      const force = args.includes("--force");
+
+      ctx.ui.notify(`Running Harness Pi Sync (${apply ? "Applying Changes" : "Preview Mode"})…`, "info");
+
+      const summary = executeSync({ apply, force });
+      const reportText = formatSyncReport(summary);
+
+      const notifyType = summary.counts.failed > 0 ? "error" : summary.counts.conflict > 0 ? "warning" : "info";
+      ctx.ui.notify(reportText, notifyType);
+    },
+  });
+
+  pi.registerCommand("reasoning", {
+    description: "Model Control Center (bare) or set default profile via CLI args",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const parts = args.trim().split(/\s+/).filter(Boolean);
+      if (parts.length === 0) {
+        // D43: bare /reasoning opens the same control center as Ctrl+G and the
+        // post-selection flow — one shared v3 state, one resolution path.
+        await runModelControlCenter(pi, ctx);
         return;
       }
-      for (;;) {
+      if (parts[0].toLowerCase() === "show") {
+        const st = loadReasoningState();
+        const r = resolveEffective(st);
+        ctx.ui.notify(`Default Profile: ${st.defaultProfile} · effective ${r.profile} @ ${r.level} (${r.source})`, "info");
+        return;
+      }
+      const profileArg = parts[0];
+      const levelArg = parts[1]?.toLowerCase();
+      if (!REASONING_PROFILES.includes(profileArg as ReasoningProfileName)) {
+        ctx.ui.notify(`Unknown profile "${profileArg}". Profiles: ${REASONING_PROFILES.join(", ")}`, "warning");
+        return;
+      }
+      const state = loadReasoningState();
+      state.defaultProfile = profileArg as ReasoningProfileName;
+      if (levelArg) state.profiles[state.defaultProfile] = levelArg;
+      saveReasoningState(state);
+      ctx.ui.notify(`Default Profile: ${state.defaultProfile} · ${state.profiles[state.defaultProfile]} (applies via :${state.profiles[state.defaultProfile]} script suffixes)`, "info");
+    },
+  });
+}
+
+
+/** The unified Model Control Center flow: visibility-aware picker → profiles → levels. */
+async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+    for (;;) {
         const state = loadReasoningState();
         const resolved = resolveEffective(state);
         const isPlaceholder =
@@ -2009,279 +2320,4 @@ export default function (pi: ExtensionAPI) {
           }
         }
       }
-    } catch {}
-  });
-  pi.on("before_agent_start", (event, ctx) => {
-    const topo = detectProjectTopology(ctx.cwd);
-    const topoContext = formatTopologyContext(topo);
-
-    // Phase 3: per-turn skill-index scoping. Fail-open on any problem.
-    let scopedPrompt: string | undefined;
-    try {
-      const skills = event.systemPromptOptions?.skills ?? [];
-      if (skills.length > 0) {
-        const profileTags = mapTopologyToProfile(topo);
-        const scope = loadScopeMap();
-        const resolution = resolveCapabilitySets(skills, profileTags, scope);
-        const activeSet = new Set(resolution.activeNames);
-        scopedPrompt = renderFilteredSystemPrompt(event.systemPrompt, skills, activeSet);
-      }
-    } catch {
-      scopedPrompt = undefined; // fail-open
-    }
-
-    const basePrompt = scopedPrompt ?? event.systemPrompt;
-    const state = loadReasoningState();
-    const resolved = resolveEffective(state);
-    try {
-      if (ctx.hasUI)
-        ctx.ui.setStatus(
-          "reasoning",
-          resolved.source === "execution"
-            ? `Execution: ${resolved.profile} · ${resolved.level}`
-            : `${resolved.profile} · ${resolved.level}`,
-        );
-    } catch {}
-    const reasoningLine =
-      resolved.source === "execution"
-        ? `Execution Profile: ${resolved.profile} @ level ${resolved.level} (workflow-scoped; your stored configuration is unchanged). Honor this depth now; use ":${resolved.level}" thinking suffixes on agent() calls.`
-        : `Default Profile: ${resolved.profile} @ level ${resolved.level}. Honor this depth for planning/review/synthesis phases; when writing workflow scripts, use ":${resolved.level}" thinking suffixes and declare "// profile: <Name>" to request an execution profile.`;
-    return {
-      systemPrompt: `${basePrompt}\n\n# Active Workspace Environment\n${topoContext}\n${ORCHESTRATION_CONTRACT}\n# Reasoning Profile\n${reasoningLine}`,
-    };
-  });
-
-  // Phase 5 (D37): complexity-aware orchestration enforcement at the workflow
-  // tool boundary. Strategy caps are hard; HEAVY requires explicit approval.
-  pi.on("tool_call", async (event, ctx) => {
-    if (event.toolName !== "workflow") return;
-    const input = event.input as { maxAgents?: unknown; script?: unknown };
-
-    // D42: execution-profile request — validated, ephemeral, run-scoped.
-    if (typeof input.script === "string") {
-      const requested = parseProfileTag(input.script);
-      if (requested) {
-        setExecutionProfile(requested);
-      }
-      // Protected-state guard: scripts must not mutate user-owned runtime files.
-      if (scriptWritesProtectedState(input.script)) {
-        if (ctx.hasUI) {
-          const choice = await ctx.ui.select(
-            "Workflow script writes protected runtime state",
-            ["Block this workflow", "Allow this run (I accept the risk)"],
-          );
-          if (choice !== "Allow this run (I accept the risk)") {
-            return { block: true, reason: "Blocked: script attempts to write harness-reasoning.json / harness-models.json. Profiles are user-owned; scripts may only declare '// profile:' requests." };
-          }
-        } else {
-          return { block: true, reason: "Blocked headless: script writes protected runtime state files (harness-reasoning.json / harness-models.json)." };
-        }
-      }
-    }
-
-    // Model-policy guard: block silent model switching in workflow scripts.
-    if (typeof input.script === "string" && scriptHasModelOverrides(input.script)) {
-      if (ctx.hasUI) {
-        const choice = await ctx.ui.select(
-          "Model change requested",
-          [
-            "Keep current model (strip model overrides from script)",
-            "Allow these models for this workflow run",
-          ],
-        );
-        if (choice?.startsWith("Keep")) {
-          input.script = stripModelOverrides(input.script);
-          ctx.ui.notify("Model overrides stripped — workflow will use the current session model.", "info");
-        } else if (choice?.startsWith("Allow")) {
-          ctx.ui.notify("Model overrides allowed for this workflow run.", "info");
-        } else {
-          return { block: true, reason: "Model policy unresolved: choose Keep current model or Allow in the prompt." };
-        }
-      } else {
-        return { block: true, reason: "Model overrides present but no UI available to approve them. Remove model:/meta.model from the script or run interactively." };
-      }
-    }
-
-    // Complexity strategy enforcement.
-    const script = typeof input.script === "string" ? input.script : "";
-    const declared = parseComplexityTag(script);
-    const requested = typeof input.maxAgents === "number" ? input.maxAgents : undefined;
-    let strategy: ExecutionStrategy = declared ?? (requested && requested > 8 ? "HEAVY" : "LIGHT");
-
-    if (strategy === "HEAVY" && heavyApprovalState === null) {
-      if (!ctx.hasUI) {
-        return { block: true, reason: "HEAVY fan-out requires user approval, but no interactive UI is available. Reduce maxAgents to <=8." };
-      }
-      const choice = await ctx.ui.select(
-        "Execution Strategy — HEAVY fan-out requested",
-        [
-          `Multi-agent (up to ${requested ?? "N"} agents as scripted)`,
-          "Single-agent (sequential, cap 1)",
-          "Let Harness decide (cap 8)",
-        ],
-      );
-      if (!choice || choice.startsWith("Single")) {
-        heavyApprovalState = { ceiling: 1 };
-        input.maxAgents = 1;
-        strategy = "DIRECT";
-      } else if (choice.startsWith("Let")) {
-        heavyApprovalState = { ceiling: STRATEGY_CAPS.FULL };
-        input.maxAgents = STRATEGY_CAPS.FULL;
-        strategy = "FULL";
-      } else {
-        heavyApprovalState = { ceiling: typeof requested === "number" ? requested : 16 };
-      }
-    }
-
-    const ceiling = heavyApprovalState?.ceiling;
-    if (typeof requested === "number") {
-      const capped = clampAgents(strategy, requested);
-      const effective = ceiling !== undefined ? Math.min(capped, ceiling) : capped;
-      if (effective !== requested) input.maxAgents = effective;
-    }
-    if (strategy === "HEAVY" && !heavyApprovalState) {
-      return { block: true, reason: "HEAVY fan-out requires explicit user approval." };
-    }
-  });
-
-  pi.registerCommand("doctor", {
-    description: "Run Harness Pi environment, router, MCP, permissions, and sync diagnostics",
-    handler: async (_args: string, ctx: ExtensionCommandContext) => {
-      ctx.ui.notify("Running Harness Pi diagnostic scan…", "info");
-
-      const results: string[] = ["Harness Pi Doctor Report", "========================"];
-
-      results.push(`✓ Pi Runtime: Node ${process.version} (${process.platform} ${process.arch})`);
-
-      const routerHealth = await check9routerHealth();
-      if (routerHealth.ok) {
-        results.push(`✓ 9router: Online (:20128) — ${routerHealth.modelCount ?? catalogStats.discovered} models discovered (live refresh via RAL)`);
-      } else {
-        results.push(`✗ 9router: Offline (${routerHealth.error ?? "connection refused"})`);
-      }
-
-      // D42: model catalog + connectivity truth (Phase 1 = UNVERIFIED by design).
-      const isPlaceholderModel =
-        !!ctx.model && ctx.model.provider === "unknown" && ctx.model.id === "unknown";
-      if (isPlaceholderModel) {
-        results.push("! Model Catalog: no session model resolved yet — open /model to choose one");
-      } else {
-        try {
-          const liveCatalog = await fetchRouterCatalog();
-          const liveIds = new Set(liveCatalog.map((m) => m.id));
-          const currentModel = ctx.model;
-          if (currentModel && currentModel.provider === "9router" && !liveIds.has(currentModel.id)) {
-            results.push(`! Model Catalog: configured model "${currentModel.id}" is NOT in the live router catalog — select a current model via /model`);
-          } else if (currentModel) {
-            results.push(`✓ Model Catalog: current model "${currentModel.provider}/${currentModel.id}" is live-router current`);
-          }
-        } catch {
-          results.push("! Model Catalog: could not verify against live router (offline?)");
-        }
-      }
-      const visState = loadModelsVisibility();
-      results.push(
-        `• Model Selection: discovered ${catalogStats.discovered} · selectable ${catalogStats.selectable}` +
-        `${visState.hidden.length ? ` · hidden ${visState.hidden.length}` : ""}` +
-        `${visState.visible ? ` · allowlist ${visState.visible.length}` : ""}`,
-      );
-      results.push("• Connectivity: UNVERIFIED (Phase 1 — discovery + user visibility; admin verification deferred to Phase 2)");
-      const rs = loadReasoningState();
-      const rr = resolveEffective(rs);
-      results.push(`• Reasoning: default profile ${rs.defaultProfile} · effective ${rr.profile} @ ${rr.level}${rr.source === "execution" ? " (execution)" : ""}`);
-
-      const mcpPath = path.join(os.homedir(), ".config", "mcp", "mcp.json");
-      if (fs.existsSync(mcpPath)) {
-        try {
-          const mcp = JSON.parse(fs.readFileSync(mcpPath, "utf-8"));
-          const servers = Object.keys(mcp.mcpServers || {});
-          results.push(`✓ MCP Configuration: ${servers.length} pinned servers configured (${servers.join(", ")})`);
-        } catch {
-          results.push(`✗ MCP Configuration: Invalid JSON in ${mcpPath}`);
-        }
-      } else {
-        results.push(`✗ MCP Configuration: Missing ${mcpPath}`);
-      }
-
-      const permConfigPath = path.join(os.homedir(), ".pi", "agent", "extensions", "pi-permission-system", "config.json");
-      if (fs.existsSync(permConfigPath)) {
-        results.push("✓ Permission System: Active (path protection + bash deny rules)");
-      } else {
-        results.push(`✗ Permission System: Missing config at ${permConfigPath}`);
-      }
-
-      const topo = detectProjectTopology(ctx.cwd);
-      const scope = loadScopeMap();
-      const profileTags = mapTopologyToProfile(topo);
-      const allSkills = listRuntimeSkills();
-      const resolution = resolveCapabilitySets(allSkills, profileTags, scope);
-      results.push(`✓ Capability Profile: ${resolution.profileTags.join(", ")}`);
-      results.push(`  Active (${resolution.activeNames.length}): ${resolution.activeNames.join(", ") || "(none)"}`);
-      if (scope.error) {
-        results.push(`! Scope Map: failed to load (${scope.error}) — fail-open, all skills visible`);
-      } else {
-        results.push(`  Available via /skill:<name> (${resolution.availableNames.length}): ${resolution.availableNames.join(", ") || "(none)"}`);
-      }
-      results.push("✓ Governance: Blueprint-approved capabilities only; escape hatch /skill:<name>");
-
-      const extDir = path.join(os.homedir(), ".pi", "agent", "extensions");
-      const powerToolsExists = fs.existsSync(path.join(extDir, "power-tools.ts"));
-      results.push(`✓ Platform Extensions: power-tools (${powerToolsExists ? "active" : "missing"}), runtime-orchestrator (active)`);
-
-      // Sync State Diagnostic
-      const syncSummary = executeSync({ apply: false });
-      const pendingChanges = syncSummary.counts.created + syncSummary.counts.updated + syncSummary.counts.conflict;
-      if (pendingChanges === 0) {
-        results.push("✓ Asset Sync: Up to date (all runtime assets match Blueprint source)");
-      } else {
-        results.push(`! Asset Sync: ${pendingChanges} pending changes (run /sync --apply to align)`);
-      }
-
-      results.push(`✓ Current Workspace: ${topo.name} [${topo.type}${topo.framework ? `, ${topo.framework}` : ""}${topo.packageManager ? `, ${topo.packageManager}` : ""}${topo.gitBranch ? `, branch:${topo.gitBranch}` : ""}]`);
-
-      const report = results.join("\n");
-      ctx.ui.notify(report, routerHealth.ok && pendingChanges === 0 ? "info" : "warning");
-    },
-  });
-
-
-
-  pi.registerCommand("sync", {
-    description: "One-way sync platform assets from Blueprint repo to runtime (~/.pi/agent)",
-    handler: async (args: string, ctx: ExtensionCommandContext) => {
-      const apply = args.includes("--apply");
-      const force = args.includes("--force");
-
-      ctx.ui.notify(`Running Harness Pi Sync (${apply ? "Applying Changes" : "Preview Mode"})…`, "info");
-
-      const summary = executeSync({ apply, force });
-      const reportText = formatSyncReport(summary);
-
-      const notifyType = summary.counts.failed > 0 ? "error" : summary.counts.conflict > 0 ? "warning" : "info";
-      ctx.ui.notify(reportText, notifyType);
-    },
-  });
-
-  pi.registerCommand("reasoning", {
-    description: "Configure reasoning profile (Default/Plan/Review) and thinking level",
-    handler: async (args: string, ctx: ExtensionCommandContext) => {
-      const current = loadReasoningProfile();
-      const parts = args.trim().split(/\s+/).filter(Boolean);
-      if (parts.length === 0 || parts[0].toLowerCase() === "show") {
-        ctx.ui.notify(`Reasoning profile: ${current.profile} @ ${current.level}. Usage: /reasoning <Default|Plan|Review> <off|minimal|low|medium|high|xhigh|max>`, "info");
-        return;
-      }
-      const profileArg = parts[0];
-      const levelArg = parts[1]?.toLowerCase();
-      if (!REASONING_PROFILES.includes(profileArg as ReasoningProfileName)) {
-        ctx.ui.notify(`Unknown profile "${profileArg}". Profiles: ${REASONING_PROFILES.join(", ")}`, "warning");
-        return;
-      }
-      const state = loadReasoningState();
-      state.defaultProfile = profileArg as ReasoningProfileName;
-      if (levelArg) state.profiles[state.defaultProfile] = levelArg;
-      saveReasoningState(state);
-      ctx.ui.notify(`Default Profile: ${state.defaultProfile} · ${state.profiles[state.defaultProfile]} (applies via :${state.profiles[state.defaultProfile]} script suffixes)`, "info");
-    },
-  });
 }
