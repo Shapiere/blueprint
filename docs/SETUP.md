@@ -163,6 +163,18 @@ Uninstall: `pi remove <source>`.
 
 Neither file is under `/sync`; neither contains credentials. `models.json`/`auth.json` remain protected and untouched by RAL.
 
+### `/model` host bridge (D44)
+
+Pi skips `model_select` for same-model selections; the bridge makes them open the Model Control Center.
+
+```bash
+node capabilities/scripts/pi-model-bridge.mjs status   # report applied/version/backup
+node capabilities/scripts/pi-model-bridge.mjs apply    # idempotent, version-guarded
+node capabilities/scripts/pi-model-bridge.mjs restore  # revert to pristine host file
+```
+
+Re-run `apply` after every `pi update`; `/doctor` reports whether the bridge is active.
+
 ### Extension type-check & regression tests
 
 ```bash

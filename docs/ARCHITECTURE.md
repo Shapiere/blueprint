@@ -316,3 +316,8 @@ Invariants: `/model` is the single entry point (`/mcc` removed); RAL never write
 ### D43 addendum — same-model constraint (2026-08-25)
 
 Pi host skips `model_select` when the selected model equals the current one (`agent-session.js::_emitModelSelect`), and interactive `/model` is handled textually before extension dispatch. Consequence: re-confirming the current model cannot trigger any post-selection extension flow. Mitigation: Alt+M shortcut and bare `/reasoning` open the identical control center against the single v3 store; changed-model selections continue to auto-open it. Upstream ask recorded: always emit (or allow override).
+
+
+### D44 addendum — host compatibility bridge (2026-08-25)
+
+`pi-model-bridge.mjs` patches one early-return in the installed Pi host (`_emitModelSelect`) so same-model selector picks emit `model_select(sameModel:true, source:"set")`. Guards: version allowlist (0.83.x–0.84.x) + exact structure match + pristine backup + idempotent apply + reversible restore. The extension opens the control center only for user-originated picks (`shouldOpenControlCenter`). Status is reported by `/doctor`; `pi update` removes the patch — re-run `apply`, doctor will say so.

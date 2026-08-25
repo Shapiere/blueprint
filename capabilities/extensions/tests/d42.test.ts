@@ -177,6 +177,16 @@ check("model override guard covers inline options-object form", async () => {
   assert.ok(stripped.includes("label: 'l'"), "scrub removed unrelated options");
 });
 
+check("D44 bridge decision matrix", async () => {
+  const { shouldOpenControlCenter, modelBridgeStatus } = await import("../runtime-orchestrator.ts");
+  assert.equal(shouldOpenControlCenter({ sameModel: true, source: "set" }), true); // user re-confirms current model
+  assert.equal(shouldOpenControlCenter({ sameModel: true, source: "cycle" }), false); // programmatic cycle
+  assert.equal(shouldOpenControlCenter({ source: "set" }), true); // changed model
+  assert.equal(shouldOpenControlCenter({}), true);
+  const st = modelBridgeStatus();
+  assert.ok(st && typeof st.applied === "boolean" && st.version.length > 0, "bridge status unreadable");
+});
+
 check("protected-state write guard", () => {
   assert.ok(scriptWritesProtectedState('fs.writeFileSync("~/x/harness-reasoning.json", data)'));
   assert.ok(scriptWritesProtectedState('fs.appendFileSync("harness-models.json", blob)'));

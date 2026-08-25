@@ -1120,6 +1120,22 @@ export function applyVisibility(ids: readonly string[], state: ModelsVisibilityS
 /** Last refresh counters for /doctor (module-scoped, in-memory only). */
 export const catalogStats = { discovered: 0, selectable: 0 };
 
+/** Reads the installed Pi host to report D44 bridge state for /doctor. */
+export function modelBridgeStatus(): { applied: boolean; version: string } | null {
+  try {
+    const appdata = process.env.APPDATA;
+    const dir =
+      (process.env.PI_CODE_AGENT_DIR as string | undefined) ??
+      (appdata ? path.join(appdata, "npm", "node_modules", "@earendil-works", "pi-coding-agent") : "");
+    if (!dir) return null;
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf-8")) as { version?: string };
+    const src = fs.readFileSync(path.join(dir, "dist", "core", "agent-session.js"), "utf-8");
+    return { applied: src.includes("sameModel: true"), version: pkg.version ?? "?" };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Best-effort display-name enrichment for the SELECTABLE set via the router's
  * public info endpoint. Strictly bounded (sequential, capped, short timeout),
@@ -1211,6 +1227,17 @@ export async function restoreDeclaredDefault(ctx: ExtensionContext): Promise<boo
 let piSetModelRef: ((m: unknown) => Promise<unknown>) | null = null;
 /** True while a boot-default restoration is in flight; suppresses the post-select dialog. */
 let restoringBootDefault = false;
+
+/**
+ * D44 bridge decision: the version-guarded host patch emits model_select with
+ * sameModel:true when the user re-confirms the current model via the selector
+ * (source "set"). Only that explicit user action opens the control center;
+ * programmatic equal-model emissions (e.g. cycling) do not.
+ */
+export function shouldOpenControlCenter(ev: { sameModel?: boolean; source?: string }): boolean {
+  if (ev.sameModel) return ev.source === "set";
+  return true;
+}
 
 /** Human-readable "provider/id" of the declared default from settings.json. */
 export function declaredDefaultLabel(): string {
@@ -1790,12 +1817,15 @@ export default function (pi: ExtensionAPI) {
   // model equals the current one, so re-confirming the current model cannot
   // trigger any extension hook. Ctrl+G and `/reasoning` open the identical
   // control center for reasoning-only access.
-  pi.on("model_select", async (_event, ctx) => {
+  pi.on("model_select", async (event, ctx) => {
     if (!ctx.hasUI) return;
     if (restoringBootDefault) {
       restoringBootDefault = false; // boot restoration is not a user model change
       return;
     }
+    // D44 host bridge: same-model selector picks now emit with sameModel+set.
+    const ev = event as { sameModel?: boolean; source?: string };
+    if (!shouldOpenControlCenter(ev)) return;
     try {
       await runModelControlCenter(pi, ctx);
     } catch (e) {
@@ -1994,6 +2024,14 @@ export default function (pi: ExtensionAPI) {
         `${visState.visible ? ` · allowlist ${visState.visible.length}` : ""}`,
       );
       results.push("• Connectivity: UNVERIFIED (Phase 1 — discovery + user visibility; admin verification deferred to Phase 2)");
+      try {
+        const bridge = modelBridgeStatus();
+        if (!bridge) results.push("! /model bridge: host runtime not found — same-model selections cannot open the control center");
+        else if (bridge.applied) results.push(`✓ /model bridge: APPLIED (pi ${bridge.version}) — same-model selections open the control center`);
+        else results.push(`! /model bridge: NOT APPLIED for pi ${bridge.version} — run: node capabilities/scripts/pi-model-bridge.mjs apply`);
+      } catch {
+        results.push("! /model bridge: status unknown");
+      }
       results.push("Tip: Alt+M or /reasoning opens the Model Control Center — profiles, levels, default");
       const rs = loadReasoningState();
       const rr = resolveEffective(rs);
