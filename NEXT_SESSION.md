@@ -9,6 +9,7 @@ Handoff: what the next session must do first. Current state lives in [PROJECT_ST
 1. **Verify repository state.** Run `python capabilities/scripts/verify.py`; confirm remote matches local `main`.
 2. **Operate in Continuous Evolution.** Adopt capabilities only via lifecycle triggers; verify.py before every commit; keep the capture loop.
 3. **D42 Phase 1 shipped (2026-08-25).** `/model` post-selection flow = unified control center; visibility trust state live; boot-default restoration on; reasoning v3. Do not reintroduce getAll()-based surfaces or `/mcc`.
+4. **D45 (2026-08-25):** `/model` is responsive — any new TUI row must respect `renderedWidth <= availableWidth` (dynamic columns + final clamp); run the overflow regression tests at widths 8–400 after UI changes.
 4. **D44 (2026-08-25):** unified `/model` via host bridge — after any `pi update`, re-run `node capabilities/scripts/pi-model-bridge.mjs apply`; `/doctor` reports bridge state.
 5. **D43 (2026-08-25):** Pi skips `model_select` for same-model picks (host, verified to 0.84.3) — reasoning-only access is Alt+M or bare `/reasoning`; upstream ask recorded in DECISIONS D43.
 

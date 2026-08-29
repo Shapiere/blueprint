@@ -321,3 +321,8 @@ Pi host skips `model_select` when the selected model equals the current one (`ag
 ### D44 addendum — host compatibility bridge (2026-08-25)
 
 `pi-model-bridge.mjs` patches one early-return in the installed Pi host (`_emitModelSelect`) so same-model selector picks emit `model_select(sameModel:true, source:"set")`. Guards: version allowlist (0.83.x–0.84.x) + exact structure match + pristine backup + idempotent apply + reversible restore. The extension opens the control center only for user-originated picks (`shouldOpenControlCenter`). Status is reported by `/doctor`; `pi update` removes the patch — re-run `apply`, doctor will say so.
+
+
+### D45 addendum — responsive rendering invariant (2026-08-25)
+
+Every line rendered by the `/model` control surface must satisfy `renderedWidth <= availableWidth`. Rows derive a label column from content + width + a reserved description budget; markers live *inside* that column; all text is truncated with pi-tui `visibleWidth`/`truncateToWidth` (ANSI and Unicode aware); each line passes a final clamp. Headers, status lines, footer hints and the picker overlay use the same rule and simplify their wording on narrow terminals.

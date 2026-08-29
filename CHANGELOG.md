@@ -101,6 +101,7 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `fix`: `/doctor` placeholder blind spot (no more `current model "unknown" is live-router current`) + catalog counts / connectivity / reasoning diagnostics
 - `fix`: D43 — root-cause `/model` same-model dead-end (host skips model_select on equal models; interactive dispatch hard-coded) → added Alt+M shortcut + bare `/reasoning` opening the shared Model Control Center (single v3 state/resolver), visible handler errors, `/doctor` discoverability tip ([docs/DECISIONS.md](docs/DECISIONS.md) D43)
 - `feat`: D44 — unified `/model` via version-guarded host bridge (`pi-model-bridge.mjs`): same-model selector picks emit `model_select(sameModel:true)`; control center opens for both cases; reversible backup + structure/version guard + `/doctor` diagnostics ([docs/DECISIONS.md](docs/DECISIONS.md) D44)
+- `fix`: D45 — `/model` width-overflow crash (`Rendered line 40 exceeds terminal width (215 > 204)`): dynamic column sizing, marker inside the label column, ANSI/Unicode-aware truncation, width-aware header/status/footer, final per-line clamp; overflow regression tests at widths 8–400 ([docs/DECISIONS.md](docs/DECISIONS.md) D45)
 - `docs`: validation evidence — strict type-check PASS; 15-check regression suite PASS; live battery PASS (boot restore → footer ox-alpha; Vision high→low immediate; Set-Default persisted; workflow config-immutability; override prompt + Keep-strip)
 
  ## Notes

@@ -1577,6 +1577,36 @@ type MccLine =
 const MCC_ACTIVE_MARKER = "●active";
 
 /**
+ * Width-safe single-line text: the content is produced from the ACTUAL render
+ * width (so narrow terminals can simplify wording), then clamped so the final
+ * rendered line never exceeds that width. ANSI-styled input is measured with
+ * pi-tui's display-width helper, never with string length.
+ */
+class WidthSafeText implements Component {
+  constructor(
+    private readonly build: (width: number) => string,
+    private readonly paddingX = 0,
+    private readonly paddingY = 0,
+  ) {}
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const inner = Math.max(1, width - this.paddingX * 2);
+    const line = truncateToWidth(this.build(width), inner, "");
+    const pad = " ".repeat(this.paddingX);
+    const out = [pad + line];
+    for (let i = 0; i < this.paddingY; i++) out.push("");
+    return out;
+  }
+}
+
+/** Clamps every rendered line to the available width (ANSI/Unicode aware). */
+function clampLines(lines: readonly string[], width: number): string[] {
+  return lines.map((l) => (visibleWidth(l) > width ? truncateToWidth(l, width, "") : l));
+}
+
+/**
  * Grouped selection list for the /mcc overview. Headers and disabled rows are
  * rendered but skipped by navigation; arrow keys wrap across selectable items
  * only. Viewport-limited to maxLines rendered lines with a scroll indicator.
@@ -1677,57 +1707,92 @@ export class MccOverviewList implements Component {
     return lines;
   }
 
+  /**
+   * Dynamic column sizing: the label column is derived from the actual
+   * content, the terminal width, and room for a trailing description.
+   */
   private labelColumnWidth(width: number): number {
     let widest = 0;
     for (const s of this.sections) {
       for (const row of s.rows) {
-        const primary = row.kind === "item" ? row.item.primary : row.disabled.primary;
-        const markedW = row.kind === "item" && row.item.marked
-          ? (typeof row.item.marked === "string" ? row.item.marked : MCC_ACTIVE_MARKER).length + 1
-          : 0;
-        widest = Math.max(widest, visibleWidth(primary) + markedW);
+        const isItem = row.kind === "item";
+        const primary = isItem ? row.item.primary : row.disabled.primary;
+        const markerText = isItem ? MccOverviewList.markerOf(row.item.marked) : "";
+        const markerW = markerText ? visibleWidth(markerText) + 1 : 0; // leading space
+        widest = Math.max(widest, visibleWidth(primary) + markerW);
       }
     }
-    return Math.max(16, Math.min(34, widest + 2, Math.max(16, width - 12)));
+    // Reserve the 2-column prefix and room for a short trailing description.
+    const maxByWidth = Math.max(10, width - 2 - 14);
+    return Math.max(8, Math.min(34, widest + 2, maxByWidth));
   }
 
   private renderHeader(title: string, width: number): string {
     const text = ` ${title} `;
     const w = visibleWidth(text);
-    if (width <= w + 3) return this.theme.fg("accent", this.theme.bold(truncateToWidth(text, width, "")));
-    return (
+    if (width <= w + 3)
+      return this.fitLine(this.theme.fg("accent", this.theme.bold(truncateToWidth(text, Math.max(1, width), ""))), width);
+    return this.fitLine(
       this.theme.fg("accent", this.theme.bold(text)) +
-      this.theme.fg("dim", "─".repeat(Math.max(0, width - w)))
+        this.theme.fg("dim", "─".repeat(Math.max(0, width - w))),
+      width,
     );
   }
 
+  /** Marker text for a row ("" when the row has no marker). */
+  private static markerOf(marked: MccItem["marked"]): string {
+    if (typeof marked === "string") return marked;
+    return marked ? MCC_ACTIVE_MARKER : "";
+  }
+
+  /**
+   * Responsive row: primary + marker share ONE label column (the marker never
+   * widens the row), and the description only takes the width that is left.
+   */
   private renderItem(item: MccItem, selected: boolean, labelCol: number, width: number): string {
     const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
-    const markerText = typeof item.marked === "string" ? item.marked : item.marked ? MCC_ACTIVE_MARKER : "";
+    const prefixW = 2; // "→ " and "  " are both 2 display columns
+    const markerText = MccOverviewList.markerOf(item.marked);
+    const markerW = markerText ? visibleWidth(markerText) + 1 : 0; // leading space included
+
+    const primaryMax = Math.max(1, labelCol - markerW);
+    const primaryText = truncateToWidth(item.primary, primaryMax, "…");
+    const gapW = Math.max(0, labelCol - visibleWidth(primaryText) - markerW);
     const cell =
-      truncateToWidth(item.primary, labelCol, "", true) +
-      (markerText ? this.theme.fg("success", truncateToWidth(` ${markerText}`, Math.max(0, labelCol - visibleWidth(item.primary)), "", true)) : "");
+      primaryText +
+      " ".repeat(gapW) +
+      (markerText ? this.theme.fg("success", " " + markerText) : "");
+
+    const descBudget = width - prefixW - labelCol;
     let descPart = "";
-    if (item.description && width > 40) {
-      const remaining = width - 2 - labelCol;
-      if (remaining >= 10) descPart = this.theme.fg("muted", truncateToWidth(item.description, remaining));
+    if (item.description && descBudget >= 14) {
+      descPart = this.theme.fg("muted", truncateToWidth(item.description, descBudget, "…"));
     }
-    const line = prefix + cell + descPart;
+
+    const content = prefix + cell + descPart;
     if (selected) {
-      const padTo = Math.max(0, width - 2 - labelCol - visibleWidth(descPart));
-      return this.theme.bg("selectedBg", this.theme.bold(prefix + cell + descPart + " ".repeat(padTo)));
+      const padTo = Math.max(0, width - visibleWidth(content));
+      return this.fitLine(
+        this.theme.bg("selectedBg", this.theme.bold(content + " ".repeat(padTo))),
+        width,
+      );
     }
-    return line;
+    return this.fitLine(content, width);
   }
 
   private renderDisabled(disabled: MccDisabled, labelCol: number, width: number): string {
-    const cell = truncateToWidth(disabled.primary, labelCol, "", true);
-    let descPlain = "";
-    if (disabled.description && width > 40) {
-      const remaining = width - 2 - labelCol;
-      if (remaining >= 10) descPlain = truncateToWidth(disabled.description, remaining);
-    }
-    return this.theme.fg("dim", "  " + cell + descPlain);
+    const cell = truncateToWidth(disabled.primary, labelCol, "…", true);
+    const descBudget = width - 2 - labelCol;
+    const descPart =
+      disabled.description && descBudget >= 14
+        ? truncateToWidth(disabled.description, descBudget, "…")
+        : "";
+    return this.fitLine(this.theme.fg("dim", "  " + cell + descPart), width);
+  }
+
+  /** Final safety net: no rendered line may ever exceed the available width. */
+  private fitLine(line: string, width: number): string {
+    return visibleWidth(line) > width ? truncateToWidth(line, width, "") : line;
   }
 }
 
@@ -2036,6 +2101,7 @@ export default function (pi: ExtensionAPI) {
       const rs = loadReasoningState();
       const rr = resolveEffective(rs);
       results.push(`• Reasoning: default profile ${rs.defaultProfile} · effective ${rr.profile} @ ${rr.level}${rr.source === "execution" ? " (execution)" : ""}`);
+      results.push("• /model UI: ✓ responsive width-safe (dynamic columns + truncation on every rendered line)");
 
       const mcpPath = path.join(os.homedir(), ".config", "mcp", "mcp.json");
       if (fs.existsSync(mcpPath)) {
@@ -2188,12 +2254,15 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
 
         const picked = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
           const container = new Container();
-          container.addChild(new Text(theme.fg("accent", theme.bold("MODEL CONTROL CENTER")), 1, 0));
-          container.addChild(new Text(theme.fg("text", `Current model: ${modelLabel}`), 0, 0));
-          container.addChild(new Text(
-            theme.fg("dim", "Connectivity: UNVERIFIED — router discovery filtered by your visibility settings"),
-            0, 0,
-          ));
+          container.addChild(new WidthSafeText((w) => theme.fg("accent", theme.bold("MODEL CONTROL CENTER")), 1));
+          container.addChild(new WidthSafeText((w) => {
+            const label = w >= 60 ? "Current model" : "Model";
+            return theme.fg("text", `${label}: ${modelLabel}`);
+          }));
+          container.addChild(new WidthSafeText((w) => {
+            const detail = w >= 72 ? " — router discovery filtered by your visibility settings" : "";
+            return theme.fg("dim", `Connectivity: UNVERIFIED${detail}`);
+          }));
           container.addChild(new Text(
             resolved.source === "execution"
               ? theme.fg("warning", `Execution: ${resolved.profile} · ${resolved.level}`)
@@ -2206,7 +2275,7 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
           list.onCancel = () => done("__done__");
           container.addChild(list);
           container.addChild(new Spacer(1));
-          container.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter select · esc done"), 1, 0));
+          container.addChild(new WidthSafeText((w) => theme.fg("dim", w >= 46 ? "↑↓ navigate · enter select · esc done" : "↑↓ move · Enter · Esc"), 1));
           return {
             render: (w: number) => container.render(w),
             invalidate: () => container.invalidate(),
@@ -2262,13 +2331,18 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
             };
             return {
               render: (w: number) => [
-                theme.fg("accent", theme.bold("SELECT MODEL")),
-                theme.fg("dim", "Connectivity: UNVERIFIED"),
-                "",
-                ...list.render(w),
-                "",
-                filterLine,
-                theme.fg("dim", "↑↓ navigate · enter select · esc cancel"),
+                ...clampLines(
+                  [
+                    theme.fg("accent", theme.bold("SELECT MODEL")),
+                    theme.fg("dim", "Connectivity: UNVERIFIED"),
+                    "",
+                    ...list.render(w),
+                    "",
+                    filterLine,
+                    theme.fg("dim", w >= 46 ? "↑↓ navigate · enter select · esc cancel" : "↑↓ move · Enter · Esc"),
+                  ],
+                  w,
+                ),
               ],
               invalidate: () => list.invalidate(),
               handleInput: (data: string) => {

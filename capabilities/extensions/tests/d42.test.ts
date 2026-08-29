@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   MccOverviewList,
   PROFILE_GROUPS,
@@ -312,6 +313,69 @@ check("default marker renders with distinct color span", () => {
     "marker lacks own color span",
   );
   assert.match(stripAnsi(rendered).replace(/\s+/g, " "), /Task · medium ★default/);
+});
+
+check("OVERFLOW REGRESSION: no rendered line exceeds any terminal width", () => {
+  const longName = "bb-box/moonshotai/kimi-k3-blackbox-extremely-long-identifier-that-keeps-going-and-going";
+  const longDesc =
+    "An exceptionally long profile description used to prove that descriptions are clamped to the remaining width without breaking the row layout";
+  const sections: MccSection[] = [
+    {
+      title: "MODEL",
+      rows: [{ kind: "item", item: { value: "__model__", primary: `Select ${longName}`, description: longDesc } }],
+    },
+    {
+      title: "GENERAL",
+      rows: [
+        { kind: "item", item: { value: "p:Default", primary: `Default · ${longName}`, description: longDesc, marked: "★default" } },
+        { kind: "item", item: { value: "p:Task", primary: "Task · high", description: longDesc } },
+        { kind: "disabled", disabled: { primary: `Vision · ${longName}`, description: longDesc } },
+      ],
+    },
+    { title: "SPECIALIZED", rows: [{ kind: "item", item: { value: "p:Vision", primary: "Vision · low", description: "Visual reasoning" } }] },
+  ];
+
+  // Widths include the reported crash pair (204 terminal / 215 rendered) and
+  // deliberately hostile small/huge values.
+  for (const width of [8, 16, 24, 32, 40, 60, 80, 100, 120, 160, 200, 204, 215, 300, 400]) {
+    const list = new MccOverviewList(sections, themeStub, 14);
+    // Exercise every selectable row so the selected-row (background-padded)
+    // branch is covered at this width too.
+    const total = list.render(width).filter((l) => stripAnsi(l).trim().length > 0).length;
+    for (let i = 0; i < Math.max(total, 3); i++) {
+      for (const line of list.render(width)) {
+        assert.ok(
+          stripAnsi(line).replace(/\u001b\[[0-9;]*m/g, "").length <= width,
+          `line width ${visibleWidth(line)} > terminal ${width}: ${JSON.stringify(stripAnsi(line).slice(0, 60))}`,
+        );
+        assert.ok(visibleWidth(line) <= width, `ANSI-aware width ${visibleWidth(line)} > terminal ${width}`);
+      }
+      list.handleInput("\u001b[B");
+    }
+  }
+});
+
+check("OVERFLOW REGRESSION: unicode/marker rows stay within width", () => {
+  const sections: MccSection[] = [
+    {
+      title: "GENERAL",
+      rows: [
+        { kind: "item", item: { value: "p:Default", primary: "Default · high", description: "Normal interactions", marked: "★default" } },
+        { kind: "item", item: { value: "p:Vision", primary: "Vision · low", description: "Visual reasoning", marked: "●active" } },
+      ],
+    },
+  ];
+  for (const width of [20, 34, 48, 64, 96, 128, 204, 215]) {
+    const list = new MccOverviewList(sections, themeStub, 14);
+    list.handleInput("\u001b[B"); // select the second (marked) row
+    for (const line of list.render(width)) {
+      assert.ok(visibleWidth(line) <= width, `unicode row width ${visibleWidth(line)} > ${width}`);
+    }
+    // The marker must still be rendered (not silently dropped) when it fits.
+    if (width >= 48) {
+      assert.match(stripAnsi(list.render(width).join("\n")), /★default/);
+    }
+  }
 });
 
 check("viewport cap respected with scroll indicator", () => {
