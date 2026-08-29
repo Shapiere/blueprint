@@ -72,7 +72,7 @@ function sha(text) {
 
 function status() {
   const src = readTarget();
-  const applied = src.includes(MARKER);
+  const applied = src.includes(MARKER) && src.includes(PATCHED);
   console.log(`pi-coding-agent : ${pkgJson.version} @ ${pkgDir}`);
   console.log(`bridge          : ${applied ? "APPLIED" : "not applied"}`);
   console.log(`backup          : ${fs.existsSync(backup) ? sha(fs.readFileSync(backup, "utf-8")) : "(none)"}`);
@@ -85,13 +85,14 @@ function apply() {
     process.exit(1);
   }
   let src = readTarget();
-  if (src.includes(MARKER)) {
-    console.log("Already applied — nothing to do.");
-    return;
-  }
-  if (!src.includes(SIGNATURE)) {
+  // Validate structure FIRST (idempotence must never mask a mutated host).
+  if (!src.includes(SIGNATURE) && !src.includes(PATCHED)) {
     console.error("REFUSED: expected host structure not found (_emitModelSelect early-return signature changed).");
     process.exit(1);
+  }
+  if (src.includes(PATCHED)) {
+    console.log("Already applied — nothing to do.");
+    return;
   }
   if (!fs.existsSync(backup)) fs.writeFileSync(backup, src, "utf-8");
   src = src.replace(SIGNATURE, PATCHED);
@@ -110,11 +111,23 @@ function restore() {
   status();
 }
 
+// `verify` re-runs the safety checks without touching the host file.
+function verify() {
+  const supported = SUPPORTED_PREFIXES.some((p) => pkgJson.version.startsWith(p));
+  const src = readTarget();
+  const structural = src.includes(SIGNATURE) || src.includes(PATCHED);
+  console.log(`version    : ${pkgJson.version} ${supported ? "(supported)" : "(UNSUPPORTED)"}`);
+  console.log(`structure  : ${structural ? "recognized" : "UNRECOGNIZED"}`);
+  console.log(`bridge     : ${src.includes(PATCHED) ? "applied" : "not applied"}`);
+  if (!supported || !structural) process.exit(1);
+}
+
 const cmd = process.argv[2] ?? "status";
 if (cmd === "status") status();
+else if (cmd === "verify") verify();
 else if (cmd === "apply") apply();
 else if (cmd === "restore") restore();
 else {
-  console.error("Unknown command. Use: status | apply | restore");
+  console.error("Unknown command. Use: status | verify | apply | restore");
   process.exit(1);
 }

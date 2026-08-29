@@ -169,6 +169,7 @@ Pi skips `model_select` for same-model selections; the bridge makes them open th
 
 ```bash
 node capabilities/scripts/pi-model-bridge.mjs status   # report applied/version/backup
+node capabilities/scripts/pi-model-bridge.mjs verify   # non-mutating safety check (exit 1 if unsupported/structure changed)
 node capabilities/scripts/pi-model-bridge.mjs apply    # idempotent, version-guarded
 node capabilities/scripts/pi-model-bridge.mjs restore  # revert to pristine host file
 ```
