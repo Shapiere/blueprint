@@ -104,6 +104,7 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `fix`: D45 — `/model` width-overflow crash (`Rendered line 40 exceeds terminal width (215 > 204)`): dynamic column sizing, marker inside the label column, ANSI/Unicode-aware truncation, width-aware header/status/footer, final per-line clamp; overflow regression tests at widths 8–400 ([docs/DECISIONS.md](docs/DECISIONS.md) D45)
 - `feat`: D46 — `/model` control center visual refinement: table rows with dynamic columns, semantic level tones, MODEL/REASONING header hierarchy, responsive width-aware chrome/footers, subtle selection ([docs/DECISIONS.md](docs/DECISIONS.md) D46)
 - `feat`: D47 — `/model` navigation + detail architecture: two-pane control surface (stacked on narrow), focused CURRENT MODEL / PROFILE detail panels, SELECTED MODEL detail strip in the picker, selection-change wiring ([docs/DECISIONS.md](docs/DECISIONS.md) D47)
+- `feat`: D48 — `/model` scope/navigation architecture: PROVIDERS nav section, truthful provider counts, two-pane provider-scoped model browser, scope-aware titles, ✓ current marker ([docs/DECISIONS.md](docs/DECISIONS.md) D48)
 - `docs`: validation evidence — strict type-check PASS; 15-check regression suite PASS; live battery PASS (boot restore → footer ox-alpha; Vision high→low immediate; Set-Default persisted; workflow config-immutability; override prompt + Keep-strip)
 
  ## Notes

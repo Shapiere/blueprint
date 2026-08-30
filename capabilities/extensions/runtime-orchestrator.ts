@@ -1721,6 +1721,40 @@ function modelCaps(model: { reasoning?: boolean; input?: unknown[]; contextWindo
   };
 }
 
+/** Provider -> selectable model count from the availability snapshot. */
+export function providerCounts(specs: readonly string[]): Array<{ name: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const spec of specs) {
+    const provider = spec.split("/")[0];
+    counts.set(provider, (counts.get(provider) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+/** Scope-aware content title for the model list. */
+export function scopeTitle(provider: string | null): string {
+  return provider ? `${provider.toUpperCase()} MODELS` : "ALL MODELS";
+}
+
+/** Detail panel for a provider navigation row. */
+export function providerDetailLines(
+  provider: string,
+  count: number,
+  theme: Theme,
+  maxLines: number,
+): string[] {
+  return [
+    theme.fg("dim", "PROVIDER"),
+    theme.fg("text", theme.bold(provider)),
+    theme.fg("muted", `${count} selectable model${count === 1 ? "" : "s"}`),
+    theme.fg("muted", "Connectivity: Unverified"),
+    "",
+    theme.fg("dim", "Enter — browse models"),
+  ].slice(0, maxLines);
+}
+
 /** Detail panel for a highlighted model in the picker. */
 function pickedModelDetailLines(
   spec: string,
@@ -1995,10 +2029,11 @@ export class MccOverviewList implements Component {
       cols.name,
     );
     const levelText = MccOverviewList.levelOf(item.primary);
-    const levelCell = this.theme.fg(
-      levelTone(levelText),
-      " " + padCell(levelText || "—", Math.max(1, cols.level - 1)),
-    );
+    // Rows without a reasoning level (model/provider/action rows) keep an empty
+    // level cell instead of a decorative dash — only real levels are shown.
+    const levelCell = levelText
+      ? this.theme.fg(levelTone(levelText), " " + padCell(levelText, Math.max(1, cols.level - 1)))
+      : " ".repeat(cols.level);
     const descCell =
       item.description && cols.desc >= 14
         ? this.theme.fg("muted", truncateToWidth(item.description, cols.desc, "…"))
@@ -2028,6 +2063,160 @@ export class MccOverviewList implements Component {
   private fitLine(line: string, width: number): string {
     return visibleWidth(line) > width ? truncateToWidth(line, width, "") : line;
   }
+}
+
+/**
+ * Two-pane provider-scoped model browser. Left: provider navigation with real
+ * counts; right: the scoped, searchable model list. The detail strip below the
+ * list describes the highlighted model. Wide terminals render both panes side
+ * by side; narrow terminals stack them. Returns the picked spec or null.
+ */
+export async function openModelBrowser(
+  ctx: ExtensionContext,
+  modelLabel: string,
+  names: Record<string, string>,
+  initialProvider: string | null,
+): Promise<string | null> {
+  const allSpecs = sortModelsRouterFirst(listAvailableModelSpecsSafe(ctx));
+  if (allSpecs.length === 0) return null;
+  const providers = providerCounts(allSpecs);
+
+  return ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
+    let provider: string | null = initialProvider;
+    let focus: "providers" | "models" = "providers";
+    let filter = "";
+    let highlight: string | null = null;
+
+    const listTheme: SelectListTheme = {
+      selectedPrefix: (t) => theme.fg("accent", "→ "),
+      selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
+      description: (t) => theme.fg("muted", t),
+      scrollInfo: (t) => theme.fg("dim", t),
+      noMatch: (t) => theme.fg("warning", t),
+    };
+
+    const makeProvidersList = () => {
+      const items: SelectItem[] = [
+        { value: "__all__", label: "All providers", description: `${allSpecs.length} model${allSpecs.length === 1 ? "" : "s"}` },
+        ...providers.map((p) => ({
+          value: p.name,
+          label: p.name,
+          description: `${p.count} model${p.count === 1 ? "" : "s"}`,
+        })),
+      ];
+      const l = new SelectList(items, 12, listTheme);
+      l.onSelect = (item) => {
+        provider = item.value === "__all__" ? null : item.value;
+        focus = "models";
+        models = makeModelsList();
+        tui.requestRender();
+      };
+      l.onCancel = () => done(null);
+      return l;
+    };
+
+    const makeModelsList = () => {
+      const scoped = provider ? allSpecs.filter((s) => s.startsWith(`${provider}/`)) : allSpecs;
+      const pool = filter
+        ? fuzzyFilter(scoped, filter.toLowerCase(), (s) => `${s} ${names[s] ?? ""}`.toLowerCase())
+        : scoped;
+      const items: SelectItem[] = pool.map((s) => ({
+        value: s,
+        label: `${s === modelLabel ? "✓ " : ""}${names[s] ?? s}`,
+        description: names[s] && names[s] !== s ? s : undefined,
+      }));
+      const l = new SelectList(items, 12, listTheme);
+      l.onSelect = (item) => done(item.value);
+      l.onCancel = () => {
+        // Esc in the model pane returns to provider navigation.
+        focus = "providers";
+      };
+      l.onSelectionChange = (item) => {
+        highlight = item.value;
+      };
+      return l;
+    };
+
+    let providersList = makeProvidersList();
+    let models = makeModelsList();
+
+    return {
+      render: (w: number) => {
+        const title = scopeTitle(provider);
+        const head = [
+          theme.fg("accent", theme.bold("MODEL BROWSER")),
+          theme.fg("text", theme.bold(title)),
+          theme.fg("dim", `Current  ${shortModel(modelLabel, Math.max(16, w - 10))}`),
+        ];
+        const detail = highlight
+          ? ["", ...pickedModelDetailLines(highlight, () => ctx.modelRegistry.getAvailable(), modelLabel, theme, 6)]
+          : [];
+        const filterLine = theme.fg("dim", filter ? `filter: ${filter}` : "type to search (name · id · provider)");
+        const footer = theme.fg(
+          "dim",
+          w >= 76
+            ? "↑↓ move   ←→ switch pane   type search   enter select   esc back"
+            : "↑↓ · ←→ · type · enter · esc",
+        );
+        if (w >= 100) {
+          const leftW = Math.max(22, Math.min(30, Math.floor(w * 0.3)));
+          const rightW = Math.max(10, w - leftW - 2);
+          const left = clampLines(providersList.render(leftW), leftW);
+          const right = clampLines(models.render(rightW), rightW);
+          const rows = Math.max(left.length, right.length);
+          const panes: string[] = [];
+          for (let i = 0; i < rows; i++) {
+            const l = left[i] ?? "";
+            const r = right[i] ?? "";
+            const pad = " ".repeat(Math.max(1, leftW - visibleWidth(l)));
+            panes.push(visibleWidth(l + pad + r) > w ? truncateToWidth(l + pad + r, w, "") : l + pad + r);
+          }
+          return clampLines([...head, "", ...panes, ...detail, "", filterLine, footer], w);
+        }
+        return clampLines(
+          [
+            ...head,
+            "",
+            ...clampLines(providersList.render(w), w),
+            "",
+            ...clampLines(models.render(w), w),
+            ...detail,
+            "",
+            filterLine,
+            footer,
+          ],
+          w,
+        );
+      },
+      invalidate: () => {
+        providersList.invalidate();
+        models.invalidate();
+      },
+      handleInput: (data: string) => {
+        // Focus switching between panes.
+        if (data === "\x1b[C") {
+          focus = "models";
+        } else if (data === "\x1b[D") {
+          focus = "providers";
+        } else if (!data.startsWith("\x1b") && data.length >= 1 && data >= " " && data <= "~") {
+          filter += data;
+          models = makeModelsList();
+          tui.requestRender();
+          return;
+        } else if (data === "\x7f" || data === "\b" || data === "\x1b[3~") {
+          filter = filter.slice(0, -1);
+          models = makeModelsList();
+          tui.requestRender();
+          return;
+        } else if (focus === "models" && data === "\x1b") {
+          focus = "providers";
+        } else {
+          (focus === "providers" ? providersList : models).handleInput(data);
+        }
+        tui.requestRender();
+      },
+    };
+  });
 }
 
 export default function (pi: ExtensionAPI) {
@@ -2481,6 +2670,16 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
           }
           sections.push({ title: g.title, rows });
         }
+        // PROVIDERS navigation: truthful counts from the selectable catalog.
+        const providerRows: MccRow[] = providerCounts(listAvailableModelSpecsSafe(ctx)).map((p) => ({
+          kind: "item" as const,
+          item: {
+            value: `provider:${p.name}`,
+            primary: `${p.name}`,
+            description: `${p.count} model${p.count === 1 ? "" : "s"}`,
+          },
+        }));
+        sections.push({ title: "PROVIDERS", rows: providerRows });
         sections.push({
           title: "",
           rows: [{ kind: "item", item: { value: "__done__", primary: "Done", description: "Save & exit" } }],
@@ -2523,6 +2722,11 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
               if (!sel) return [];
               if (sel.value === "__model__") return modelDetailLines(modelLabel, ctx.model, theme, maxLines);
               if (sel.value === "__done__") return [theme.fg("muted", "Done — save & exit")];
+              if (sel.value.startsWith("provider:")) {
+                const pname = sel.value.slice("provider:".length);
+                const pc = providerCounts(listAvailableModelSpecsSafe(ctx)).find((p) => p.name === pname);
+                return providerDetailLines(pname, pc?.count ?? 0, theme, maxLines);
+              }
               const profile = profileByValue[sel.value];
               return profile ? profileDetailLines(profile, state, resolved, theme, maxLines) : [];
             },
@@ -2543,83 +2747,14 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
 
         if (picked === null || picked === "__done__") return;
 
-        if (picked === "__model__") {
-          const specs = sortModelsRouterFirst(listAvailableModelSpecsSafe(ctx));
-          if (specs.length === 0) {
-            ctx.ui.notify("No selectable models available.", "warning");
-            continue;
-          }
+        if (picked === "__model__" || picked.startsWith("provider:")) {
+          // Model browser: provider scope from the nav row (or all when the
+          // "Select model…" row is used), searchable, with selected detail.
+          const initialProvider = picked.startsWith("provider:")
+            ? picked.slice("provider:".length)
+            : null;
           const names = loadModelsVisibility().names;
-          const pickedSpec = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
-            const makeList = (pool: string[]) => {
-              const l = new SelectList(
-                pool.map((s) => {
-                  const display = names[s];
-                  return {
-                    value: s,
-                    label: display ?? s,
-                    description: display ? s : undefined,
-                  } as SelectItem;
-                }),
-                12,
-                {
-                  selectedPrefix: (t) => theme.fg("accent", "→ "),
-                  selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
-                  description: (t) => theme.fg("muted", t),
-                  scrollInfo: (t) => theme.fg("dim", t),
-                  noMatch: (t) => theme.fg("warning", t),
-                },
-              );
-              l.onSelect = (item) => done(item.value);
-              l.onCancel = () => done(null);
-              l.onSelectionChange = (item) => {
-                highlight = item.value;
-              };
-              return l;
-            };
-            let highlight: string = specs[0] ?? "";
-            let list = makeList(specs);
-            let filter = "";
-            let filterLine = theme.fg("dim", "type to filter (name · id · provider)");
-            const applyFilter = () => {
-              const pool = filter
-                ? fuzzyFilter(specs, filter.toLowerCase(), (s) => `${s} ${names[s] ?? ""}`.toLowerCase())
-                : specs;
-              list = makeList(pool);
-              filterLine = theme.fg("dim", filter ? `filter: ${filter} (${pool.length}/${specs.length})` : "type to filter (name · id · provider)");
-            };
-            return {
-              render: (w: number) => [
-                ...clampLines(
-                  [
-                    theme.fg("accent", theme.bold("SELECT MODEL")),
-                    theme.fg("dim", `Current  ${shortModel(modelLabel, Math.max(16, w - 10))}`),
-                    "",
-                    ...list.render(w),
-                    "",
-                    ...pickedModelDetailLines(highlight, () => ctx.modelRegistry.getAvailable(), modelLabel, theme, 8),
-                    "",
-                    filterLine,
-                    theme.fg("dim", w >= 46 ? "↑↓ Navigate   Type Search   Enter Select   Esc Back" : "↑↓ · Type · Enter · Esc"),
-                  ],
-                  w,
-                ),
-              ],
-              invalidate: () => list.invalidate(),
-              handleInput: (data: string) => {
-                if (!data.startsWith("\x1b") && data.length >= 1 && data >= " " && data <= "~") {
-                  filter += data;
-                  applyFilter();
-                } else if (data === "\x7f" || data === "\b" || data === "\x1b[3~") {
-                  filter = filter.slice(0, -1);
-                  applyFilter();
-                } else {
-                  list.handleInput(data);
-                }
-                tui.requestRender();
-              },
-            };
-          });
+          const pickedSpec = await openModelBrowser(ctx, modelLabel, names, initialProvider);
           if (!pickedSpec) continue;
           const [prov, ...rest] = pickedSpec.split("/");
           const target = ctx.modelRegistry.getAvailable().find((mm) => mm.provider === prov && mm.id === rest.join("/"));

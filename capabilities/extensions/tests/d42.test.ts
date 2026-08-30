@@ -16,6 +16,8 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   MccOverviewList,
   NavDetailPane,
+  providerCounts,
+  scopeTitle,
   PROFILE_GROUPS,
   PROFILE_DESCRIPTIONS,
   REASONING_PROFILES,
@@ -491,6 +493,35 @@ check("NAV+DETAIL: navigation updates the focused detail", () => {
   assert.match(flat(pane.render(120)), /TASK.*high/);
   list.handleInput("\u001b[B"); // Review
   assert.match(flat(pane.render(120)), /REVIEW.*high/);
+});
+
+check("D48 SCOPE: provider counts are truthful and sorted", () => {
+  const specs = [
+    "9router/a", "9router/b", "9router/c",
+    "deepseek/x",
+    "9router/d",
+    "google/y", "google/z",
+  ];
+  const counts = providerCounts(specs);
+  assert.deepEqual(counts, [
+    { name: "9router", count: 4 },
+    { name: "google", count: 2 },
+    { name: "deepseek", count: 1 },
+  ]);
+  // Empty catalog yields no providers.
+  assert.deepEqual(providerCounts([]), []);
+});
+
+check("D48 SCOPE: scope title reflects the active provider", () => {
+  assert.equal(scopeTitle(null), "ALL MODELS");
+  assert.equal(scopeTitle("9router"), "9ROUTER MODELS");
+  assert.equal(scopeTitle("deepseek"), "DEEPSEEK MODELS");
+});
+
+check("D48 SCOPE: provider counts derive only from selectable specs", () => {
+  // A spec outside the visibility-scoped availability snapshot is not counted.
+  const visible = providerCounts(["9router/a", "9router/b"]);
+  assert.deepEqual(visible, [{ name: "9router", count: 2 }]);
 });
 
 check("viewport cap respected with scroll indicator", () => {

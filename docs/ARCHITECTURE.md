@@ -336,3 +336,8 @@ The `/model` control surface uses a consistent visual language: MODEL/REASONING 
 ### D47 addendum — navigation + detail architecture (2026-08-25)
 
 The `/model` control center is a navigation + detail surface: the profile/model list renders in a left column (stacked below width 100) while a focused detail panel explains the selected row (CURRENT MODEL: label/provider/ctx/capabilities; PROFILE: purpose/level/state/actions; picker: SELECTED MODEL strip). `NavDetailPane` composes existing primitives; every new line stays width-clamped.
+
+
+### D48 addendum — scope/navigation architecture (2026-08-25)
+
+The `/model` surface is organized around scope: a PROVIDERS navigation section (truthful selectable counts) sits beside the profile navigation in the overview, and the model picker is a two-pane provider-scoped browser (provider scope | scoped, searchable model list) with scope-aware titles (`9ROUTER MODELS` / `ALL MODELS`), a `✓` current-model marker, and a selected-model detail strip. Non-profile rows no longer render a decorative level dash.
