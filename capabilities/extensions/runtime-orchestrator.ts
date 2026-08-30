@@ -1673,56 +1673,189 @@ export function panelLines(title: string, lines: readonly string[], width: numbe
  * column); on narrow terminals the layout stacks. Both sides are width-safe
  * by construction (D45 invariant).
  */
-export class NavDetailPane implements Component {
-  private detailLines: string[] = [];
+/**
+ * Three-region Model Control Surface (D50).
+ *
+ *   NAVIGATION | MODELS | DETAIL   (wide >= 140)
+ *   NAVIGATION | MODELS            (medium 100-139; detail below models)
+ *   NAVIGATION -> MODELS -> DETAIL (narrow < 100, stacked)
+ *
+ * Detail always follows the focused pane:
+ *   focus = NAVIGATION -> profile/provider detail
+ *   focus = MODELS     -> selected model detail
+ * Provider selection scopes the model list; search filters within scope.
+ * Width-safety: every emitted line is clamped (D45).
+ */
+export class ModelControlSurface implements Component {
+  focus: "nav" | "models";
+  provider: string | null;
+  filter: string;
+  private nav: MccOverviewList;
+  private models: SelectList;
+  private highlight: string | null = null;
+  onSelectModel?: (spec: string) => void;
+  onEditProfile?: (profile: string) => void;
+  onClose?: () => void;
+
   constructor(
-    private readonly nav: MccOverviewList,
-    private readonly buildDetail: (width: number) => string[],
-    private readonly maxLines = 14,
+    private readonly sections: readonly MccSection[],
+    private readonly theme: Theme,
+    private readonly allSpecs: string[],
+    private readonly names: Record<string, string>,
+    private readonly modelLabel: string,
+    private readonly getAvailable: () => Array<{ provider: string; id: string; reasoning?: boolean; input?: unknown[]; contextWindow?: number }>,
+    private readonly detailFor: (focus: "nav" | "models", navSel: MccItem | null, highlight: string | null, width: number) => string[],
+    state: { focus: "nav" | "models"; provider: string | null; filter: string },
   ) {
-    nav.onSelectionChange = () => this.refreshDetail();
-    this.refreshDetail();
+    this.focus = state.focus;
+    this.provider = state.provider;
+    this.filter = state.filter;
+    this.nav = new MccOverviewList(sections, theme, 14);
+    this.nav.onSelect = (value) => this.handleNavSelect(value);
+    this.nav.onCancel = () => this.onClose?.();
+    this.models = this.buildModels();
   }
+
   invalidate(): void {
     this.nav.invalidate();
-    this.refreshDetail();
+    this.models.invalidate();
   }
+
+  private handleNavSelect(value: string): void {
+    if (value.startsWith("provider:")) {
+      this.provider = value.slice("provider:".length);
+      this.focus = "models";
+      this.filter = "";
+      this.models = this.buildModels();
+    } else if (value.startsWith("profile:")) {
+      this.onEditProfile?.(value);
+    } else if (value === "__done__") {
+      this.onClose?.();
+    }
+  }
+
+  private listTheme(): SelectListTheme {
+    const theme = this.theme;
+    return {
+      selectedPrefix: (t) => theme.fg("accent", "→ "),
+      selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
+      description: (t) => theme.fg("muted", t),
+      scrollInfo: (t) => theme.fg("dim", t),
+      noMatch: (t) => theme.fg("warning", t),
+    };
+  }
+
+  private buildModels(): SelectList {
+    const scoped = this.provider
+      ? this.allSpecs.filter((spec) => spec.startsWith(`${this.provider}/`))
+      : this.allSpecs;
+    const pool = this.filter
+      ? fuzzyFilter(scoped, this.filter.toLowerCase(), (spec) => `${spec} ${this.names[spec] ?? ""}`.toLowerCase())
+      : scoped;
+    const items: SelectItem[] = pool.map((spec) => ({
+      value: spec,
+      label: `${spec === this.modelLabel ? "✓ " : ""}${this.names[spec] ?? spec}`,
+      description: this.names[spec] && this.names[spec] !== spec ? spec : undefined,
+    }));
+    // Initialize the highlight to the first scoped model so the detail panel
+    // has content the moment the models pane gains focus.
+    if (pool.length > 0 && (!this.highlight || !pool.includes(this.highlight))) {
+      this.highlight = pool[0];
+    }
+    const l = new SelectList(items, 12, this.listTheme());
+    l.onSelect = (item) => this.onSelectModel?.(item.value);
+    l.onCancel = () => {
+      // Esc in the model pane returns to navigation.
+      this.focus = "nav";
+    };
+    l.onSelectionChange = (item) => {
+      this.highlight = item.value;
+    };
+    return l;
+  }
+
   handleInput(data: string): void {
-    this.nav.handleInput(data);
-    this.refreshDetail();
+    if (data === "\x1b[C") {
+      this.focus = "models";
+    } else if (data === "\x1b[D") {
+      this.focus = "nav";
+    } else if (this.focus === "models") {
+      if (!data.startsWith("\x1b") && data.length >= 1 && data >= " " && data <= "~") {
+        this.filter += data;
+        this.models = this.buildModels();
+      } else if (data === "\x7f" || data === "\b" || data === "\x1b[3~") {
+        this.filter = this.filter.slice(0, -1);
+        this.models = this.buildModels();
+      } else if (data === "\x1b") {
+        this.focus = "nav";
+      } else {
+        this.models.handleInput(data);
+      }
+    } else {
+      this.nav.handleInput(data);
+    }
   }
-  private refreshDetail(): void {
-    this.detailLines = this.buildDetail(this.maxLines);
-  }
+
   render(width: number): string[] {
-    if (width < 100) {
-      // Stacked: navigation, then detail below.
+    const wide = width >= 140;
+    const medium = width >= 100;
+    const navSel = this.nav.getSelectedItem();
+    const detailLines =
+      this.focus === "models"
+        ? this.detailFor("models", navSel, this.highlight, width)
+        : this.detailFor("nav", navSel, this.highlight, width);
+
+    if (!wide && !medium) {
+      // Stacked: nav, then models, then detail.
       return [
         ...clampLines(this.nav.render(width), width),
         "",
-        ...clampLines(this.detailLines, width),
+        ...panelLines("MODELS", clampLines(this.models.render(width), width), width, this.theme),
+        "",
+        ...clampLines(detailLines, width),
       ];
     }
-    // Two-pane: navigation left (~40%), a subtle divider, detail right.
-    const navW = Math.max(24, Math.min(44, Math.floor(width * 0.4)));
-    const divider = "│";
-    const detailW = Math.max(10, width - navW - 2);
+
+    const navW = Math.max(24, Math.min(46, Math.floor(width * (wide ? 0.34 : 0.42))));
+    const modelsW = Math.max(20, Math.floor((width - navW) * (wide ? 0.58 : 1)));
+    const detailW = wide ? Math.max(10, width - navW - modelsW - 4) : modelsW;
+
     const navLines = this.nav.render(navW);
-    const rows = Math.max(navLines.length, this.detailLines.length);
+    const modelLines = this.models.render(wide ? modelsW : modelsW);
+    const detailClamped = clampLines(detailLines, detailW);
+
+    if (wide) {
+      // Three columns: nav | models | detail
+      const rows = Math.max(navLines.length, modelLines.length, detailClamped.length);
+      const out: string[] = [];
+      for (let i = 0; i < rows; i++) {
+        const l = navLines[i] ?? "";
+        const m = modelLines[i] ?? "";
+        const d = detailClamped[i] ?? "";
+        const lp = " ".repeat(Math.max(1, navW - visibleWidth(l)));
+        const mp = " ".repeat(Math.max(1, modelsW - visibleWidth(m)));
+        const line = l + lp + "│" + m + mp + "│" + d;
+        out.push(visibleWidth(line) > width ? truncateToWidth(line, width, "") : line);
+      }
+      return clampLines(out, width);
+    }
+
+    // Medium: nav | models, detail stacked under models.
+    const rows = Math.max(navLines.length, modelLines.length);
     const out: string[] = [];
     for (let i = 0; i < rows; i++) {
-      const left = navLines[i] ?? "";
-      const leftW = visibleWidth(left);
-      const right = this.detailLines[i] ?? "";
-      const pad = leftW < navW ? " ".repeat(navW - leftW) : "";
-      const line = left + pad + divider + (right ? " " + right : "");
+      const l = navLines[i] ?? "";
+      const m = modelLines[i] ?? "";
+      const lp = " ".repeat(Math.max(1, navW - visibleWidth(l)));
+      const line = l + lp + "│" + m;
       out.push(visibleWidth(line) > width ? truncateToWidth(line, width, "") : line);
     }
-    return out;
+    out.push("");
+    out.push(...detailClamped);
+    return clampLines(out, width);
   }
 }
 
-/** Compact capability summary of a session model for detail panels. */
 function modelCaps(model: { reasoning?: boolean; input?: unknown[]; contextWindow?: number }): {
   reasoning: boolean;
   vision: boolean;
@@ -1763,9 +1896,10 @@ export function providerDetailLines(
     theme.fg("dim", "PROVIDER"),
     theme.fg("text", theme.bold(provider)),
     theme.fg("muted", `${count} selectable model${count === 1 ? "" : "s"}`),
+    theme.fg("muted", "Availability: Configured / available to Pi"),
     theme.fg("muted", "Connectivity: Unverified"),
     "",
-    theme.fg("dim", "Enter — browse models"),
+    theme.fg("dim", "Enter — Browse models"),
   ].slice(0, maxLines);
 }
 
@@ -2077,160 +2211,6 @@ export class MccOverviewList implements Component {
   private fitLine(line: string, width: number): string {
     return visibleWidth(line) > width ? truncateToWidth(line, width, "") : line;
   }
-}
-
-/**
- * Two-pane provider-scoped model browser. Left: provider navigation with real
- * counts; right: the scoped, searchable model list. The detail strip below the
- * list describes the highlighted model. Wide terminals render both panes side
- * by side; narrow terminals stack them. Returns the picked spec or null.
- */
-export async function openModelBrowser(
-  ctx: ExtensionContext,
-  modelLabel: string,
-  names: Record<string, string>,
-  initialProvider: string | null,
-): Promise<string | null> {
-  const allSpecs = sortModelsRouterFirst(listAvailableModelSpecsSafe(ctx));
-  if (allSpecs.length === 0) return null;
-  const providers = providerCounts(allSpecs);
-
-  return ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
-    let provider: string | null = initialProvider;
-    let focus: "providers" | "models" = "providers";
-    let filter = "";
-    let highlight: string | null = null;
-
-    const listTheme: SelectListTheme = {
-      selectedPrefix: (t) => theme.fg("accent", "→ "),
-      selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
-      description: (t) => theme.fg("muted", t),
-      scrollInfo: (t) => theme.fg("dim", t),
-      noMatch: (t) => theme.fg("warning", t),
-    };
-
-    const makeProvidersList = () => {
-      const items: SelectItem[] = [
-        { value: "__all__", label: "All providers", description: `${allSpecs.length} model${allSpecs.length === 1 ? "" : "s"}` },
-        ...providers.map((p) => ({
-          value: p.name,
-          label: p.name,
-          description: `${p.count} model${p.count === 1 ? "" : "s"}`,
-        })),
-      ];
-      const l = new SelectList(items, 12, listTheme);
-      l.onSelect = (item) => {
-        provider = item.value === "__all__" ? null : item.value;
-        focus = "models";
-        models = makeModelsList();
-        tui.requestRender();
-      };
-      l.onCancel = () => done(null);
-      return l;
-    };
-
-    const makeModelsList = () => {
-      const scoped = provider ? allSpecs.filter((s) => s.startsWith(`${provider}/`)) : allSpecs;
-      const pool = filter
-        ? fuzzyFilter(scoped, filter.toLowerCase(), (s) => `${s} ${names[s] ?? ""}`.toLowerCase())
-        : scoped;
-      const items: SelectItem[] = pool.map((s) => ({
-        value: s,
-        label: `${s === modelLabel ? "✓ " : ""}${names[s] ?? s}`,
-        description: names[s] && names[s] !== s ? s : undefined,
-      }));
-      const l = new SelectList(items, 12, listTheme);
-      l.onSelect = (item) => done(item.value);
-      l.onCancel = () => {
-        // Esc in the model pane returns to provider navigation.
-        focus = "providers";
-      };
-      l.onSelectionChange = (item) => {
-        highlight = item.value;
-      };
-      return l;
-    };
-
-    let providersList = makeProvidersList();
-    let models = makeModelsList();
-
-    return {
-      render: (w: number) => {
-        const title = scopeTitle(provider);
-        const head = [
-          theme.fg("accent", theme.bold("MODEL BROWSER")),
-          theme.fg("text", theme.bold(title)),
-          theme.fg("dim", `Current  ${shortModel(modelLabel, Math.max(16, w - 10))}`),
-        ];
-        const detail = highlight
-          ? ["", ...pickedModelDetailLines(highlight, () => ctx.modelRegistry.getAvailable(), modelLabel, theme, 6)]
-          : [];
-        const filterLine = theme.fg("dim", filter ? `filter: ${filter}` : "type to search (name · id · provider)");
-        const footer = theme.fg(
-          "dim",
-          w >= 76
-            ? "↑↓ move   ←→ switch pane   type search   enter select   esc back"
-            : "↑↓ · ←→ · type · enter · esc",
-        );
-        if (w >= 100) {
-          const leftW = Math.max(22, Math.min(30, Math.floor(w * 0.3)));
-          const rightW = Math.max(10, w - leftW - 2);
-          const left = clampLines(providersList.render(leftW), leftW);
-          const right = clampLines(models.render(rightW), rightW);
-          const rows = Math.max(left.length, right.length);
-          const panes: string[] = [];
-          for (let i = 0; i < rows; i++) {
-            const l = left[i] ?? "";
-            const r = right[i] ?? "";
-            const pad = " ".repeat(Math.max(1, leftW - visibleWidth(l)));
-            panes.push(visibleWidth(l + pad + r) > w ? truncateToWidth(l + pad + r, w, "") : l + pad + r);
-          }
-          return clampLines([...head, "", ...panes, ...detail, "", filterLine, footer], w);
-        }
-        return clampLines(
-          [
-            ...head,
-            "",
-            ...clampLines(providersList.render(w), w),
-            "",
-            ...clampLines(models.render(w), w),
-            ...detail,
-            "",
-            filterLine,
-            ...footer,
-          ],
-          w,
-        );
-      },
-      invalidate: () => {
-        providersList.invalidate();
-        models.invalidate();
-      },
-      handleInput: (data: string) => {
-        // Focus switching between panes.
-        if (data === "\x1b[C") {
-          focus = "models";
-        } else if (data === "\x1b[D") {
-          focus = "providers";
-        } else if (!data.startsWith("\x1b") && data.length >= 1 && data >= " " && data <= "~") {
-          filter += data;
-          models = makeModelsList();
-          tui.requestRender();
-          return;
-        } else if (data === "\x7f" || data === "\b" || data === "\x1b[3~") {
-          filter = filter.slice(0, -1);
-          models = makeModelsList();
-          tui.requestRender();
-          return;
-        } else if (focus === "models" && data === "\x1b") {
-          focus = "providers";
-        } else {
-          (focus === "providers" ? providersList : models).handleInput(data);
-        }
-        tui.requestRender();
-      },
-    };
-  });
 }
 
 export default function (pi: ExtensionAPI) {
@@ -2644,207 +2624,205 @@ export default function (pi: ExtensionAPI) {
 }
 
 
-/** The unified Model Control Center flow: visibility-aware picker → profiles → levels. */
+/** The unified Model Control Center flow (D50): one surface, scope + profiles. */
 async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-    for (;;) {
-        const state = loadReasoningState();
-        const resolved = resolveEffective(state);
-        const isPlaceholder =
-          !!ctx.model && ctx.model.provider === "unknown" && ctx.model.id === "unknown";
-        const modelLabel =
-          isPlaceholder || !ctx.model ? "(none — choose below)" : `${ctx.model.provider}/${ctx.model.id}`;
-        const supportsVision =
-          !!ctx.model && !isPlaceholder &&
-          Array.isArray(ctx.model.input) && ctx.model.input.includes("image");
+  const surfaceState = { focus: "nav" as "nav" | "models", provider: null as string | null, filter: "" };
+  for (;;) {
+    const state = loadReasoningState();
+    const resolved = resolveEffective(state);
+    const isPlaceholder =
+      !!ctx.model && ctx.model.provider === "unknown" && ctx.model.id === "unknown";
+    const modelLabel =
+      isPlaceholder || !ctx.model ? "(none — choose below)" : `${ctx.model.provider}/${ctx.model.id}`;
+    const supportsVision =
+      !!ctx.model && !isPlaceholder &&
+      Array.isArray(ctx.model.input) && ctx.model.input.includes("image");
+    const allSpecs = sortModelsRouterFirst(listAvailableModelSpecsSafe(ctx));
+    const names = loadModelsVisibility().names;
 
-        const profileByValue: Record<string, ReasoningProfileName> = {};
-        const sections: MccSection[] = [
-          { title: "MODEL", rows: [{ kind: "item", item: { value: "__model__", primary: "Select model…" } }] },
-        ];
-        for (const g of PROFILE_GROUPS) {
-          const rows: MccRow[] = [];
-          for (const name of g.items) {
-            if (name === "Vision" && !supportsVision) {
-              rows.push({
-                kind: "disabled",
-                disabled: { primary: `${name} · unavailable`, description: "current model has no image input" },
-              });
-              continue;
-            }
-            profileByValue[mccProfileValue(name)] = name;
-            rows.push({
-              kind: "item",
-              item: {
-                value: mccProfileValue(name),
-                primary: `${name} · ${state.profiles[name]}`,
-                description: PROFILE_DESCRIPTIONS[name],
-                marked: state.defaultProfile === name ? "★default" : undefined,
-              },
-            });
-          }
-          sections.push({ title: g.title, rows });
+    const profileByValue: Record<string, ReasoningProfileName> = {};
+    const sections: MccSection[] = [];
+    for (const g of PROFILE_GROUPS) {
+      const rows: MccRow[] = [];
+      for (const name of g.items) {
+        if (name === "Vision" && !supportsVision) {
+          rows.push({ kind: "disabled", disabled: { primary: `${name} · unavailable`, description: "current model has no image input" } });
+          continue;
         }
-        // PROVIDERS navigation: truthful counts from the selectable catalog.
-        const providerRows: MccRow[] = providerCounts(listAvailableModelSpecsSafe(ctx)).map((p) => ({
-          kind: "item" as const,
+        profileByValue[mccProfileValue(name)] = name;
+        rows.push({
+          kind: "item",
           item: {
-            value: `provider:${p.name}`,
-            primary: `${p.name}`,
-            description: `${p.count} model${p.count === 1 ? "" : "s"}`,
+            value: mccProfileValue(name),
+            primary: `${name} · ${state.profiles[name]}`,
+            description: PROFILE_DESCRIPTIONS[name],
+            marked: state.defaultProfile === name ? "★default" : undefined,
           },
-        }));
-        sections.push({ title: "PROVIDERS", rows: providerRows });
-        sections.push({
-          title: "",
-          rows: [{ kind: "item", item: { value: "__done__", primary: "Done", description: "Save & exit" } }],
         });
+      }
+      sections.push({ title: g.title, rows });
+    }
+    // PROVIDERS: configured rows (selectable, truthful counts) + registered-but-
+    // unconfigured rows (dimmed, non-selectable). Never claim upstream auth.
+    const configured = providerCounts(allSpecs);
+    const configuredNames = new Set(configured.map((c) => c.name));
+    const providerRows: MccRow[] = configured.map((p) => ({
+      kind: "item" as const,
+      item: { value: `provider:${p.name}`, primary: `${p.name}`, description: `${p.count} model${p.count === 1 ? "" : "s"}` },
+    }));
+    for (const registered of ctx.modelRegistry.getRegisteredProviderIds() ?? []) {
+      if (!configuredNames.has(registered)) {
+        providerRows.push({ kind: "disabled" as const, disabled: { primary: `○ ${registered}`, description: "registered · not configured" } });
+      }
+    }
+    sections.push({ title: "PROVIDERS", rows: providerRows });
 
-        const picked = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
-          const list = new MccOverviewList(sections, theme, 14);
-          list.onSelect = (value) => done(value);
-          list.onCancel = () => done("__done__");
-          // Navigation + detail: the right panel explains the focused row.
-          const pane = new NavDetailPane(
-            list,
-            (maxLines) => {
-              const sel = list.getSelectedItem();
-              if (!sel) return [];
-              if (sel.value === "__model__") return modelDetailLines(modelLabel, ctx.model, theme, maxLines);
-              if (sel.value === "__done__") return [theme.fg("muted", "Done — save & exit")];
-              if (sel.value.startsWith("provider:")) {
-                const pname = sel.value.slice("provider:".length);
-                const pc = providerCounts(listAvailableModelSpecsSafe(ctx)).find((p) => p.name === pname);
-                return providerDetailLines(pname, pc?.count ?? 0, theme, maxLines);
-              }
-              const profile = profileByValue[sel.value];
-              return profile ? profileDetailLines(profile, state, resolved, theme, maxLines) : [];
-            },
-            14,
-          );
+    const result = await ctx.ui.custom<
+      { kind: "model"; spec: string } | { kind: "profile"; profile: string } | null
+    >((tui, theme, _kb, done) => {
+      const surface = new ModelControlSurface(
+        sections,
+        theme,
+        allSpecs,
+        names,
+        modelLabel,
+        () => ctx.modelRegistry.getAvailable(),
+        (focus, navSel, highlight, width) => {
+          // Detail follows the focused pane.
+          if (focus === "models" && highlight) {
+            return pickedModelDetailLines(highlight, () => ctx.modelRegistry.getAvailable(), modelLabel, theme, 14);
+          }
+          if (!navSel) return [];
+          if (navSel.value.startsWith("provider:")) {
+            const pname = navSel.value.slice("provider:".length);
+            const pc = providerCounts(allSpecs).find((p) => p.name === pname);
+            return providerDetailLines(pname, pc?.count ?? 0, theme, 14);
+          }
+          const profile = profileByValue[navSel.value];
+          return profile ? profileDetailLines(profile, state, resolved, theme, 14) : [];
+        },
+        surfaceState,
+      );
+      surface.onSelectModel = (spec) => done({ kind: "model", spec });
+      surface.onEditProfile = (value) => done({ kind: "profile", profile: value });
+      surface.onClose = () => done(null);
 
-          return {
-            render: (w: number) =>
-              clampLines(
+      return {
+        render: (w: number) =>
+          clampLines(
+            [
+              theme.fg("accent", theme.bold("MODEL CONTROL CENTER")),
+              "",
+              ...panelLines(
+                "CURRENT MODEL",
                 [
-                  theme.fg("accent", theme.bold("MODEL CONTROL CENTER")),
+                  theme.fg("text", theme.bold(w >= 72 ? modelLabel : shortModel(modelLabel, Math.max(12, w - 10)))),
+                  theme.fg("muted", `${modelLabel.includes("/") ? modelLabel.split("/")[0] : "9router"} · Connectivity: Unverified`),
                   "",
-                  // Region 1 — current context: model + connectivity + reasoning.
-                  ...panelLines(
-                    "CURRENT MODEL",
-                    [
-                      theme.fg("text", theme.bold(w >= 72 ? modelLabel : shortModel(modelLabel, Math.max(12, w - 10)))),
-                      theme.fg("muted", `${modelLabel.includes("/") ? modelLabel.split("/")[0] : "9router"} · Connectivity: Unverified`),
-                      "",
-                      resolved.source === "execution"
-                        ? theme.fg("warning", `● Execution: ${resolved.profile} · ${resolved.level}`)
-                        : theme.fg("muted", `★ Default profile: ${state.defaultProfile} · ${state.profiles[state.defaultProfile]}`),
-                    ],
-                    w,
-                    theme,
-                  ),
-                  "",
-                  // Region 2 — navigation | detail.
-                  ...panelLines("NAVIGATION · DETAIL", pane.render(w), w, theme),
-                  "",
-                  // Region 4 — footer.
-                  theme.fg("dim", "─".repeat(Math.max(1, w - 2))),
-                  theme.fg("dim", w >= 46 ? "↑↓ Navigate   Enter Edit   Esc Close" : "↑↓ · Enter · Esc"),
+                  resolved.source === "execution"
+                    ? theme.fg("warning", `● Execution: ${resolved.profile} · ${resolved.level}`)
+                    : theme.fg("muted", `★ Default profile: ${state.defaultProfile} · ${state.profiles[state.defaultProfile]}`),
                 ],
                 w,
+                theme,
               ),
-            invalidate: () => pane.invalidate(),
+              "",
+              ...surface.render(w),
+              "",
+              theme.fg("dim", "─".repeat(Math.max(1, w - 2))),
+              theme.fg(
+                "dim",
+                surface.focus === "models"
+                  ? (w >= 60 ? "↑↓ Navigate · Type Search · Enter Select · ← Nav · Esc Back" : "↑↓ · Type · Enter · Esc")
+                  : (w >= 60 ? "↑↓ Navigate · → Models · Enter Open · Esc Close" : "↑↓ · → · Enter · Esc"),
+              ),
+            ],
+            w,
+          ),
+        invalidate: () => surface.invalidate(),
+        handleInput: (data: string) => {
+          surface.handleInput(data);
+          tui.requestRender();
+        },
+      };
+    });
+    if (!result) return;
+    if (result.kind === "model") {
+      const [prov, ...rest] = result.spec.split("/");
+      const target = ctx.modelRegistry.getAvailable().find((mm) => mm.provider === prov && mm.id === rest.join("/"));
+      if (!target) {
+        ctx.ui.notify(`Could not resolve model "${result.spec}".`, "warning");
+        continue;
+      }
+      await pi.setModel(target as never);
+      ctx.ui.notify(`Model: ${result.spec}`, "info");
+      continue;
+    }
+    if (result.kind === "profile") {
+      // ---- Profile editor (levels + Default Profile designation) ----
+      const profile = result.profile.slice("profile:".length) as ReasoningProfileName;
+      if (!REASONING_PROFILES.includes(profile)) continue;
+      {
+        interface Choice { kind: "default" | "level"; label: string; runtime?: string }
+        const choices: Choice[] = [];
+        if (state.defaultProfile !== profile) {
+          choices.push({ kind: "default", label: "★ Set as Default Profile" });
+        }
+        for (const l of Object.keys(USER_LEVEL_MAP)) {
+          choices.push({
+            kind: "level",
+            runtime: USER_LEVEL_MAP[l],
+            label: `${USER_LEVEL_MAP[l] === state.profiles[profile] ? "●" : "○"} ${l}`,
+          });
+        }
+        const chosen = await ctx.ui.custom<Choice | null>((tui, theme, _kb, done) => {
+          const container = new Container();
+          container.addChild(new WidthSafeText(() => theme.fg("accent", theme.bold(profile.toUpperCase())), 1));
+          container.addChild(new WidthSafeText(() => theme.fg("muted", PROFILE_DESCRIPTIONS[profile]), 0));
+          container.addChild(new WidthSafeText(() => theme.fg("dim", "REASONING LEVEL"), 0, 1));
+          container.addChild(new WidthSafeText(() => {
+            const isDefault = state.defaultProfile === profile;
+            return theme.fg("text", `Current  ${state.profiles[profile]}${isDefault ? "   ★ default profile" : ""}`);
+          }));
+          container.addChild(new Spacer(1));
+          const items: SelectItem[] = choices.map((c) => ({ value: c.runtime ?? c.kind, label: c.label }));
+          const list = new SelectList(items, Math.max(7, items.length), {
+            selectedPrefix: (t) => theme.fg("accent", "→ "),
+            selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
+            description: (t) => theme.fg("muted", t),
+            scrollInfo: (t) => theme.fg("dim", t),
+            noMatch: (t) => theme.fg("warning", t),
+          });
+          list.setSelectedIndex(state.defaultProfile === profile ? 0 : Math.max(0, choices.findIndex((c) => c.label.startsWith("●"))));
+          list.onSelect = (item) => {
+            const c = choices.find((cc) => (cc.runtime ?? cc.kind) === item.value && cc.label === item.label);
+            if (c) done(c);
+          };
+          list.onCancel = () => done(null);
+          container.addChild(list);
+          container.addChild(new Spacer(1));
+          container.addChild(new WidthSafeText((w) => theme.fg("dim", w >= 46 ? "↑↓ Choose   Enter Save   Esc Cancel" : "↑↓ · Enter · Esc"), 1));
+          return {
+            render: (w: number) => container.render(w),
+            invalidate: () => container.invalidate(),
             handleInput: (data: string) => {
-              pane.handleInput(data);
+              list.handleInput(data);
               tui.requestRender();
             },
           };
         });
-
-        if (picked === null || picked === "__done__") return;
-
-        if (picked === "__model__" || picked.startsWith("provider:")) {
-          // Model browser: provider scope from the nav row (or all when the
-          // "Select model…" row is used), searchable, with selected detail.
-          const initialProvider = picked.startsWith("provider:")
-            ? picked.slice("provider:".length)
-            : null;
-          const names = loadModelsVisibility().names;
-          const pickedSpec = await openModelBrowser(ctx, modelLabel, names, initialProvider);
-          if (!pickedSpec) continue;
-          const [prov, ...rest] = pickedSpec.split("/");
-          const target = ctx.modelRegistry.getAvailable().find((mm) => mm.provider === prov && mm.id === rest.join("/"));
-          if (!target) {
-            ctx.ui.notify(`Could not resolve model "${pickedSpec}".`, "warning");
-            continue;
-          }
-          await pi.setModel(target as never);
-          ctx.ui.notify(`Model: ${pickedSpec}`, "info");
-          continue;
-        }
-
-        // ---- Profile editor (levels + Default Profile designation) ----
-        const profile = profileByValue[picked];
-        if (!profile) continue;
-        {
-          interface Choice { kind: "default" | "level"; label: string; runtime?: string }
-          const choices: Choice[] = [];
-          if (state.defaultProfile !== profile) {
-            choices.push({ kind: "default", label: "★ Set as Default Profile" });
-          }
-          for (const l of Object.keys(USER_LEVEL_MAP)) {
-            choices.push({
-              kind: "level",
-              runtime: USER_LEVEL_MAP[l],
-              label: `${USER_LEVEL_MAP[l] === state.profiles[profile] ? "●" : "○"} ${l}`,
-            });
-          }
-
-          const chosen = await ctx.ui.custom<Choice | null>((tui, theme, _kb, done) => {
-            const container = new Container();
-            container.addChild(new WidthSafeText(() => theme.fg("accent", theme.bold(profile.toUpperCase())), 1));
-            container.addChild(new WidthSafeText(() => theme.fg("muted", PROFILE_DESCRIPTIONS[profile]), 0));
-            container.addChild(new WidthSafeText(() => theme.fg("dim", "REASONING LEVEL"), 0, 1));
-            container.addChild(new WidthSafeText(() => {
-              const isDefault = state.defaultProfile === profile;
-              return theme.fg("text", `Current  ${state.profiles[profile]}${isDefault ? "   ★ default profile" : ""}`);
-            }));
-            container.addChild(new Spacer(1));
-            const items: SelectItem[] = choices.map((c) => ({ value: c.runtime ?? c.kind, label: c.label }));
-            const list = new SelectList(items, Math.max(7, items.length), {
-              selectedPrefix: (t) => theme.fg("accent", "→ "),
-              selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
-              description: (t) => theme.fg("muted", t),
-              scrollInfo: (t) => theme.fg("dim", t),
-              noMatch: (t) => theme.fg("warning", t),
-            });
-            list.setSelectedIndex(state.defaultProfile === profile ? 0 : Math.max(0, choices.findIndex((c) => c.label.startsWith("●"))));
-            list.onSelect = (item) => {
-              const c = choices.find((cc) => (cc.runtime ?? cc.kind) === item.value && cc.label === item.label);
-              if (c) done(c);
-            };
-            list.onCancel = () => done(null);
-            container.addChild(list);
-            container.addChild(new Spacer(1));
-            container.addChild(new WidthSafeText((w) => theme.fg("dim", w >= 46 ? "↑↓ Choose   Enter Save   Esc Cancel" : "↑↓ · Enter · Esc"), 1));
-            return {
-              render: (w: number) => container.render(w),
-              invalidate: () => container.invalidate(),
-              handleInput: (data: string) => {
-                list.handleInput(data);
-                tui.requestRender();
-              },
-            };
-          });
-          if (chosen === null) continue; // Esc — cancel-safe
-          if (chosen.kind === "default") {
-            state.defaultProfile = profile;
-            saveReasoningState(state);
-            ctx.ui.notify(`Default Profile: ${profile}`, "info");
-          } else if (chosen.runtime) {
-            state.profiles[profile] = chosen.runtime;
-            saveReasoningState(state); // single sanitized writer → overview rebuilds fresh
-            ctx.ui.notify(`${profile} · ${chosen.runtime}`, "info");
-          }
+        if (chosen === null) continue; // Esc — cancel-safe
+        if (chosen.kind === "default") {
+          state.defaultProfile = profile;
+          saveReasoningState(state);
+          ctx.ui.notify(`Default Profile: ${profile}`, "info");
+        } else if (chosen.runtime) {
+          state.profiles[profile] = chosen.runtime;
+          saveReasoningState(state);
+          ctx.ui.notify(`${profile} · ${chosen.runtime}`, "info");
         }
       }
+      continue;
+    }
+  }
 }

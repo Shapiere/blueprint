@@ -346,3 +346,8 @@ The `/model` surface is organized around scope: a PROVIDERS navigation section (
 ### D49 addendum — panelized regions (2026-08-25)
 
 The `/model` control surface renders as four semantic regions built from one shared titled-rule panel primitive: CURRENT MODEL (model/provider/connectivity/state), NAVIGATION · DETAIL (two-pane composite with a subtle `│` divider, stacked narrow), the browser's MODEL BROWSER / SELECTED MODEL panels, and a footer rule + hint. All lines stay width-clamped (D45).
+
+
+### D50 addendum — unified Model Control Surface (2026-08-25)
+
+`/model` is one three-region surface: NAVIGATION (profiles + providers with configured/unconfigured distinction) | MODELS (scoped, searchable, `✓` current marker) | DETAIL (follows the focused pane). Wide ≥140 renders three columns; medium 100–139 renders nav | models with detail below; narrow stacks. Provider rows never claim upstream connectivity — "Configured / available to Pi" + "Connectivity: Unverified". The standalone model browser is retired; the model list lives on the primary screen.

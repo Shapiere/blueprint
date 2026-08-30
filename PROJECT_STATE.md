@@ -70,3 +70,5 @@ None open.
 - Continuous Evolution (2026-08-25): `/model` navigation + detail architecture (D47) — NavDetailPane two-pane control surface (wide) / stacked (narrow), focused CURRENT MODEL and PROFILE detail panels, SELECTED MODEL detail strip in the picker, selection-change wiring; no runtime behavior changes.
 - Continuous Evolution (2026-08-25): `/model` panelization (D49) — semantic regions via a shared titled-rule panel primitive: CURRENT MODEL, NAVIGATION · DETAIL (with subtle `│` divider), SELECTED MODEL, footer; no runtime behavior changes.
 - Continuous Evolution (2026-08-25): `/model` scope/navigation architecture (D48) — PROVIDERS nav section with truthful counts, two-pane scoped model browser (provider | models), scope-aware titles, ✓ current marker, dash suppressed for non-profile rows; no runtime behavior changes.
+
+- Continuous Evolution (2026-08-25): `/model` unified Model Control Surface (D50) — three-region NAVIGATION | MODELS | DETAIL layout, detail follows focus, provider wording corrected (never 'Connected'), standalone browser retired; 27-check suite green.

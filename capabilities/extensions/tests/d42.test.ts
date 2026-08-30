@@ -15,7 +15,7 @@ import path from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   MccOverviewList,
-  NavDetailPane,
+  ModelControlSurface,
   panelLines,
   providerCounts,
   scopeTitle,
@@ -422,9 +422,8 @@ check("OVERFLOW REGRESSION: unicode/marker rows stay within width", () => {
   }
 });
 
-check("NAV+DETAIL: two-pane at wide, stacked at narrow, never overflows", () => {
+check("D50 SURFACE: three-region at wide, stacked at narrow, never overflows", () => {
   const sections: MccSection[] = [
-    { title: "MODEL", rows: [{ kind: "item", item: { value: "__model__", primary: "Select model…" } }] },
     {
       title: "GENERAL",
       rows: [
@@ -434,66 +433,95 @@ check("NAV+DETAIL: two-pane at wide, stacked at narrow, never overflows", () => 
       ],
     },
     {
-      title: "PLANNING",
-      rows: [{ kind: "item", item: { value: "p:Plan", primary: "Plan · high", description: "Planning & architecture" } }],
+      title: "PROVIDERS",
+      rows: [{ kind: "item", item: { value: "provider:9router", primary: "9router", description: "3 models" } }],
     },
   ];
-  for (const width of [40, 60, 80, 100, 120, 160, 204, 215, 300]) {
-    const list = new MccOverviewList(sections, themeStub, 14);
-    const pane = new NavDetailPane(
-      list,
-      (maxLines) => {
-        const sel = list.getSelectedItem();
-        if (!sel || !sel.value.startsWith("p:")) return ["(no profile)"];
-        const name = sel.value.slice(2);
-        return [`${name.toUpperCase()}`, sel.description ?? "", "", "REASONING", sel.primary.split(" · ")[1] ?? "", "", "STATE", "● Active"].slice(0, maxLines);
-      },
-      14,
+  const specs = ["9router/a", "9router/b", "9router/c"];
+  for (const width of [40, 60, 80, 100, 120, 140, 160, 204, 215, 300, 400]) {
+    const surface = new ModelControlSurface(
+      sections,
+      themeStub,
+      specs,
+      {},
+      "9router/a",
+      () => [],
+      (focus, navSel, highlight, w) =>
+        focus === "models" && highlight
+          ? [`MODEL ${highlight}`, "REASONING", "High"]
+          : navSel
+            ? [navSel.primary.toUpperCase(), "REASONING", "High", "STATE", "● Active"]
+            : [],
+      { focus: "nav", provider: null, filter: "" },
     );
-    // Move to first profile row so detail panel shows content.
-    list.handleInput("\u001b[B");
-    const out = pane.render(width);
+    surface.onSelectModel = () => {};
+    surface.onEditProfile = () => {};
+    surface.onClose = () => {};
+    const out = surface.render(width);
     assert.ok(out.length > 0, `no output at ${width}`);
     for (const line of out) {
-      assert.ok(visibleWidth(line) <= width, `nav+detail overflow ${visibleWidth(line)} > ${width} at width ${width}: ${JSON.stringify(stripAnsi(line).slice(0, 50))}`);
+      assert.ok(visibleWidth(line) <= width, `surface overflow ${visibleWidth(line)} > ${width}: ${JSON.stringify(stripAnsi(line).slice(0, 60))}`);
     }
-    // Detail content appears (stacked at narrow, beside nav at wide).
+    // Detail content always present (nav detail at start, model detail after focus switch).
     const joined = stripAnsi(out.join("\n")).replace(/\s+/g, " ");
-    assert.match(joined, /REASONING/, `detail panel missing at ${width}`);
+    assert.match(joined, /REASONING/, `detail missing at ${width}`);
+    // Wide shows three columns (two dividers); narrow stacked has none.
+    if (width >= 140) {
+      assert.ok(out.some((l) => l.split("│").length >= 3), `three-region missing at ${width}`);
+    } else if (width < 100) {
+      assert.ok(!out.join("\n").includes("│"), `unexpected divider at ${width}`);
+    }
   }
 });
 
-check("NAV+DETAIL: navigation updates the focused detail", () => {
+check("D50 DETAIL: detail follows the focused pane", () => {
   const sections: MccSection[] = [
-    { title: "MODEL", rows: [{ kind: "item", item: { value: "__model__", primary: "Select model…" } }] },
     {
       title: "GENERAL",
       rows: [
         { kind: "item", item: { value: "p:Default", primary: "Default · medium", description: "Normal interactions" } },
         { kind: "item", item: { value: "p:Task", primary: "Task · high", description: "Execution-oriented work" } },
-        { kind: "item", item: { value: "p:Review", primary: "Review · high", description: "Critique & verification" } },
       ],
     },
-  ];
-  const list = new MccOverviewList(sections, themeStub, 14);
-  const pane = new NavDetailPane(
-    list,
-    (maxLines) => {
-      const sel = list.getSelectedItem();
-      if (!sel || !sel.value.startsWith("p:")) return ["(no profile)"];
-      return [`${sel.value.slice(2).toUpperCase()}`, sel.primary.split(" · ")[1] ?? ""].slice(0, maxLines);
+    {
+      title: "PROVIDERS",
+      rows: [{ kind: "item", item: { value: "provider:9router", primary: "9router", description: "2 models" } }],
     },
-    14,
+  ];
+  const specs = ["9router/alpha", "9router/beta"];
+  const surface = new ModelControlSurface(
+    sections,
+    themeStub,
+    specs,
+    {},
+    "9router/alpha",
+    () => [],
+    (focus, navSel, highlight) => {
+      if (focus === "models") return highlight ? [`SELECTED ${highlight}`] : ["(no model)"];
+      if (navSel?.value.startsWith("provider:")) return [`PROVIDER ${navSel.primary}`];
+      return [`PROFILE ${navSel?.primary ?? "?"}`];
+    },
+    { focus: "nav", provider: null, filter: "" },
   );
   const flat = (lines: string[]) => stripAnsi(lines.join("\n")).replace(/\s+/g, " ");
-  // Start on Select model… → no profile detail yet.
-  assert.match(flat(pane.render(120)), /\(no profile\)/);
-  list.handleInput("\u001b[B"); // Default
-  assert.match(flat(pane.render(120)), /DEFAULT.*medium/);
-  list.handleInput("\u001b[B"); // Task
-  assert.match(flat(pane.render(120)), /TASK.*high/);
-  list.handleInput("\u001b[B"); // Review
-  assert.match(flat(pane.render(120)), /REVIEW.*high/);
+
+  // Focus NAV → detail shows profile for the nav selection.
+  assert.match(flat(surface.render(160)), /PROFILE Default/);
+  surface.handleInput("\u001b[B"); // Task
+  assert.match(flat(surface.render(160)), /PROFILE Task/);
+  surface.handleInput("\u001b[B"); // 9router
+  assert.match(flat(surface.render(160)), /PROVIDER 9router/);
+
+  // Focus MODELS → detail shows the selected model, not the nav selection.
+  surface.handleInput("\x1b[C"); // → models
+  const modelJoined = flat(surface.render(160));
+  assert.match(modelJoined, /SELECTED 9router\/alpha/);
+  assert.ok(!modelJoined.includes("PROVIDER 9router"), "nav detail leaked into models focus");
+  surface.handleInput("\u001b[B"); // beta
+  assert.match(flat(surface.render(160)), /SELECTED 9router\/beta/);
+  // Focus back to NAV → provider detail returns.
+  surface.handleInput("\x1b[D");
+  assert.match(flat(surface.render(160)), /PROVIDER 9router/);
 });
 
 check("D48 SCOPE: provider counts are truthful and sorted", () => {
@@ -525,20 +553,31 @@ check("D48 SCOPE: provider counts derive only from selectable specs", () => {
   assert.deepEqual(visible, [{ name: "9router", count: 2 }]);
 });
 
-check("PANELS: NavDetailPane divider separates nav from detail", () => {
+check("D50 SURFACE: divider separates regions at wide, absent when stacked", () => {
   const sections: MccSection[] = [
-    { title: "MODEL", rows: [{ kind: "item", item: { value: "__model__", primary: "Select model…" } }] },
     { title: "GENERAL", rows: [{ kind: "item", item: { value: "p:Default", primary: "Default · medium", description: "Normal interactions" } }] },
   ];
-  const list = new MccOverviewList(sections, themeStub, 14);
-  const pane = new NavDetailPane(list, () => ["REVIEW"], 14);
-  const out = pane.render(120); // wide → two-pane with divider
-  const joined = stripAnsi(out.join("\n")).replace(/\s+/g, " ");
-  assert.ok(out.some((l) => l.includes("│")), "no divider column in two-pane");
-  assert.ok(joined.includes("REVIEW"), "detail content missing in two-pane");
+  const surface = new ModelControlSurface(
+    sections,
+    themeStub,
+    ["9router/alpha"],
+    {},
+    "9router/alpha",
+    () => [],
+    (focus, navSel, highlight) => (focus === "models" ? ["REVIEW"] : ["DEFAULT"]),
+    { focus: "models", provider: null, filter: "" },
+  );
+  surface.onSelectModel = () => {};
+  surface.onEditProfile = () => {};
+  surface.onClose = () => {};
+  const out = surface.render(120); // medium → nav | models (divider), detail below
+  assert.ok(out.some((l) => l.includes("│")), "no divider in medium two-region layout");
   // Stacked: no divider.
-  const stacked = pane.render(80);
+  const stacked = surface.render(80);
   assert.ok(!stacked.join("\n").includes("│"), "divider present in stacked mode");
+  // Wide three-region: two dividers on at least one line.
+  const wide = surface.render(160);
+  assert.ok(wide.some((l) => l.split("│").length >= 3), "three-region divider missing at wide");
 });
 
 check("PANELS: panelLines wraps content with a titled rule", () => {
