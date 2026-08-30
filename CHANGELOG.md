@@ -105,6 +105,7 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `feat`: D46 — `/model` control center visual refinement: table rows with dynamic columns, semantic level tones, MODEL/REASONING header hierarchy, responsive width-aware chrome/footers, subtle selection ([docs/DECISIONS.md](docs/DECISIONS.md) D46)
 - `feat`: D47 — `/model` navigation + detail architecture: two-pane control surface (stacked on narrow), focused CURRENT MODEL / PROFILE detail panels, SELECTED MODEL detail strip in the picker, selection-change wiring ([docs/DECISIONS.md](docs/DECISIONS.md) D47)
 - `feat`: D48 — `/model` scope/navigation architecture: PROVIDERS nav section, truthful provider counts, two-pane provider-scoped model browser, scope-aware titles, ✓ current marker ([docs/DECISIONS.md](docs/DECISIONS.md) D48)
+- `feat`: D49 — `/model` panelization: CURRENT MODEL / NAVIGATION · DETAIL / SELECTED MODEL / footer as titled-rule regions with a subtle pane divider ([docs/DECISIONS.md](docs/DECISIONS.md) D49)
 - `docs`: validation evidence — strict type-check PASS; 15-check regression suite PASS; live battery PASS (boot restore → footer ox-alpha; Vision high→low immediate; Set-Default persisted; workflow config-immutability; override prompt + Keep-strip)
 
  ## Notes

@@ -341,3 +341,8 @@ The `/model` control center is a navigation + detail surface: the profile/model 
 ### D48 addendum — scope/navigation architecture (2026-08-25)
 
 The `/model` surface is organized around scope: a PROVIDERS navigation section (truthful selectable counts) sits beside the profile navigation in the overview, and the model picker is a two-pane provider-scoped browser (provider scope | scoped, searchable model list) with scope-aware titles (`9ROUTER MODELS` / `ALL MODELS`), a `✓` current-model marker, and a selected-model detail strip. Non-profile rows no longer render a decorative level dash.
+
+
+### D49 addendum — panelized regions (2026-08-25)
+
+The `/model` control surface renders as four semantic regions built from one shared titled-rule panel primitive: CURRENT MODEL (model/provider/connectivity/state), NAVIGATION · DETAIL (two-pane composite with a subtle `│` divider, stacked narrow), the browser's MODEL BROWSER / SELECTED MODEL panels, and a footer rule + hint. All lines stay width-clamped (D45).

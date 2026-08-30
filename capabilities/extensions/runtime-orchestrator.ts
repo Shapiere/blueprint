@@ -1655,6 +1655,19 @@ function clampLines(lines: readonly string[], width: number): string[] {
 }
 
 /**
+ * Semantic panel: a titled rule followed by the panel's lines, all clamped to
+ * the available width. This is the shared visual vocabulary for the four
+ * regions of the control surface (current context, navigation+detail, detail
+ * strips, footer).
+ */
+export function panelLines(title: string, lines: readonly string[], width: number, theme: Theme): string[] {
+  const label = ` ${title} `;
+  const rule = theme.fg("dim", "─".repeat(Math.max(0, width - visibleWidth(label))));
+  const head = theme.fg("accent", theme.bold(label)) + rule;
+  return [head, ...clampLines(lines, width)];
+}
+
+/**
  * Navigation + detail composite. Above the width threshold the navigation list
  * renders on the left and the detail panel on the right (each clamped to its
  * column); on narrow terminals the layout stacks. Both sides are width-safe
@@ -1690,8 +1703,9 @@ export class NavDetailPane implements Component {
         ...clampLines(this.detailLines, width),
       ];
     }
-    // Two-pane: navigation left (~40%), detail right.
+    // Two-pane: navigation left (~40%), a subtle divider, detail right.
     const navW = Math.max(24, Math.min(44, Math.floor(width * 0.4)));
+    const divider = "│";
     const detailW = Math.max(10, width - navW - 2);
     const navLines = this.nav.render(navW);
     const rows = Math.max(navLines.length, this.detailLines.length);
@@ -1701,7 +1715,7 @@ export class NavDetailPane implements Component {
       const leftW = visibleWidth(left);
       const right = this.detailLines[i] ?? "";
       const pad = leftW < navW ? " ".repeat(navW - leftW) : "";
-      const line = left + pad + (right ? " " + right : "");
+      const line = left + pad + divider + (right ? " " + right : "");
       out.push(visibleWidth(line) > width ? truncateToWidth(line, width, "") : line);
     }
     return out;
@@ -2183,7 +2197,7 @@ export async function openModelBrowser(
             ...detail,
             "",
             filterLine,
-            footer,
+            ...footer,
           ],
           w,
         );
@@ -2686,31 +2700,6 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
         });
 
         const picked = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
-          const container = new Container();
-          container.addChild(new WidthSafeText((w) => theme.fg("accent", theme.bold("MODEL CONTROL CENTER")), 1));
-
-          // MODEL block: the active model is the single most important fact,
-          // with provider + connectivity as subordinate metadata.
-          container.addChild(new WidthSafeText((w) => theme.fg("dim", "MODEL"), 0));
-          container.addChild(new WidthSafeText((w) => {
-            const shown = w >= 72 ? modelLabel : shortModel(modelLabel, Math.max(12, w - 10));
-            return theme.fg("text", theme.bold(shown));
-          }));
-          container.addChild(new WidthSafeText((w) => {
-            const provider = modelLabel.includes("/") ? modelLabel.split("/")[0] : "9router";
-            const suffix = w >= 60 ? " · Connectivity unverified" : " · unverified";
-            return theme.fg("muted", `${provider}${suffix}`);
-          }));
-
-          // REASONING block: default profile (or the live execution context).
-          container.addChild(new WidthSafeText(() => theme.fg("dim", "REASONING"), 0, 1));
-          container.addChild(new WidthSafeText(() =>
-            resolved.source === "execution"
-              ? theme.fg("warning", `● Execution: ${resolved.profile} · ${resolved.level}`)
-              : theme.fg("muted", `★ Default profile: ${state.defaultProfile} · ${state.profiles[state.defaultProfile]}`),
-          ));
-
-          container.addChild(new Spacer(1));
           const list = new MccOverviewList(sections, theme, 14);
           list.onSelect = (value) => done(value);
           list.onCancel = () => done("__done__");
@@ -2732,12 +2721,38 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
             },
             14,
           );
-          container.addChild(pane);
-          container.addChild(new Spacer(1));
-          container.addChild(new WidthSafeText((w) => theme.fg("dim", w >= 46 ? "↑↓ Navigate   Enter Edit   Esc Close" : "↑↓ · Enter · Esc"), 1));
+
           return {
-            render: (w: number) => container.render(w),
-            invalidate: () => container.invalidate(),
+            render: (w: number) =>
+              clampLines(
+                [
+                  theme.fg("accent", theme.bold("MODEL CONTROL CENTER")),
+                  "",
+                  // Region 1 — current context: model + connectivity + reasoning.
+                  ...panelLines(
+                    "CURRENT MODEL",
+                    [
+                      theme.fg("text", theme.bold(w >= 72 ? modelLabel : shortModel(modelLabel, Math.max(12, w - 10)))),
+                      theme.fg("muted", `${modelLabel.includes("/") ? modelLabel.split("/")[0] : "9router"} · Connectivity: Unverified`),
+                      "",
+                      resolved.source === "execution"
+                        ? theme.fg("warning", `● Execution: ${resolved.profile} · ${resolved.level}`)
+                        : theme.fg("muted", `★ Default profile: ${state.defaultProfile} · ${state.profiles[state.defaultProfile]}`),
+                    ],
+                    w,
+                    theme,
+                  ),
+                  "",
+                  // Region 2 — navigation | detail.
+                  ...panelLines("NAVIGATION · DETAIL", pane.render(w), w, theme),
+                  "",
+                  // Region 4 — footer.
+                  theme.fg("dim", "─".repeat(Math.max(1, w - 2))),
+                  theme.fg("dim", w >= 46 ? "↑↓ Navigate   Enter Edit   Esc Close" : "↑↓ · Enter · Esc"),
+                ],
+                w,
+              ),
+            invalidate: () => pane.invalidate(),
             handleInput: (data: string) => {
               pane.handleInput(data);
               tui.requestRender();

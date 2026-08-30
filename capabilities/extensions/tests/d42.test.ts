@@ -16,6 +16,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   MccOverviewList,
   NavDetailPane,
+  panelLines,
   providerCounts,
   scopeTitle,
   PROFILE_GROUPS,
@@ -522,6 +523,39 @@ check("D48 SCOPE: provider counts derive only from selectable specs", () => {
   // A spec outside the visibility-scoped availability snapshot is not counted.
   const visible = providerCounts(["9router/a", "9router/b"]);
   assert.deepEqual(visible, [{ name: "9router", count: 2 }]);
+});
+
+check("PANELS: NavDetailPane divider separates nav from detail", () => {
+  const sections: MccSection[] = [
+    { title: "MODEL", rows: [{ kind: "item", item: { value: "__model__", primary: "Select model…" } }] },
+    { title: "GENERAL", rows: [{ kind: "item", item: { value: "p:Default", primary: "Default · medium", description: "Normal interactions" } }] },
+  ];
+  const list = new MccOverviewList(sections, themeStub, 14);
+  const pane = new NavDetailPane(list, () => ["REVIEW"], 14);
+  const out = pane.render(120); // wide → two-pane with divider
+  const joined = stripAnsi(out.join("\n")).replace(/\s+/g, " ");
+  assert.ok(out.some((l) => l.includes("│")), "no divider column in two-pane");
+  assert.ok(joined.includes("REVIEW"), "detail content missing in two-pane");
+  // Stacked: no divider.
+  const stacked = pane.render(80);
+  assert.ok(!stacked.join("\n").includes("│"), "divider present in stacked mode");
+});
+
+check("PANELS: panelLines wraps content with a titled rule", () => {
+  const lines = panelLines("TEST", ["line 1", "line 2"], 40, themeStub);
+  assert.ok(lines[0].includes(" TEST "), "panel title missing");
+  assert.ok(stripAnsi(lines[1]).includes("line 1"), "panel content missing");
+  assert.ok(stripAnsi(lines[2]).includes("line 2"), "panel second line missing");
+  // All lines ≤ width
+  for (const l of lines) assert.ok(visibleWidth(l) <= 40, `panel overflow: ${JSON.stringify(stripAnsi(l))}`);
+});
+
+check("PANELS: panel lines are clamped to width", () => {
+  const long = "This is a very long line that should definitely be truncated to the available width and not overflow";
+  const lines = panelLines("X", [long, long], 30, themeStub);
+  for (const l of lines) {
+    assert.ok(visibleWidth(l) <= 30, `panel line overflow ${visibleWidth(l)} > 30`);
+  }
 });
 
 check("viewport cap respected with scroll indicator", () => {
