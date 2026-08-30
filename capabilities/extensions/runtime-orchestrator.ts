@@ -1655,6 +1655,151 @@ function clampLines(lines: readonly string[], width: number): string[] {
 }
 
 /**
+ * Navigation + detail composite. Above the width threshold the navigation list
+ * renders on the left and the detail panel on the right (each clamped to its
+ * column); on narrow terminals the layout stacks. Both sides are width-safe
+ * by construction (D45 invariant).
+ */
+export class NavDetailPane implements Component {
+  private detailLines: string[] = [];
+  constructor(
+    private readonly nav: MccOverviewList,
+    private readonly buildDetail: (width: number) => string[],
+    private readonly maxLines = 14,
+  ) {
+    nav.onSelectionChange = () => this.refreshDetail();
+    this.refreshDetail();
+  }
+  invalidate(): void {
+    this.nav.invalidate();
+    this.refreshDetail();
+  }
+  handleInput(data: string): void {
+    this.nav.handleInput(data);
+    this.refreshDetail();
+  }
+  private refreshDetail(): void {
+    this.detailLines = this.buildDetail(this.maxLines);
+  }
+  render(width: number): string[] {
+    if (width < 100) {
+      // Stacked: navigation, then detail below.
+      return [
+        ...clampLines(this.nav.render(width), width),
+        "",
+        ...clampLines(this.detailLines, width),
+      ];
+    }
+    // Two-pane: navigation left (~40%), detail right.
+    const navW = Math.max(24, Math.min(44, Math.floor(width * 0.4)));
+    const detailW = Math.max(10, width - navW - 2);
+    const navLines = this.nav.render(navW);
+    const rows = Math.max(navLines.length, this.detailLines.length);
+    const out: string[] = [];
+    for (let i = 0; i < rows; i++) {
+      const left = navLines[i] ?? "";
+      const leftW = visibleWidth(left);
+      const right = this.detailLines[i] ?? "";
+      const pad = leftW < navW ? " ".repeat(navW - leftW) : "";
+      const line = left + pad + (right ? " " + right : "");
+      out.push(visibleWidth(line) > width ? truncateToWidth(line, width, "") : line);
+    }
+    return out;
+  }
+}
+
+/** Compact capability summary of a session model for detail panels. */
+function modelCaps(model: { reasoning?: boolean; input?: unknown[]; contextWindow?: number }): {
+  reasoning: boolean;
+  vision: boolean;
+  ctx: string;
+} {
+  return {
+    reasoning: model.reasoning === true,
+    vision: Array.isArray(model.input) && model.input.includes("image"),
+    ctx: typeof model.contextWindow === "number" ? `${Math.round(model.contextWindow / 1000)}k` : "—",
+  };
+}
+
+/** Detail panel for a highlighted model in the picker. */
+function pickedModelDetailLines(
+  spec: string,
+  getAvailable: () => Array<{ provider: string; id: string; reasoning?: boolean; input?: unknown[]; contextWindow?: number }>,
+  currentLabel: string,
+  theme: Theme,
+  maxLines: number,
+): string[] {
+  const [prov, ...rest] = spec.split("/");
+  const model = getAvailable().find((m) => m.provider === prov && m.id === rest.join("/"));
+  const caps = modelCaps(model ?? {});
+  const isCurrent = spec === currentLabel;
+  const lines = [
+    theme.fg("dim", "SELECTED MODEL"),
+    theme.fg("text", theme.bold(spec)),
+    theme.fg("muted", `${prov} · ${caps.ctx} ctx${isCurrent ? " · current" : ""}`),
+    "",
+    theme.fg("dim", "CAPABILITIES"),
+    theme.fg(caps.reasoning ? "success" : "muted", `${caps.reasoning ? "●" : "○"} Reasoning`),
+    theme.fg(caps.vision ? "success" : "muted", `${caps.vision ? "●" : "○"} Vision`),
+  ];
+  return lines.slice(0, maxLines);
+}
+
+/** Detail panel for the current model (overview's "Select model…" context). */
+function modelDetailLines(
+  modelLabel: string,
+  model: { reasoning?: boolean; input?: unknown[]; contextWindow?: number } | undefined,
+  theme: Theme,
+  maxLines: number,
+): string[] {
+  const caps = modelCaps(model ?? {});
+  const provider = modelLabel.includes("/") ? modelLabel.split("/")[0] : "9router";
+  const lines = [
+    theme.fg("dim", "CURRENT MODEL"),
+    theme.fg("text", theme.bold(modelLabel)),
+    theme.fg("muted", `${provider} · ${caps.ctx} ctx`),
+    "",
+    theme.fg("dim", "CAPABILITIES"),
+    theme.fg(caps.reasoning ? "success" : "muted", `${caps.reasoning ? "●" : "○"} Reasoning`),
+    theme.fg(caps.vision ? "success" : "muted", `${caps.vision ? "●" : "○"} Vision`),
+    "",
+    theme.fg("dim", "Enter — open model picker"),
+  ];
+  return lines.slice(0, maxLines);
+}
+
+/** Detail panel for a focused profile row. */
+export function profileDetailLines(
+  profile: ReasoningProfileName,
+  state: ReasoningStateV3,
+  resolved: EffectiveReasoning,
+  theme: Theme,
+  maxLines: number,
+): string[] {
+  const level = state.profiles[profile];
+  const isDefault = state.defaultProfile === profile;
+  const isActive = resolved.profile === profile;
+  const lines = [
+    theme.fg("accent", theme.bold(profile.toUpperCase())),
+    theme.fg("muted", PROFILE_DESCRIPTIONS[profile]),
+    "",
+    theme.fg("dim", "REASONING"),
+    theme.fg(levelTone(level), level),
+    "",
+    theme.fg("dim", "STATE"),
+  ];
+  if (resolved.source === "execution" && isActive) {
+    lines.push(theme.fg("warning", `● Execution · ${resolved.level}`));
+  } else if (isActive) {
+    lines.push(theme.fg("success", "● Active"));
+  }
+  lines.push(isDefault ? theme.fg("success", "★ Default") : theme.fg("muted", "○ Not default"));
+  lines.push("", theme.fg("dim", "Enter — edit reasoning"));
+  if (!isDefault) lines.push(theme.fg("dim", "↑ editor — set as default"));
+  return lines.slice(0, maxLines);
+}
+
+/**
  * Grouped selection list for the /mcc overview. Headers and disabled rows are
  * rendered but skipped by navigation; arrow keys wrap across selectable items
  * only. Viewport-limited to maxLines rendered lines with a scroll indicator.
@@ -1664,6 +1809,13 @@ export class MccOverviewList implements Component {
   private selectedIndex = 0;
   onSelect?: (value: string) => void;
   onCancel?: () => void;
+  /** Fired when arrow navigation changes the selected row (detail panels). */
+  onSelectionChange?: (item: MccItem | null) => void;
+
+  /** Current keyboard-selected row, or null. */
+  getSelectedItem(): MccItem | null {
+    return this.items[this.selectedIndex] ?? null;
+  }
 
   constructor(
     private readonly sections: readonly MccSection[],
@@ -1685,8 +1837,10 @@ export class MccOverviewList implements Component {
     if (count === 0) return;
     if (kb.matches(data, "tui.select.up")) {
       this.selectedIndex = (this.selectedIndex - 1 + count) % count;
+      this.onSelectionChange?.(this.items[this.selectedIndex] ?? null);
     } else if (kb.matches(data, "tui.select.down")) {
       this.selectedIndex = (this.selectedIndex + 1) % count;
+      this.onSelectionChange?.(this.items[this.selectedIndex] ?? null);
     } else if (kb.matches(data, "tui.select.confirm")) {
       const item = this.items[this.selectedIndex];
       if (item && this.onSelect) this.onSelect(item.value);
@@ -2361,14 +2515,27 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
           const list = new MccOverviewList(sections, theme, 14);
           list.onSelect = (value) => done(value);
           list.onCancel = () => done("__done__");
-          container.addChild(list);
+          // Navigation + detail: the right panel explains the focused row.
+          const pane = new NavDetailPane(
+            list,
+            (maxLines) => {
+              const sel = list.getSelectedItem();
+              if (!sel) return [];
+              if (sel.value === "__model__") return modelDetailLines(modelLabel, ctx.model, theme, maxLines);
+              if (sel.value === "__done__") return [theme.fg("muted", "Done — save & exit")];
+              const profile = profileByValue[sel.value];
+              return profile ? profileDetailLines(profile, state, resolved, theme, maxLines) : [];
+            },
+            14,
+          );
+          container.addChild(pane);
           container.addChild(new Spacer(1));
           container.addChild(new WidthSafeText((w) => theme.fg("dim", w >= 46 ? "↑↓ Navigate   Enter Edit   Esc Close" : "↑↓ · Enter · Esc"), 1));
           return {
             render: (w: number) => container.render(w),
             invalidate: () => container.invalidate(),
             handleInput: (data: string) => {
-              list.handleInput(data);
+              pane.handleInput(data);
               tui.requestRender();
             },
           };
@@ -2405,8 +2572,12 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
               );
               l.onSelect = (item) => done(item.value);
               l.onCancel = () => done(null);
+              l.onSelectionChange = (item) => {
+                highlight = item.value;
+              };
               return l;
             };
+            let highlight: string = specs[0] ?? "";
             let list = makeList(specs);
             let filter = "";
             let filterLine = theme.fg("dim", "type to filter (name · id · provider)");
@@ -2425,6 +2596,8 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
                     theme.fg("dim", `Current  ${shortModel(modelLabel, Math.max(16, w - 10))}`),
                     "",
                     ...list.render(w),
+                    "",
+                    ...pickedModelDetailLines(highlight, () => ctx.modelRegistry.getAvailable(), modelLabel, theme, 8),
                     "",
                     filterLine,
                     theme.fg("dim", w >= 46 ? "↑↓ Navigate   Type Search   Enter Select   Esc Back" : "↑↓ · Type · Enter · Esc"),

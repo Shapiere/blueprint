@@ -331,3 +331,8 @@ Every line rendered by the `/model` control surface must satisfy `renderedWidth 
 ### D46 addendum — control-center visual language (2026-08-25)
 
 The `/model` control surface uses a consistent visual language: MODEL/REASONING header blocks (primary model, muted provider/connectivity, `★`/`●` state markers), table rows (`name | level | description`) with content-driven columns, semantic level tones (dim→accent), a subtle bounded selection highlight, and width-aware chrome built from the actual render width. All lines still pass `renderedWidth <= availableWidth`.
+
+
+### D47 addendum — navigation + detail architecture (2026-08-25)
+
+The `/model` control center is a navigation + detail surface: the profile/model list renders in a left column (stacked below width 100) while a focused detail panel explains the selected row (CURRENT MODEL: label/provider/ctx/capabilities; PROFILE: purpose/level/state/actions; picker: SELECTED MODEL strip). `NavDetailPane` composes existing primitives; every new line stays width-clamped.

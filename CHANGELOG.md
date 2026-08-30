@@ -103,6 +103,7 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `feat`: D44 — unified `/model` via version-guarded host bridge (`pi-model-bridge.mjs`): same-model selector picks emit `model_select(sameModel:true)`; control center opens for both cases; reversible backup + structure/version guard + `/doctor` diagnostics ([docs/DECISIONS.md](docs/DECISIONS.md) D44)
 - `fix`: D45 — `/model` width-overflow crash (`Rendered line 40 exceeds terminal width (215 > 204)`): dynamic column sizing, marker inside the label column, ANSI/Unicode-aware truncation, width-aware header/status/footer, final per-line clamp; overflow regression tests at widths 8–400 ([docs/DECISIONS.md](docs/DECISIONS.md) D45)
 - `feat`: D46 — `/model` control center visual refinement: table rows with dynamic columns, semantic level tones, MODEL/REASONING header hierarchy, responsive width-aware chrome/footers, subtle selection ([docs/DECISIONS.md](docs/DECISIONS.md) D46)
+- `feat`: D47 — `/model` navigation + detail architecture: two-pane control surface (stacked on narrow), focused CURRENT MODEL / PROFILE detail panels, SELECTED MODEL detail strip in the picker, selection-change wiring ([docs/DECISIONS.md](docs/DECISIONS.md) D47)
 - `docs`: validation evidence — strict type-check PASS; 15-check regression suite PASS; live battery PASS (boot restore → footer ox-alpha; Vision high→low immediate; Set-Default persisted; workflow config-immutability; override prompt + Keep-strip)
 
  ## Notes

@@ -15,6 +15,7 @@ import path from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   MccOverviewList,
+  NavDetailPane,
   PROFILE_GROUPS,
   PROFILE_DESCRIPTIONS,
   REASONING_PROFILES,
@@ -416,6 +417,80 @@ check("OVERFLOW REGRESSION: unicode/marker rows stay within width", () => {
       assert.match(stripAnsi(list.render(width).join("\n")), /★default/);
     }
   }
+});
+
+check("NAV+DETAIL: two-pane at wide, stacked at narrow, never overflows", () => {
+  const sections: MccSection[] = [
+    { title: "MODEL", rows: [{ kind: "item", item: { value: "__model__", primary: "Select model…" } }] },
+    {
+      title: "GENERAL",
+      rows: [
+        { kind: "item", item: { value: "p:Default", primary: "Default · medium", description: "Normal interactions", marked: "★default" } },
+        { kind: "item", item: { value: "p:Task", primary: "Task · high", description: "Execution-oriented work" } },
+        { kind: "item", item: { value: "p:Review", primary: "Review · high", description: "Critique & verification" } },
+      ],
+    },
+    {
+      title: "PLANNING",
+      rows: [{ kind: "item", item: { value: "p:Plan", primary: "Plan · high", description: "Planning & architecture" } }],
+    },
+  ];
+  for (const width of [40, 60, 80, 100, 120, 160, 204, 215, 300]) {
+    const list = new MccOverviewList(sections, themeStub, 14);
+    const pane = new NavDetailPane(
+      list,
+      (maxLines) => {
+        const sel = list.getSelectedItem();
+        if (!sel || !sel.value.startsWith("p:")) return ["(no profile)"];
+        const name = sel.value.slice(2);
+        return [`${name.toUpperCase()}`, sel.description ?? "", "", "REASONING", sel.primary.split(" · ")[1] ?? "", "", "STATE", "● Active"].slice(0, maxLines);
+      },
+      14,
+    );
+    // Move to first profile row so detail panel shows content.
+    list.handleInput("\u001b[B");
+    const out = pane.render(width);
+    assert.ok(out.length > 0, `no output at ${width}`);
+    for (const line of out) {
+      assert.ok(visibleWidth(line) <= width, `nav+detail overflow ${visibleWidth(line)} > ${width} at width ${width}: ${JSON.stringify(stripAnsi(line).slice(0, 50))}`);
+    }
+    // Detail content appears (stacked at narrow, beside nav at wide).
+    const joined = stripAnsi(out.join("\n")).replace(/\s+/g, " ");
+    assert.match(joined, /REASONING/, `detail panel missing at ${width}`);
+  }
+});
+
+check("NAV+DETAIL: navigation updates the focused detail", () => {
+  const sections: MccSection[] = [
+    { title: "MODEL", rows: [{ kind: "item", item: { value: "__model__", primary: "Select model…" } }] },
+    {
+      title: "GENERAL",
+      rows: [
+        { kind: "item", item: { value: "p:Default", primary: "Default · medium", description: "Normal interactions" } },
+        { kind: "item", item: { value: "p:Task", primary: "Task · high", description: "Execution-oriented work" } },
+        { kind: "item", item: { value: "p:Review", primary: "Review · high", description: "Critique & verification" } },
+      ],
+    },
+  ];
+  const list = new MccOverviewList(sections, themeStub, 14);
+  const pane = new NavDetailPane(
+    list,
+    (maxLines) => {
+      const sel = list.getSelectedItem();
+      if (!sel || !sel.value.startsWith("p:")) return ["(no profile)"];
+      return [`${sel.value.slice(2).toUpperCase()}`, sel.primary.split(" · ")[1] ?? ""].slice(0, maxLines);
+    },
+    14,
+  );
+  const flat = (lines: string[]) => stripAnsi(lines.join("\n")).replace(/\s+/g, " ");
+  // Start on Select model… → no profile detail yet.
+  assert.match(flat(pane.render(120)), /\(no profile\)/);
+  list.handleInput("\u001b[B"); // Default
+  assert.match(flat(pane.render(120)), /DEFAULT.*medium/);
+  list.handleInput("\u001b[B"); // Task
+  assert.match(flat(pane.render(120)), /TASK.*high/);
+  list.handleInput("\u001b[B"); // Review
+  assert.match(flat(pane.render(120)), /REVIEW.*high/);
 });
 
 check("viewport cap respected with scroll indicator", () => {
