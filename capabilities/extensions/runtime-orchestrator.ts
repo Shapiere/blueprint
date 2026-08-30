@@ -1575,6 +1575,26 @@ type MccLine =
   | { kind: "disabled"; disabled: MccDisabled };
 
 const MCC_ACTIVE_MARKER = "●active";
+/** Width reserved for the semantic reasoning-level column. */
+const LEVEL_WIDTH = 11;
+
+/**
+ * Semantic emphasis per reasoning level: quiet for low effort, stronger as the
+ * level rises. Uses theme tokens only — no hardcoded terminal colors.
+ */
+function levelTone(level: string): "dim" | "muted" | "text" | "accent" {
+  switch (level) {
+    case "off":
+    case "low":
+      return "dim";
+    case "medium":
+      return "muted";
+    case "high":
+      return "text";
+    default:
+      return "accent"; // ultra (xhigh) and anything above
+  }
+}
 
 /**
  * Width-safe single-line text: the content is produced from the ACTUAL render
@@ -1599,6 +1619,34 @@ class WidthSafeText implements Component {
     for (let i = 0; i < this.paddingY; i++) out.push("");
     return out;
   }
+}
+
+/**
+ * Pads a cell to its column width while guaranteeing at least one trailing
+ * space, so adjacent columns (name/level/description) can never abut — even
+ * when a value exactly fills its column.
+ */
+function padCell(text: string, column: number): string {
+  const w = visibleWidth(text);
+  // Always leave one trailing space, even when the text fills the column.
+  if (w >= column) return truncateToWidth(text, Math.max(1, column - 1), "…") + " ";
+  return text + " ".repeat(column - w);
+}
+
+/**
+ * Keeps the most useful part of a model identifier when space is tight:
+ * the trailing segments carry the model identity, the provider prefix does not.
+ */
+function shortModel(modelLabel: string, max: number): string {
+  if (visibleWidth(modelLabel) <= max) return modelLabel;
+  const parts = modelLabel.split("/");
+  let out = parts[parts.length - 1];
+  for (let i = parts.length - 2; i >= 0; i--) {
+    const candidate = parts.slice(i).join("/");
+    if (visibleWidth(candidate) > max) break;
+    out = candidate;
+  }
+  return truncateToWidth(out, max, "…");
 }
 
 /** Clamps every rendered line to the available width (ANSI/Unicode aware). */
@@ -1649,7 +1697,7 @@ export class MccOverviewList implements Component {
 
   render(width: number): string[] {
     const lines = this.layout();
-    const labelCol = this.labelColumnWidth(width);
+    const cols = this.columns(width);
     const selectedLine = lines.findIndex((l) => l.kind === "item" && l.item.value === this.items[this.selectedIndex]?.value);
     const start = Math.max(
       0,
@@ -1677,10 +1725,10 @@ export class MccOverviewList implements Component {
           out.push(this.renderHeader(line.title, width));
           break;
         case "item":
-          out.push(this.renderItem(line.item, line.index === this.selectedIndex, labelCol, width));
+          out.push(this.renderItem(line.item, line.index === this.selectedIndex, cols, width));
           break;
         case "disabled":
-          out.push(this.renderDisabled(line.disabled, labelCol, width));
+          out.push(this.renderDisabled(line.disabled, cols, width));
           break;
       }
     }
@@ -1708,35 +1756,58 @@ export class MccOverviewList implements Component {
   }
 
   /**
-   * Dynamic column sizing: the label column is derived from the actual
-   * content, the terminal width, and room for a trailing description.
+   * Dynamic, content-driven column sizing: name column from the widest row,
+   * a fixed semantic level column, and the description takes what is left.
+   * Always bounded by the available width (D45 invariant).
    */
-  private labelColumnWidth(width: number): number {
-    let widest = 0;
+  private columns(width: number): { name: number; level: number; desc: number } {
+    let widestName = 0;
+    let widestMarker = 0;
     for (const s of this.sections) {
       for (const row of s.rows) {
         const isItem = row.kind === "item";
-        const primary = isItem ? row.item.primary : row.disabled.primary;
-        const markerText = isItem ? MccOverviewList.markerOf(row.item.marked) : "";
-        const markerW = markerText ? visibleWidth(markerText) + 1 : 0; // leading space
-        widest = Math.max(widest, visibleWidth(primary) + markerW);
+        widestName = Math.max(widestName, visibleWidth(MccOverviewList.nameOf(row)));
+        if (isItem) {
+          const markerText = MccOverviewList.markerOf(row.item.marked);
+          if (markerText) widestMarker = Math.max(widestMarker, visibleWidth(markerText) + 1);
+        }
       }
     }
-    // Reserve the 2-column prefix and room for a short trailing description.
-    const maxByWidth = Math.max(10, width - 2 - 14);
-    return Math.max(8, Math.min(34, widest + 2, maxByWidth));
+    const prefixW = 2;
+    // Level column sized to the widest level label actually present.
+    let widestLevel = 0;
+    for (const sec of this.sections) {
+      for (const row of sec.rows) {
+        const level = MccOverviewList.levelOf(row.kind === "item" ? row.item.primary : row.disabled.primary);
+        widestLevel = Math.max(widestLevel, visibleWidth(level || "unavailable"));
+      }
+    }
+    // +1 leading separator space, +1 trailing gap before the description.
+    const levelCol = Math.min(LEVEL_WIDTH + 2, Math.max(0, widestLevel) + 2);
+    const usable = Math.max(8, width - prefixW - levelCol);
+    const nameNeeds = widestName + 2 + widestMarker;
+    // Content-driven: the name column takes only what names need, so the
+    // description keeps the remaining width.
+    const nameCol = Math.max(6, Math.min(nameNeeds, usable));
+    const descCol = Math.max(0, width - prefixW - nameCol - levelCol);
+    return { name: nameCol, level: levelCol, desc: descCol };
   }
 
   private renderHeader(title: string, width: number): string {
     const text = ` ${title} `;
     const w = visibleWidth(text);
-    if (width <= w + 3)
-      return this.fitLine(this.theme.fg("accent", this.theme.bold(truncateToWidth(text, Math.max(1, width), ""))), width);
+    // Restrained rule: enough to group, never a full-bleed separator.
+    const ruleW = Math.max(0, Math.min(width - w, Math.max(24, Math.floor(width / 3))));
     return this.fitLine(
-      this.theme.fg("accent", this.theme.bold(text)) +
-        this.theme.fg("dim", "─".repeat(Math.max(0, width - w))),
+      this.theme.fg("accent", this.theme.bold(text)) + this.theme.fg("dim", "─".repeat(ruleW)),
       width,
     );
+  }
+
+  /** Row name: the primary text before the " · level" separator. */
+  private static nameOf(row: MccRow): string {
+    const primary = row.kind === "item" ? row.item.primary : row.disabled.primary;
+    return primary.split(" · ")[0];
   }
 
   /** Marker text for a row ("" when the row has no marker). */
@@ -1745,49 +1816,58 @@ export class MccOverviewList implements Component {
     return marked ? MCC_ACTIVE_MARKER : "";
   }
 
+  /** Level text carried in the row primary ("Plan · high" → "high"). */
+  private static levelOf(primary: string): string {
+    return primary.split(" · ").slice(1).join(" · ");
+  }
+
   /**
-   * Responsive row: primary + marker share ONE label column (the marker never
-   * widens the row), and the description only takes the width that is left.
+   * Responsive row rendered as name | level | description. The marker shares
+   * the name column, so it can never widen the row (D45 overflow guard).
    */
-  private renderItem(item: MccItem, selected: boolean, labelCol: number, width: number): string {
-    const prefix = selected ? this.theme.fg("accent", "→ ") : "  ";
-    const prefixW = 2; // "→ " and "  " are both 2 display columns
+  private renderItem(
+    item: MccItem,
+    selected: boolean,
+    cols: { name: number; level: number; desc: number },
+    width: number,
+  ): string {
+    const prefix = selected ? this.theme.fg("accent", "› ") : "  ";
     const markerText = MccOverviewList.markerOf(item.marked);
-    const markerW = markerText ? visibleWidth(markerText) + 1 : 0; // leading space included
-
-    const primaryMax = Math.max(1, labelCol - markerW);
-    const primaryText = truncateToWidth(item.primary, primaryMax, "…");
-    const gapW = Math.max(0, labelCol - visibleWidth(primaryText) - markerW);
-    const cell =
-      primaryText +
-      " ".repeat(gapW) +
-      (markerText ? this.theme.fg("success", " " + markerText) : "");
-
-    const descBudget = width - prefixW - labelCol;
-    let descPart = "";
-    if (item.description && descBudget >= 14) {
-      descPart = this.theme.fg("muted", truncateToWidth(item.description, descBudget, "…"));
-    }
-
-    const content = prefix + cell + descPart;
+    const markerW = markerText ? visibleWidth(markerText) + 1 : 0;
+    const nameMax = Math.max(1, cols.name - markerW - 2);
+    const nameText = truncateToWidth(MccOverviewList.nameOf({ kind: "item", item }), nameMax, "…");
+    const nameCell = padCell(
+      nameText + (markerText ? " " + this.theme.fg("success", markerText) : ""),
+      cols.name,
+    );
+    const levelText = MccOverviewList.levelOf(item.primary);
+    const levelCell = this.theme.fg(
+      levelTone(levelText),
+      " " + padCell(levelText || "—", Math.max(1, cols.level - 1)),
+    );
+    const descCell =
+      item.description && cols.desc >= 14
+        ? this.theme.fg("muted", truncateToWidth(item.description, cols.desc, "…"))
+        : "";
+    const content = prefix + nameCell + levelCell + descCell;
     if (selected) {
-      const padTo = Math.max(0, width - visibleWidth(content));
-      return this.fitLine(
-        this.theme.bg("selectedBg", this.theme.bold(content + " ".repeat(padTo))),
-        width,
-      );
+      // Subtle, bounded highlight: only the row's own text, never a full-width bar.
+      return this.fitLine(this.theme.bg("selectedBg", this.theme.bold(content)), width);
     }
     return this.fitLine(content, width);
   }
 
-  private renderDisabled(disabled: MccDisabled, labelCol: number, width: number): string {
-    const cell = truncateToWidth(disabled.primary, labelCol, "…", true);
-    const descBudget = width - 2 - labelCol;
-    const descPart =
-      disabled.description && descBudget >= 14
-        ? truncateToWidth(disabled.description, descBudget, "…")
-        : "";
-    return this.fitLine(this.theme.fg("dim", "  " + cell + descPart), width);
+  private renderDisabled(
+    disabled: MccDisabled,
+    cols: { name: number; level: number; desc: number },
+    width: number,
+  ): string {
+    const nameCell = padCell(MccOverviewList.nameOf({ kind: "disabled", disabled }), cols.name);
+    // Unavailable rows say why, aligned with the level column.
+    const levelCell = this.theme.fg("dim", " " + padCell("unavailable", Math.max(1, cols.level - 1)));
+    const descCell =
+      disabled.description && cols.desc >= 14 ? truncateToWidth(disabled.description, cols.desc, "…") : "";
+    return this.fitLine(this.theme.fg("dim", "  " + nameCell + levelCell + descCell), width);
   }
 
   /** Final safety net: no rendered line may ever exceed the available width. */
@@ -2255,27 +2335,35 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
         const picked = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
           const container = new Container();
           container.addChild(new WidthSafeText((w) => theme.fg("accent", theme.bold("MODEL CONTROL CENTER")), 1));
+
+          // MODEL block: the active model is the single most important fact,
+          // with provider + connectivity as subordinate metadata.
+          container.addChild(new WidthSafeText((w) => theme.fg("dim", "MODEL"), 0));
           container.addChild(new WidthSafeText((w) => {
-            const label = w >= 60 ? "Current model" : "Model";
-            return theme.fg("text", `${label}: ${modelLabel}`);
+            const shown = w >= 72 ? modelLabel : shortModel(modelLabel, Math.max(12, w - 10));
+            return theme.fg("text", theme.bold(shown));
           }));
           container.addChild(new WidthSafeText((w) => {
-            const detail = w >= 72 ? " — router discovery filtered by your visibility settings" : "";
-            return theme.fg("dim", `Connectivity: UNVERIFIED${detail}`);
+            const provider = modelLabel.includes("/") ? modelLabel.split("/")[0] : "9router";
+            const suffix = w >= 60 ? " · Connectivity unverified" : " · unverified";
+            return theme.fg("muted", `${provider}${suffix}`);
           }));
-          container.addChild(new Text(
+
+          // REASONING block: default profile (or the live execution context).
+          container.addChild(new WidthSafeText(() => theme.fg("dim", "REASONING"), 0, 1));
+          container.addChild(new WidthSafeText(() =>
             resolved.source === "execution"
-              ? theme.fg("warning", `Execution: ${resolved.profile} · ${resolved.level}`)
-              : theme.fg("muted", `Default Profile: ${state.defaultProfile} · ${state.profiles[state.defaultProfile]}`),
-            0, 1,
+              ? theme.fg("warning", `● Execution: ${resolved.profile} · ${resolved.level}`)
+              : theme.fg("muted", `★ Default profile: ${state.defaultProfile} · ${state.profiles[state.defaultProfile]}`),
           ));
+
           container.addChild(new Spacer(1));
           const list = new MccOverviewList(sections, theme, 14);
           list.onSelect = (value) => done(value);
           list.onCancel = () => done("__done__");
           container.addChild(list);
           container.addChild(new Spacer(1));
-          container.addChild(new WidthSafeText((w) => theme.fg("dim", w >= 46 ? "↑↓ navigate · enter select · esc done" : "↑↓ move · Enter · Esc"), 1));
+          container.addChild(new WidthSafeText((w) => theme.fg("dim", w >= 46 ? "↑↓ Navigate   Enter Edit   Esc Close" : "↑↓ · Enter · Esc"), 1));
           return {
             render: (w: number) => container.render(w),
             invalidate: () => container.invalidate(),
@@ -2334,12 +2422,12 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
                 ...clampLines(
                   [
                     theme.fg("accent", theme.bold("SELECT MODEL")),
-                    theme.fg("dim", "Connectivity: UNVERIFIED"),
+                    theme.fg("dim", `Current  ${shortModel(modelLabel, Math.max(16, w - 10))}`),
                     "",
                     ...list.render(w),
                     "",
                     filterLine,
-                    theme.fg("dim", w >= 46 ? "↑↓ navigate · enter select · esc cancel" : "↑↓ move · Enter · Esc"),
+                    theme.fg("dim", w >= 46 ? "↑↓ Navigate   Type Search   Enter Select   Esc Back" : "↑↓ · Type · Enter · Esc"),
                   ],
                   w,
                 ),
@@ -2390,9 +2478,13 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
 
           const chosen = await ctx.ui.custom<Choice | null>((tui, theme, _kb, done) => {
             const container = new Container();
-            container.addChild(new Text(theme.fg("accent", theme.bold(profile.toUpperCase())), 1, 0));
-            container.addChild(new Text(theme.fg("muted", PROFILE_DESCRIPTIONS[profile]), 0, 0));
-            container.addChild(new Text(theme.fg("text", `Current: ${state.profiles[profile]}${state.defaultProfile === profile ? "   ★default profile" : ""}`), 0, 1));
+            container.addChild(new WidthSafeText(() => theme.fg("accent", theme.bold(profile.toUpperCase())), 1));
+            container.addChild(new WidthSafeText(() => theme.fg("muted", PROFILE_DESCRIPTIONS[profile]), 0));
+            container.addChild(new WidthSafeText(() => theme.fg("dim", "REASONING LEVEL"), 0, 1));
+            container.addChild(new WidthSafeText(() => {
+              const isDefault = state.defaultProfile === profile;
+              return theme.fg("text", `Current  ${state.profiles[profile]}${isDefault ? "   ★ default profile" : ""}`);
+            }));
             container.addChild(new Spacer(1));
             const items: SelectItem[] = choices.map((c) => ({ value: c.runtime ?? c.kind, label: c.label }));
             const list = new SelectList(items, Math.max(7, items.length), {
@@ -2410,7 +2502,7 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
             list.onCancel = () => done(null);
             container.addChild(list);
             container.addChild(new Spacer(1));
-            container.addChild(new Text(theme.fg("dim", "↑↓ navigate · enter save · esc cancel"), 1, 0));
+            container.addChild(new WidthSafeText((w) => theme.fg("dim", w >= 46 ? "↑↓ Choose   Enter Save   Esc Cancel" : "↑↓ · Enter · Esc"), 1));
             return {
               render: (w: number) => container.render(w),
               invalidate: () => container.invalidate(),

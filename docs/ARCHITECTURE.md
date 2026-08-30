@@ -326,3 +326,8 @@ Pi host skips `model_select` when the selected model equals the current one (`ag
 ### D45 addendum — responsive rendering invariant (2026-08-25)
 
 Every line rendered by the `/model` control surface must satisfy `renderedWidth <= availableWidth`. Rows derive a label column from content + width + a reserved description budget; markers live *inside* that column; all text is truncated with pi-tui `visibleWidth`/`truncateToWidth` (ANSI and Unicode aware); each line passes a final clamp. Headers, status lines, footer hints and the picker overlay use the same rule and simplify their wording on narrow terminals.
+
+
+### D46 addendum — control-center visual language (2026-08-25)
+
+The `/model` control surface uses a consistent visual language: MODEL/REASONING header blocks (primary model, muted provider/connectivity, `★`/`●` state markers), table rows (`name | level | description`) with content-driven columns, semantic level tones (dim→accent), a subtle bounded selection highlight, and width-aware chrome built from the actual render width. All lines still pass `renderedWidth <= availableWidth`.

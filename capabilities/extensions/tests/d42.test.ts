@@ -264,7 +264,7 @@ function buildSections(defaultProfile: ReasoningProfileName, levels: FixtureLeve
   return sections;
 }
 
-const selectedPlain = (lines: string[]) => stripAnsi(lines.find((l) => l.includes("→ ")) ?? "");
+const selectedPlain = (lines: string[]) => stripAnsi(lines.find((l) => l.includes("› ") || l.includes("→ ")) ?? "");
 
 check("headers never selectable across full navigation", () => {
   const list = new MccOverviewList(buildSections("Task", { Default: "high", Task: "medium" }), themeStub, 30);
@@ -282,7 +282,7 @@ check("navigation wraps both directions over items only", () => {
   const list = new MccOverviewList(buildSections("Task", { Default: "high", Task: "medium" }), themeStub, 30);
   const totalItems = 11; // model + 8 profiles (Vision gated) + done
   for (let i = 0; i < totalItems; i++) list.handleInput(DOWN);
-  assert.match(selectedPlain(list.render(100)), /Select model/); // wrapped to first item
+  assert.match(selectedPlain(list.render(100)), /Select model/, "expected wrap back to first row");
   list.handleInput(UP); // backwards wrap → Done
   assert.match(selectedPlain(list.render(100)), /Done/);
 });
@@ -291,17 +291,18 @@ check("STALE-PREVIEW REGRESSION: High→Low reflects immediately via the one sto
   const levels: FixtureLevels = { Vision: "high", Plan: "high", Default: "medium" };
   const flat = (lines: string[]) => stripAnsi(lines.join("\n")).replace(/\s+/g, " ");
   let list = new MccOverviewList(buildSections("Default", levels), themeStub, 30);
-  assert.match(flat(list.render(100)), /Vision · high/);
+  // Rows render as a table: "Name  [marker]  level  description".
+  assert.match(flat(list.render(100)), /Vision\s+high/);
   levels.Vision = "low"; // editor save mutates the SAME map the overview reads
   list = new MccOverviewList(buildSections("Default", levels), themeStub, 30);
-  assert.match(flat(list.render(100)), /Vision · low/);
+  assert.match(flat(list.render(100)), /Vision\s+low/);
   levels.Vision = "medium";
   list = new MccOverviewList(buildSections("Default", levels), themeStub, 30);
-  assert.match(flat(list.render(100)), /Vision · medium/);
+  assert.match(flat(list.render(100)), /Vision\s+medium/);
   levels.Plan = "low";
   list = new MccOverviewList(buildSections("Default", levels), themeStub, 30);
-  assert.match(flat(list.render(100)), /Vision · medium/); // untouched profile unchanged
-  assert.match(flat(list.render(100)), /Plan · low/);
+  assert.match(flat(list.render(100)), /Vision\s+medium/); // untouched profile unchanged
+  assert.match(flat(list.render(100)), /Plan\s+low/);
 });
 
 check("default marker renders with distinct color span", () => {
@@ -309,10 +310,49 @@ check("default marker renders with distinct color span", () => {
   const rendered = list.render(120).join("\n");
   assert.match(
     rendered,
-    new RegExp("\\x1b\\[38;2;180;180;180m ★default\\s*\\x1b\\[0m"),
+    new RegExp("\\x1b\\[38;2;180;180;180m★default\\x1b\\[0m"),
     "marker lacks own color span",
   );
-  assert.match(stripAnsi(rendered).replace(/\s+/g, " "), /Task · medium ★default/);
+  // Marker sits after the profile name, before the level column.
+  assert.match(stripAnsi(rendered).replace(/\s+/g, " "), /Task ★default medium/);
+});
+
+check("LAYOUT REGRESSION: name and level columns never abut", () => {
+  // Reproduces the live "Taskoff" defect: level values of differing widths
+  // (off/high/medium/xhigh) next to names of differing widths.
+  const levels: Record<string, string> = {
+    Default: "medium", Plan: "off", Task: "off", Review: "off", Vision: "medium",
+    Advisor: "high", Synthesis: "high", Commit: "xhigh", Research: "off", Coding: "high",
+  };
+  const sections: MccSection[] = PROFILE_GROUPS.map((g) => ({
+    title: g.title,
+    rows: g.items.map((name) => ({
+      kind: "item" as const,
+      item: {
+        value: `p:${name}`,
+        primary: `${name} · ${levels[name]}`,
+        description: PROFILE_DESCRIPTIONS[name],
+        marked: name === "Default" ? "★default" : undefined,
+      },
+    })),
+  }));
+
+  for (const width of [40, 60, 80, 100, 160, 204]) {
+    const list = new MccOverviewList(sections, themeStub, 14);
+    for (const line of list.render(width)) {
+      const plain = stripAnsi(line).trimEnd();
+      // Each profile row must keep name and level as separate tokens.
+      for (const name of Object.keys(levels)) {
+        const start = plain.indexOf(name);
+        if (start === -1) continue;
+        const after = plain.slice(start + name.length);
+        assert.ok(
+          /^[\s★●]/.test(after),
+          `name "${name}" abuts next column at width ${width}: ${JSON.stringify(plain.slice(0, 40))}`,
+        );
+      }
+    }
+  }
 });
 
 check("OVERFLOW REGRESSION: no rendered line exceeds any terminal width", () => {
