@@ -112,7 +112,8 @@ Chronological log of repository and setup changes. This file owns the history; c
 
 ## 2026-09-01
 
-- `docs`: D52 — Phase 2 admin-integration stance confirmed: skip; Phase 1 transparent UNVERIFIED fallback stays locked, consent file remains unused, upstream read-only status token noted as the preferred future path ([docs/DECISIONS.md](docs/DECISIONS.md) D52)
+
+- `feat`: D53 — `/model` final information architecture: PROVIDERS | MODELS two-pane browser (provider selection scopes the model list), SELECTED MODEL detail region that follows focus (provider / model / profile), horizontally dense REASONING PROFILES region with all ten profiles visible and distinct ›/★/● markers, visible in-pane search, contextual footer; model rows drop the repeated provider prefix; `modelSurfaceLoops` guard absorbs `model_select` fired by the surface's own `setModel`; D50 three-region composition retired ([docs/DECISIONS.md](docs/DECISIONS.md) D53)
 
  ## Notes
 

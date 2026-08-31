@@ -1067,13 +1067,6 @@ export const PROFILE_DESCRIPTIONS: Record<ReasoningProfileName, string> = {
   Coding: "Implementation-oriented work",
 };
 
-/** Profile groupings for the MCC overview (information architecture only). */
-export const PROFILE_GROUPS: Array<{ title: string; items: ReasoningProfileName[] }> = [
-  { title: "GENERAL", items: ["Default", "Task", "Review"] },
-  { title: "PLANNING", items: ["Plan", "Advisor", "Research"] },
-  { title: "EXECUTION", items: ["Coding", "Synthesis", "Commit"] },
-  { title: "SPECIALIZED", items: ["Vision"] },
-];
 
 // --- D42 Phase 1: user-owned model visibility (NOT a registry — curation only) ---
 
@@ -1251,10 +1244,6 @@ export function declaredDefaultLabel(): string {
   }
 }
 
-/** Stable value token encoding a profile row in the /model overview. */
-export function mccProfileValue(name: ReasoningProfileName): string {
-  return `profile:${name}`;
-}
 
 /** Orders model specs: 9router catalog first (alphabetical), then the rest. */
 export function sortModelsRouterFirst(specs: readonly string[]): string[] {
@@ -1540,9 +1529,9 @@ export function scriptWritesProtectedState(script: string): boolean {
   return mentions && writes;
 }
 // ---------------------------------------------------------------------------
-// Model Control Center UI (D39/D41): grouped overview list with structural,
-// never-selectable section headers, columnar rows, and a distinct active-
-// profile marker. Built on pi-tui primitives only — no new UI framework.
+// Model Control Center UI (D53): providers | models browser, focus-following
+// detail, horizontal reasoning profiles, contextual footer. Built on pi-tui
+// primitives only — no new UI framework.
 // ---------------------------------------------------------------------------
 
 /** One selectable row in the MCC overview. */
@@ -1667,71 +1656,178 @@ export function panelLines(title: string, lines: readonly string[], width: numbe
   return [head, ...clampLines(lines, width)];
 }
 
-/**
- * Navigation + detail composite. Above the width threshold the navigation list
- * renders on the left and the detail panel on the right (each clamped to its
- * column); on narrow terminals the layout stacks. Both sides are width-safe
- * by construction (D45 invariant).
- */
-/**
- * Three-region Model Control Surface (D50).
- *
- *   NAVIGATION | MODELS | DETAIL   (wide >= 140)
- *   NAVIGATION | MODELS            (medium 100-139; detail below models)
- *   NAVIGATION -> MODELS -> DETAIL (narrow < 100, stacked)
- *
- * Detail always follows the focused pane:
- *   focus = NAVIGATION -> profile/provider detail
- *   focus = MODELS     -> selected model detail
- * Provider selection scopes the model list; search filters within scope.
- * Width-safety: every emitted line is clamped (D45).
- */
-export class ModelControlSurface implements Component {
-  focus: "nav" | "models";
+/** Per-model metadata shape used for detail rendering (never getAll). */
+type AvailableModelMeta = {
+  provider: string;
+  id: string;
+  reasoning?: boolean;
+  input?: unknown[];
+  contextWindow?: number;
+};
+
+/** Surface state persisted across the /model loop: focus, scope, search and
+ * the profile cursor survive model selections and profile edits. */
+export interface ModelSurfaceState {
+  focus: "providers" | "models" | "profiles";
   provider: string | null;
   filter: string;
-  private nav: MccOverviewList;
-  private models: SelectList;
-  private highlight: string | null = null;
-  onSelectModel?: (spec: string) => void;
-  onEditProfile?: (profile: string) => void;
-  onClose?: () => void;
+  profileFocus: number;
+}
+
+/** One reasoning-profile chip in the horizontal profiles region. */
+export interface ProfileChip {
+  profile: ReasoningProfileName;
+  /** User-facing level labels (Off/Low/Medium/High/Ultra). */
+  level: string;
+  tone: "dim" | "muted" | "text" | "accent";
+  /** ★ user-designated default; ● ephemeral execution profile. */
+  marker: "default" | "execution" | null;
+  /** Set when the profile is not selectable (capability gate). */
+  disabled?: string;
+}
+
+/**
+ * Horizontal-dense reasoning profile strip (D53). All configured profiles are
+ * visible at once as wrapped chips; arrow keys move over selectable chips
+ * only; Enter opens the level editor. Markers stay visually distinct:
+ * › focus, ★ default, ● execution.
+ */
+export class ReasoningProfilesPanel implements Component {
+  private readonly selectable: number[] = [];
+  private index = 0;
+  onSelect?: (profile: ReasoningProfileName) => void;
+  onSelectionChange?: (chip: ProfileChip | null) => void;
 
   constructor(
-    private readonly sections: readonly MccSection[],
+    private readonly chips: readonly ProfileChip[],
     private readonly theme: Theme,
-    private readonly allSpecs: string[],
-    private readonly names: Record<string, string>,
-    private readonly modelLabel: string,
-    private readonly getAvailable: () => Array<{ provider: string; id: string; reasoning?: boolean; input?: unknown[]; contextWindow?: number }>,
-    private readonly detailFor: (focus: "nav" | "models", navSel: MccItem | null, highlight: string | null, width: number) => string[],
-    state: { focus: "nav" | "models"; provider: string | null; filter: string },
+    initialIndex = 0,
   ) {
-    this.focus = state.focus;
-    this.provider = state.provider;
-    this.filter = state.filter;
-    this.nav = new MccOverviewList(sections, theme, 14);
-    this.nav.onSelect = (value) => this.handleNavSelect(value);
-    this.nav.onCancel = () => this.onClose?.();
+    chips.forEach((c, i) => {
+      if (!c.disabled) this.selectable.push(i);
+    });
+    const pos = this.selectable.indexOf(initialIndex);
+    this.index = pos >= 0 ? pos : 0;
+  }
+
+  /** Current keyboard-focused chip, or null when none is selectable. */
+  getSelected(): ProfileChip | null {
+    const i = this.selectable[this.index];
+    return i === undefined ? null : (this.chips[i] ?? null);
+  }
+
+  invalidate(): void {}
+
+  handleInput(data: string): void {
+    const kb = getKeybindings();
+    if (this.selectable.length === 0) return;
+    if (kb.matches(data, "tui.select.up")) {
+      this.index = (this.index - 1 + this.selectable.length) % this.selectable.length;
+      this.onSelectionChange?.(this.getSelected());
+    } else if (kb.matches(data, "tui.select.down")) {
+      this.index = (this.index + 1) % this.selectable.length;
+      this.onSelectionChange?.(this.getSelected());
+    } else if (kb.matches(data, "tui.select.confirm")) {
+      const chip = this.getSelected();
+      if (chip && this.onSelect) this.onSelect(chip.profile);
+    }
+  }
+
+  render(width: number): string[] {
+    const gap = "   ";
+    const lines: string[] = [];
+    let current = "";
+    for (let i = 0; i < this.chips.length; i++) {
+      const piece = this.renderChip(this.chips[i], this.selectable[this.index] === i);
+      if (current && visibleWidth(current + gap + piece) > width) {
+        lines.push(truncateToWidth(current, width, ""));
+        current = piece;
+      } else {
+        current = current ? current + gap + piece : piece;
+      }
+    }
+    if (current) lines.push(truncateToWidth(current, width, ""));
+    return lines;
+  }
+
+  private renderChip(chip: ProfileChip, focused: boolean): string {
+    const marker =
+      chip.marker === "default"
+        ? this.theme.fg("success", "★ ")
+        : chip.marker === "execution"
+          ? this.theme.fg("warning", "● ")
+          : "";
+    const name = this.theme.fg(chip.disabled ? "dim" : "text", chip.profile);
+    const level = this.theme.fg(chip.disabled ? "dim" : chip.tone, chip.disabled ? "unavailable" : chip.level);
+    const content = `${marker}${name} ${level}`;
+    if (focused) return this.theme.bg("selectedBg", this.theme.bold(`› ${content}`));
+    return `  ${content}`;
+  }
+}
+
+/**
+ * D53 Model Control Surface:
+ *
+ *   PROVIDERS | MODELS              (wide >= 64; stacked below)
+ *   ─────────────────────────────
+ *   PROVIDER / SELECTED MODEL / PROFILE   (detail follows focus)
+ *   ─────────────────────────────
+ *   REASONING PROFILES              (horizontal chips)
+ *   footer                          (contextual per focus)
+ *
+ * ←→ switch regions; ↑↓ navigates within; Enter selects/browses/edits; Esc
+ * closes (a non-empty model search is cleared first). Typing filters the
+ * focused model scope. Every rendered line is clamped (D45 invariant).
+ */
+export class ModelControlSurface implements Component {
+  onSelectModel?: (spec: string) => void;
+  onEditProfile?: (profile: ReasoningProfileName) => void;
+  onClose?: () => void;
+  private providers: MccOverviewList;
+  private models: SelectList;
+  private profilesPanel: ReasoningProfilesPanel;
+  private highlight: string | null = null;
+
+  constructor(
+    providerSections: readonly MccSection[],
+    private readonly theme: Theme,
+    private readonly allSpecs: readonly string[],
+    private readonly names: Readonly<Record<string, string>>,
+    private readonly modelLabel: string,
+    private readonly getAvailable: () => ReadonlyArray<AvailableModelMeta>,
+    private readonly reasoningState: ReasoningStateV3,
+    private readonly resolved: EffectiveReasoning,
+    chips: readonly ProfileChip[],
+    private readonly persistent: ModelSurfaceState,
+  ) {
+    this.providers = new MccOverviewList(providerSections, theme, 8);
+    this.providers.onSelect = (value) => this.handleProviderSelect(value);
+    this.providers.onCancel = () => this.onClose?.();
+    this.profilesPanel = new ReasoningProfilesPanel(chips, theme, persistent.profileFocus);
+    this.profilesPanel.onSelect = (profile) => this.onEditProfile?.(profile);
+    this.profilesPanel.onSelectionChange = (chip) => {
+      const i = chips.findIndex((c) => c.profile === chip?.profile);
+      if (i >= 0) this.persistent.profileFocus = i;
+    };
     this.models = this.buildModels();
   }
 
-  invalidate(): void {
-    this.nav.invalidate();
-    this.models.invalidate();
+  get focus(): ModelSurfaceState["focus"] {
+    return this.persistent.focus;
   }
 
-  private handleNavSelect(value: string): void {
-    if (value.startsWith("provider:")) {
-      this.provider = value.slice("provider:".length);
-      this.focus = "models";
-      this.filter = "";
-      this.models = this.buildModels();
-    } else if (value.startsWith("profile:")) {
-      this.onEditProfile?.(value);
-    } else if (value === "__done__") {
-      this.onClose?.();
-    }
+  invalidate(): void {
+    this.providers.invalidate();
+    this.models.invalidate();
+    this.profilesPanel.invalidate();
+  }
+
+  private handleProviderSelect(value: string): void {
+    if (!value.startsWith("provider:")) return;
+    this.persistent.provider = value.slice("provider:".length);
+    this.persistent.filter = "";
+    this.persistent.focus = "models";
+    this.models = this.buildModels();
   }
 
   private listTheme(): SelectListTheme {
@@ -1746,28 +1842,30 @@ export class ModelControlSurface implements Component {
   }
 
   private buildModels(): SelectList {
-    const scoped = this.provider
-      ? this.allSpecs.filter((spec) => spec.startsWith(`${this.provider}/`))
-      : this.allSpecs;
-    const pool = this.filter
-      ? fuzzyFilter(scoped, this.filter.toLowerCase(), (spec) => `${spec} ${this.names[spec] ?? ""}`.toLowerCase())
+    const scoped = (
+      this.persistent.provider
+        ? this.allSpecs.filter((spec) => spec.startsWith(`${this.persistent.provider}/`))
+        : this.allSpecs
+    ).slice();
+    const filter = this.persistent.filter;
+    const pool = filter
+      ? fuzzyFilter(scoped, filter.toLowerCase(), (spec) => `${spec} ${this.names[spec] ?? ""}`.toLowerCase())
       : scoped;
-    const items: SelectItem[] = pool.map((spec) => ({
-      value: spec,
-      label: `${spec === this.modelLabel ? "✓ " : ""}${this.names[spec] ?? spec}`,
-      description: this.names[spec] && this.names[spec] !== spec ? spec : undefined,
-    }));
+    const items: SelectItem[] = pool.map((spec) => {
+      const row = modelRowLabel(spec, this.names);
+      return {
+        value: spec,
+        label: `${spec === this.modelLabel ? "✓ " : ""}${row.label}`,
+        description: row.description,
+      };
+    });
     // Initialize the highlight to the first scoped model so the detail panel
-    // has content the moment the models pane gains focus.
+    // has content the moment the surface is rendered.
     if (pool.length > 0 && (!this.highlight || !pool.includes(this.highlight))) {
       this.highlight = pool[0];
     }
-    const l = new SelectList(items, 12, this.listTheme());
+    const l = new SelectList(items, 10, this.listTheme());
     l.onSelect = (item) => this.onSelectModel?.(item.value);
-    l.onCancel = () => {
-      // Esc in the model pane returns to navigation.
-      this.focus = "nav";
-    };
     l.onSelectionChange = (item) => {
       this.highlight = item.value;
     };
@@ -1776,83 +1874,156 @@ export class ModelControlSurface implements Component {
 
   handleInput(data: string): void {
     if (data === "\x1b[C") {
-      this.focus = "models";
+      this.shiftRegion(1);
     } else if (data === "\x1b[D") {
-      this.focus = "nav";
-    } else if (this.focus === "models") {
-      if (!data.startsWith("\x1b") && data.length >= 1 && data >= " " && data <= "~") {
-        this.filter += data;
+      this.shiftRegion(-1);
+    } else if (data === "\x1b") {
+      // Esc closes; a non-empty model search is cleared first.
+      if (this.persistent.focus === "models" && this.persistent.filter) {
+        this.persistent.filter = "";
+        this.models = this.buildModels();
+      } else {
+        this.onClose?.();
+      }
+    } else if (this.persistent.focus === "models") {
+      if (!data.startsWith("\x1b") && data >= " " && data <= "~") {
+        this.persistent.filter += data;
         this.models = this.buildModels();
       } else if (data === "\x7f" || data === "\b" || data === "\x1b[3~") {
-        this.filter = this.filter.slice(0, -1);
+        this.persistent.filter = this.persistent.filter.slice(0, -1);
         this.models = this.buildModels();
-      } else if (data === "\x1b") {
-        this.focus = "nav";
       } else {
         this.models.handleInput(data);
       }
+    } else if (this.persistent.focus === "providers") {
+      this.providers.handleInput(data);
     } else {
-      this.nav.handleInput(data);
+      this.profilesPanel.handleInput(data);
     }
   }
 
-  render(width: number): string[] {
-    const wide = width >= 140;
-    const medium = width >= 100;
-    const navSel = this.nav.getSelectedItem();
-    const detailLines =
-      this.focus === "models"
-        ? this.detailFor("models", navSel, this.highlight, width)
-        : this.detailFor("nav", navSel, this.highlight, width);
+  private shiftRegion(dir: 1 | -1): void {
+    const regions: ModelSurfaceState["focus"][] = ["providers", "models", "profiles"];
+    const i = regions.indexOf(this.persistent.focus);
+    this.persistent.focus = regions[(i + dir + regions.length) % regions.length];
+  }
 
-    if (!wide && !medium) {
-      // Stacked: nav, then models, then detail.
-      return [
-        ...clampLines(this.nav.render(width), width),
-        "",
-        ...panelLines("MODELS", clampLines(this.models.render(width), width), width, this.theme),
-        "",
-        ...clampLines(detailLines, width),
-      ];
-    }
-
-    const navW = Math.max(24, Math.min(46, Math.floor(width * (wide ? 0.34 : 0.42))));
-    const modelsW = Math.max(20, Math.floor((width - navW) * (wide ? 0.58 : 1)));
-    const detailW = wide ? Math.max(10, width - navW - modelsW - 4) : modelsW;
-
-    const navLines = this.nav.render(navW);
-    const modelLines = this.models.render(wide ? modelsW : modelsW);
-    const detailClamped = clampLines(detailLines, detailW);
-
-    if (wide) {
-      // Three columns: nav | models | detail
-      const rows = Math.max(navLines.length, modelLines.length, detailClamped.length);
-      const out: string[] = [];
-      for (let i = 0; i < rows; i++) {
-        const l = navLines[i] ?? "";
-        const m = modelLines[i] ?? "";
-        const d = detailClamped[i] ?? "";
-        const lp = " ".repeat(Math.max(1, navW - visibleWidth(l)));
-        const mp = " ".repeat(Math.max(1, modelsW - visibleWidth(m)));
-        const line = l + lp + "│" + m + mp + "│" + d;
-        out.push(visibleWidth(line) > width ? truncateToWidth(line, width, "") : line);
+  /** Focus-following detail context (never model-dominant). */
+  private detailLines(): { title: string; lines: string[] } {
+    const maxLines = 10;
+    if (this.persistent.focus === "providers") {
+      const sel = this.providers.getSelectedItem();
+      if (sel?.value.startsWith("provider:")) {
+        const name = sel.value.slice("provider:".length);
+        const count = providerCounts(this.allSpecs).find((p) => p.name === name)?.count ?? 0;
+        return { title: "PROVIDER", lines: providerDetailLines(name, count, this.theme, maxLines) };
       }
-      return clampLines(out, width);
+    } else if (this.persistent.focus === "profiles") {
+      const chip = this.profilesPanel.getSelected();
+      if (chip) {
+        return {
+          title: "PROFILE",
+          lines: profileDetailLines(chip.profile, this.reasoningState, this.resolved, this.theme, maxLines),
+        };
+      }
+    }
+    if (this.highlight) {
+      return {
+        title: "SELECTED MODEL",
+        lines: selectedModelDetailLines(this.highlight, this.names[this.highlight], this.getAvailable, this.modelLabel, this.theme, maxLines),
+      };
+    }
+    const [prov, ...rest] = this.modelLabel.split("/");
+    const model = this.getAvailable().find((m) => m.provider === prov && m.id === rest.join("/"));
+    return {
+      title: "CURRENT MODEL",
+      lines: currentModelDetailLines(this.modelLabel, this.names[this.modelLabel], model, this.theme, maxLines),
+    };
+  }
+
+  /** Pane rule header with a focus-aware tone. */
+  private paneHeader(title: string, width: number, focused: boolean): string[] {
+    const text = ` ${title} `;
+    const ruleW = Math.max(0, Math.min(width - visibleWidth(text), Math.max(12, Math.floor(width / 4))));
+    const head = focused
+      ? this.theme.fg("accent", this.theme.bold(text)) + this.theme.fg("dim", "─".repeat(ruleW))
+      : this.theme.fg("dim", text + "─".repeat(Math.max(0, ruleW)));
+    return [this.fitLine(head, width)];
+  }
+
+  /** Visible search line inside the model pane. */
+  private searchLine(width: number): string[] {
+    if (this.persistent.filter) return [this.fitLine(this.theme.fg("text", `> ${this.persistent.filter}`), width)];
+    if (this.persistent.focus === "models") return [this.fitLine(this.theme.fg("dim", "> type to search"), width)];
+    return [];
+  }
+
+  private footerLine(width: number): string {
+    const full = width >= 60;
+    const text =
+      this.persistent.focus === "providers"
+        ? "↑↓ Provider · ←→ Region · Enter Browse · Esc Close"
+        : this.persistent.focus === "models"
+          ? "↑↓ Model · ←→ Region · Type Search · Enter Select · Esc Close"
+          : "↑↓ Profile · ←→ Region · Enter Edit · Esc Close";
+    return this.theme.fg("dim", full ? text : "↑↓ · ←→ · Enter · Esc");
+  }
+
+  render(width: number): string[] {
+    const wide = width >= 64;
+    const detail = this.detailLines();
+    const detailPanel = panelLines(detail.title, detail.lines, width, this.theme);
+    const profilesPanel = panelLines("REASONING PROFILES", this.profilesPanel.render(width), width, this.theme);
+    const footer = this.footerLine(width);
+
+    if (!wide) {
+      // Stacked: providers, models, detail, profiles, footer.
+      return clampLines(
+        [
+          ...this.paneHeader("PROVIDERS", width, this.persistent.focus === "providers"),
+          ...clampLines(this.providers.render(width), width),
+          "",
+          ...this.paneHeader(scopeTitle(this.persistent.provider), width, this.persistent.focus === "models"),
+          ...this.searchLine(width),
+          ...clampLines(this.models.render(width), width),
+          "",
+          ...detailPanel,
+          "",
+          ...profilesPanel,
+          "",
+          footer,
+        ],
+        width,
+      );
     }
 
-    // Medium: nav | models, detail stacked under models.
-    const rows = Math.max(navLines.length, modelLines.length);
+    // Two-pane browser: providers left, models right — horizontal space is
+    // used aggressively; only genuinely narrow terminals stack.
+    const provW = Math.max(24, Math.min(36, Math.floor(width * 0.32)));
+    const modelW = Math.max(20, width - provW - 2);
+    const provLines = [
+      ...this.paneHeader("PROVIDERS", provW, this.persistent.focus === "providers"),
+      ...clampLines(this.providers.render(provW), provW),
+    ];
+    const modelLines = [
+      ...this.paneHeader(scopeTitle(this.persistent.provider), modelW, this.persistent.focus === "models"),
+      ...this.searchLine(modelW),
+      ...clampLines(this.models.render(modelW), modelW),
+    ];
+    const rows = Math.max(provLines.length, modelLines.length);
     const out: string[] = [];
     for (let i = 0; i < rows; i++) {
-      const l = navLines[i] ?? "";
+      const l = provLines[i] ?? "";
       const m = modelLines[i] ?? "";
-      const lp = " ".repeat(Math.max(1, navW - visibleWidth(l)));
+      const lp = " ".repeat(Math.max(1, provW - visibleWidth(l)));
       const line = l + lp + "│" + m;
       out.push(visibleWidth(line) > width ? truncateToWidth(line, width, "") : line);
     }
-    out.push("");
-    out.push(...detailClamped);
-    return clampLines(out, width);
+    return clampLines([...out, "", ...detailPanel, "", ...profilesPanel, "", footer], width);
+  }
+
+  private fitLine(line: string, width: number): string {
+    return visibleWidth(line) > width ? truncateToWidth(line, width, "") : line;
   }
 }
 
@@ -1885,7 +2056,7 @@ export function scopeTitle(provider: string | null): string {
   return provider ? `${provider.toUpperCase()} MODELS` : "ALL MODELS";
 }
 
-/** Detail panel for a provider navigation row. */
+/** Detail content for a focused provider (title supplied by panelLines). */
 export function providerDetailLines(
   provider: string,
   count: number,
@@ -1893,7 +2064,6 @@ export function providerDetailLines(
   maxLines: number,
 ): string[] {
   return [
-    theme.fg("dim", "PROVIDER"),
     theme.fg("text", theme.bold(provider)),
     theme.fg("muted", `${count} selectable model${count === 1 ? "" : "s"}`),
     theme.fg("muted", "Availability: Configured / available to Pi"),
@@ -1903,54 +2073,105 @@ export function providerDetailLines(
   ].slice(0, maxLines);
 }
 
-/** Detail panel for a highlighted model in the picker. */
-function pickedModelDetailLines(
+/** Splits a selectable spec ("9router/bai/deepseek-v4-flash") into display parts. */
+export function splitModelSpec(spec: string): { provider: string; route: string; name: string } {
+  const parts = spec.split("/");
+  return {
+    provider: parts[0] ?? spec,
+    route: parts.length > 2 ? parts.slice(1, -1).join("/") : "",
+    name: parts[parts.length - 1] ?? spec,
+  };
+}
+
+/** Row label for the model pane: display name or the provider-stripped spec
+ * (the pane scope already names the provider — rows never repeat it). */
+export function modelRowLabel(
   spec: string,
-  getAvailable: () => Array<{ provider: string; id: string; reasoning?: boolean; input?: unknown[]; contextWindow?: number }>,
+  names: Readonly<Record<string, string>>,
+): { label: string; description?: string } {
+  const bare = spec.slice(spec.indexOf("/") + 1);
+  const display = names[spec];
+  return display ? { label: display, description: bare } : { label: bare };
+}
+
+/** Horizontal capability/context metadata: "200k ctx · ● reasoning · ○ vision". */
+function modelMetaLine(model: AvailableModelMeta | undefined, theme: Theme): string {
+  const caps = modelCaps(model ?? {});
+  const ctxText = caps.ctx === "—" ? "context size unknown" : `${caps.ctx} ctx`;
+  return [
+    ctxText,
+    theme.fg(caps.reasoning ? "success" : "muted", `${caps.reasoning ? "●" : "○"} reasoning`),
+    theme.fg(caps.vision ? "success" : "muted", `${caps.vision ? "●" : "○"} vision`),
+  ].join(theme.fg("muted", " · "));
+}
+
+/** Detail content for the highlighted model (title supplied by panelLines). */
+function selectedModelDetailLines(
+  spec: string,
+  displayName: string | undefined,
+  getAvailable: () => ReadonlyArray<AvailableModelMeta>,
   currentLabel: string,
   theme: Theme,
   maxLines: number,
 ): string[] {
+  const { provider, route, name } = splitModelSpec(spec);
   const [prov, ...rest] = spec.split("/");
   const model = getAvailable().find((m) => m.provider === prov && m.id === rest.join("/"));
-  const caps = modelCaps(model ?? {});
   const isCurrent = spec === currentLabel;
-  const lines = [
-    theme.fg("dim", "SELECTED MODEL"),
-    theme.fg("text", theme.bold(spec)),
-    theme.fg("muted", `${prov} · ${caps.ctx} ctx${isCurrent ? " · current" : ""}`),
-    "",
-    theme.fg("dim", "CAPABILITIES"),
-    theme.fg(caps.reasoning ? "success" : "muted", `${caps.reasoning ? "●" : "○"} Reasoning`),
-    theme.fg(caps.vision ? "success" : "muted", `${caps.vision ? "●" : "○"} Vision`),
-  ];
-  return lines.slice(0, maxLines);
+  const routeText = route ? `${provider} / ${route}` : provider;
+  return [
+    theme.fg("text", theme.bold(displayName ?? name)),
+    theme.fg("muted", spec),
+    modelMetaLine(model, theme) + theme.fg("muted", ` · ${routeText}`),
+    isCurrent ? theme.fg("success", "✓ Current Model") : theme.fg("dim", "Enter — Select"),
+  ].slice(0, maxLines);
 }
 
-/** Detail panel for the current model (overview's "Select model…" context). */
-function modelDetailLines(
+/** Detail content for the current model when no catalog highlight exists. */
+function currentModelDetailLines(
   modelLabel: string,
-  model: { reasoning?: boolean; input?: unknown[]; contextWindow?: number } | undefined,
+  displayName: string | undefined,
+  model: AvailableModelMeta | undefined,
   theme: Theme,
   maxLines: number,
 ): string[] {
-  const caps = modelCaps(model ?? {});
-  const provider = modelLabel.includes("/") ? modelLabel.split("/")[0] : "9router";
-  const lines = [
-    theme.fg("dim", "CURRENT MODEL"),
-    theme.fg("text", theme.bold(modelLabel)),
-    theme.fg("muted", `${provider} · ${caps.ctx} ctx`),
-    "",
-    theme.fg("dim", "CAPABILITIES"),
-    theme.fg(caps.reasoning ? "success" : "muted", `${caps.reasoning ? "●" : "○"} Reasoning`),
-    theme.fg(caps.vision ? "success" : "muted", `${caps.vision ? "●" : "○"} Vision`),
-    "",
-    theme.fg("dim", "Enter — open model picker"),
-  ];
-  return lines.slice(0, maxLines);
+  if (modelLabel.startsWith("(none")) {
+    return [theme.fg("muted", modelLabel), theme.fg("dim", "Pick a provider, then a model")].slice(0, maxLines);
+  }
+  return [
+    theme.fg("text", theme.bold(displayName ?? splitModelSpec(modelLabel).name)),
+    theme.fg("muted", modelLabel),
+    modelMetaLine(model, theme),
+    theme.fg("success", "✓ Current Model"),
+  ].slice(0, maxLines);
 }
 
-/** Detail panel for a focused profile row. */
+/** Compact CURRENT MODEL header lines (tier 1 of the surface). */
+function currentModelHeaderLines(
+  modelLabel: string,
+  displayName: string | undefined,
+  theme: Theme,
+  state: ReasoningStateV3,
+  resolved: EffectiveReasoning,
+): string[] {
+  const lines: string[] = [];
+  if (modelLabel.startsWith("(none")) {
+    lines.push(theme.fg("muted", theme.bold(modelLabel)));
+  } else {
+    const { provider, route, name } = splitModelSpec(modelLabel);
+    const routeText = route ? `${provider} / ${route}` : provider;
+    lines.push(theme.fg("text", theme.bold(displayName ?? name)) + theme.fg("muted", `  ·  ${routeText}`));
+  }
+  lines.push(theme.fg("muted", "Connectivity: Unverified"));
+  lines.push(
+    resolved.source === "execution"
+      ? theme.fg("warning", `● Execution: ${resolved.profile} · ${levelLabelForRuntime(resolved.level) ?? resolved.level}`)
+      : theme.fg("muted", `★ Default profile: ${state.defaultProfile} · ${levelLabelForRuntime(state.profiles[state.defaultProfile]) ?? state.profiles[state.defaultProfile]}`),
+  );
+  return lines;
+}
+
+/** Detail content for a focused profile (title supplied by panelLines). */
 export function profileDetailLines(
   profile: ReasoningProfileName,
   state: ReasoningStateV3,
@@ -1962,22 +2183,20 @@ export function profileDetailLines(
   const isDefault = state.defaultProfile === profile;
   const isActive = resolved.profile === profile;
   const lines = [
-    theme.fg("accent", theme.bold(profile.toUpperCase())),
+    theme.fg("accent", theme.bold(profile)),
     theme.fg("muted", PROFILE_DESCRIPTIONS[profile]),
     "",
     theme.fg("dim", "REASONING"),
-    theme.fg(levelTone(level), level),
+    theme.fg(levelTone(level), levelLabelForRuntime(level) ?? level),
     "",
     theme.fg("dim", "STATE"),
   ];
   if (resolved.source === "execution" && isActive) {
-    lines.push(theme.fg("warning", `● Execution · ${resolved.level}`));
+    lines.push(theme.fg("warning", `● Execution · ${levelLabelForRuntime(resolved.level) ?? resolved.level}`));
   } else if (isActive) {
     lines.push(theme.fg("success", "● Active"));
   }
   lines.push(isDefault ? theme.fg("success", "★ Default") : theme.fg("muted", "○ Not default"));
-  lines.push("", theme.fg("dim", "Enter — edit reasoning"));
-  if (!isDefault) lines.push(theme.fg("dim", "↑ editor — set as default"));
   return lines.slice(0, maxLines);
 }
 
@@ -2045,7 +2264,7 @@ export class MccOverviewList implements Component {
     while (visible.length > 0 && visible[0].kind === "spacer") visible.shift();
     while (
       visible.length > 1 &&
-      visible[visible.length - 1].kind !== "item" &&
+      (visible[visible.length - 1].kind === "spacer" || visible[visible.length - 1].kind === "header") &&
       visible.some((l) => l.kind === "item")
     ) {
       visible.pop();
@@ -2093,12 +2312,16 @@ export class MccOverviewList implements Component {
 
   /**
    * Dynamic, content-driven column sizing: name column from the widest row,
-   * a fixed semantic level column, and the description takes what is left.
-   * Always bounded by the available width (D45 invariant).
+   * a semantic level column only when some row actually carries a level
+   * (provider rows are level-free — reserving the column would starve their
+   * count text), and the description takes what is left. Bounded by the
+   * available width (D45 invariant).
    */
   private columns(width: number): { name: number; level: number; desc: number } {
     let widestName = 0;
     let widestMarker = 0;
+    let widestLevel = 0;
+    let hasLevel = false;
     for (const s of this.sections) {
       for (const row of s.rows) {
         const isItem = row.kind === "item";
@@ -2107,19 +2330,15 @@ export class MccOverviewList implements Component {
           const markerText = MccOverviewList.markerOf(row.item.marked);
           if (markerText) widestMarker = Math.max(widestMarker, visibleWidth(markerText) + 1);
         }
+        const level = MccOverviewList.levelOf(row.kind === "item" ? row.item.primary : row.disabled.primary);
+        if (level) {
+          hasLevel = true;
+          widestLevel = Math.max(widestLevel, visibleWidth(level));
+        }
       }
     }
     const prefixW = 2;
-    // Level column sized to the widest level label actually present.
-    let widestLevel = 0;
-    for (const sec of this.sections) {
-      for (const row of sec.rows) {
-        const level = MccOverviewList.levelOf(row.kind === "item" ? row.item.primary : row.disabled.primary);
-        widestLevel = Math.max(widestLevel, visibleWidth(level || "unavailable"));
-      }
-    }
-    // +1 leading separator space, +1 trailing gap before the description.
-    const levelCol = Math.min(LEVEL_WIDTH + 2, Math.max(0, widestLevel) + 2);
+    const levelCol = hasLevel ? Math.min(LEVEL_WIDTH + 2, widestLevel + 2) : 0;
     const usable = Math.max(8, width - prefixW - levelCol);
     const nameNeeds = widestName + 2 + widestMarker;
     // Content-driven: the name column takes only what names need, so the
@@ -2200,8 +2419,9 @@ export class MccOverviewList implements Component {
     width: number,
   ): string {
     const nameCell = padCell(MccOverviewList.nameOf({ kind: "disabled", disabled }), cols.name);
-    // Unavailable rows say why, aligned with the level column.
-    const levelCell = this.theme.fg("dim", " " + padCell("unavailable", Math.max(1, cols.level - 1)));
+    // Unavailable rows say why, aligned with the level column when one exists;
+    // level-free sections (providers) fold the notice into the dimmed row.
+    const levelCell = cols.level > 0 ? this.theme.fg("dim", " " + padCell("unavailable", Math.max(1, cols.level - 1))) : "";
     const descCell =
       disabled.description && cols.desc >= 14 ? truncateToWidth(disabled.description, cols.desc, "…") : "";
     return this.fitLine(this.theme.fg("dim", "  " + nameCell + levelCell + descCell), width);
@@ -2308,6 +2528,9 @@ export default function (pi: ExtensionAPI) {
     // D44 host bridge: same-model selector picks now emit with sameModel+set.
     const ev = event as { sameModel?: boolean; source?: string };
     if (!shouldOpenControlCenter(ev)) return;
+    // A surface loop is already open (its own setModel fired this event);
+    // the loop re-renders itself — never stack a second surface on top.
+    if (modelSurfaceLoops > 0) return;
     try {
       await runModelControlCenter(pi, ctx);
     } catch (e) {
@@ -2633,9 +2856,27 @@ export default function (pi: ExtensionAPI) {
 }
 
 
-/** The unified Model Control Center flow (D50): one surface, scope + profiles. */
+/** Active runModelControlCenter loops. While one is open, model_select events
+ * fired by the surface's own setModel are absorbed: the loop re-renders with
+ * fresh state itself, so a second loop must never stack on top (which caused
+ * double-Esc exits and state carryover between layers). */
+let modelSurfaceLoops = 0;
+
+/** The unified Model Control Center flow (D53): one surface — providers |
+ * models browser on top, focus-following detail, horizontal reasoning
+ * profiles, contextual footer. Focus, scope, search and the profile cursor
+ * persist across model selections and profile edits. */
 async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-  const surfaceState = { focus: "nav" as "nav" | "models", provider: null as string | null, filter: "" };
+  modelSurfaceLoops++;
+  try {
+    return await runModelControlSurfaceLoop(pi, ctx);
+  } finally {
+    modelSurfaceLoops--;
+  }
+}
+
+async function runModelControlSurfaceLoop(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+  const surfaceState: ModelSurfaceState = { focus: "models", provider: null, filter: "", profileFocus: 0 };
   for (;;) {
     const state = loadReasoningState();
     const resolved = resolveEffective(state);
@@ -2648,72 +2889,59 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
       Array.isArray(ctx.model.input) && ctx.model.input.includes("image");
     const allSpecs = sortModelsRouterFirst(listAvailableModelSpecsSafe(ctx));
     const names = loadModelsVisibility().names;
+    const getAvailable = () => ctx.modelRegistry.getAvailable();
 
-    const profileByValue: Record<string, ReasoningProfileName> = {};
-    const sections: MccSection[] = [];
-    for (const g of PROFILE_GROUPS) {
-      const rows: MccRow[] = [];
-      for (const name of g.items) {
-        if (name === "Vision" && !supportsVision) {
-          rows.push({ kind: "disabled", disabled: { primary: `${name} · unavailable`, description: "current model has no image input" } });
-          continue;
-        }
-        profileByValue[mccProfileValue(name)] = name;
-        rows.push({
-          kind: "item",
-          item: {
-            value: mccProfileValue(name),
-            primary: `${name} · ${state.profiles[name]}`,
-            description: PROFILE_DESCRIPTIONS[name],
-            marked: state.defaultProfile === name ? "★default" : undefined,
-          },
-        });
-      }
-      sections.push({ title: g.title, rows });
-    }
-    // PROVIDERS: configured rows (selectable, truthful counts) + registered-but-
-    // unconfigured rows (dimmed, non-selectable). Never claim upstream auth.
+    // PROVIDERS pane: configured rows (selectable, truthful counts) + registered-
+    // but-unconfigured rows (dimmed, non-selectable). Never claim upstream auth.
     const configured = providerCounts(allSpecs);
     const configuredNames = new Set(configured.map((c) => c.name));
     const providerRows: MccRow[] = configured.map((p) => ({
       kind: "item" as const,
-      item: { value: `provider:${p.name}`, primary: `${p.name}`, description: `${p.count} model${p.count === 1 ? "" : "s"}` },
+      item: { value: `provider:${p.name}`, primary: p.name, description: `${p.count} model${p.count === 1 ? "" : "s"}` },
     }));
     for (const registered of ctx.modelRegistry.getRegisteredProviderIds() ?? []) {
       if (!configuredNames.has(registered)) {
         providerRows.push({ kind: "disabled" as const, disabled: { primary: `○ ${registered}`, description: "registered · not configured" } });
       }
     }
-    sections.push({ title: "PROVIDERS", rows: providerRows });
+    const providerSections: MccSection[] = [{ title: "", rows: providerRows }];
+
+    // REASONING PROFILES chips: one per profile, horizontal density, markers
+    // distinct (★ default / ● execution) — independent of the model dimension.
+    const chips: ProfileChip[] = REASONING_PROFILES.map((name) => {
+      const runtime = state.profiles[name];
+      const gated = name === "Vision" && !supportsVision;
+      return {
+        profile: name,
+        level: levelLabelForRuntime(runtime) ?? runtime,
+        tone: levelTone(runtime),
+        marker:
+          resolved.source === "execution" && resolved.profile === name
+            ? ("execution" as const)
+            : state.defaultProfile === name
+              ? ("default" as const)
+              : null,
+        disabled: gated ? "current model has no image input" : undefined,
+      };
+    });
 
     const result = await ctx.ui.custom<
-      { kind: "model"; spec: string } | { kind: "profile"; profile: string } | null
+      { kind: "model"; spec: string } | { kind: "profile"; profile: ReasoningProfileName } | null
     >((tui, theme, _kb, done) => {
       const surface = new ModelControlSurface(
-        sections,
+        providerSections,
         theme,
         allSpecs,
         names,
         modelLabel,
-        () => ctx.modelRegistry.getAvailable(),
-        (focus, navSel, highlight, width) => {
-          // Detail follows the focused pane.
-          if (focus === "models" && highlight) {
-            return pickedModelDetailLines(highlight, () => ctx.modelRegistry.getAvailable(), modelLabel, theme, 14);
-          }
-          if (!navSel) return [];
-          if (navSel.value.startsWith("provider:")) {
-            const pname = navSel.value.slice("provider:".length);
-            const pc = providerCounts(allSpecs).find((p) => p.name === pname);
-            return providerDetailLines(pname, pc?.count ?? 0, theme, 14);
-          }
-          const profile = profileByValue[navSel.value];
-          return profile ? profileDetailLines(profile, state, resolved, theme, 14) : [];
-        },
+        getAvailable,
+        state,
+        resolved,
+        chips,
         surfaceState,
       );
       surface.onSelectModel = (spec) => done({ kind: "model", spec });
-      surface.onEditProfile = (value) => done({ kind: "profile", profile: value });
+      surface.onEditProfile = (profile) => done({ kind: "profile", profile });
       surface.onClose = () => done(null);
 
       return {
@@ -2724,27 +2952,12 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
               "",
               ...panelLines(
                 "CURRENT MODEL",
-                [
-                  theme.fg("text", theme.bold(w >= 72 ? modelLabel : shortModel(modelLabel, Math.max(12, w - 10)))),
-                  theme.fg("muted", `${modelLabel.includes("/") ? modelLabel.split("/")[0] : "9router"} · Connectivity: Unverified`),
-                  "",
-                  resolved.source === "execution"
-                    ? theme.fg("warning", `● Execution: ${resolved.profile} · ${resolved.level}`)
-                    : theme.fg("muted", `★ Default profile: ${state.defaultProfile} · ${state.profiles[state.defaultProfile]}`),
-                ],
+                currentModelHeaderLines(modelLabel, names[modelLabel], theme, state, resolved),
                 w,
                 theme,
               ),
               "",
               ...surface.render(w),
-              "",
-              theme.fg("dim", "─".repeat(Math.max(1, w - 2))),
-              theme.fg(
-                "dim",
-                surface.focus === "models"
-                  ? (w >= 60 ? "↑↓ Navigate · Type Search · Enter Select · ← Nav · Esc Back" : "↑↓ · Type · Enter · Esc")
-                  : (w >= 60 ? "↑↓ Navigate · → Models · Enter Open · Esc Close" : "↑↓ · → · Enter · Esc"),
-              ),
             ],
             w,
           ),
@@ -2765,11 +2978,11 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
       }
       await pi.setModel(target as never);
       ctx.ui.notify(`Model: ${result.spec}`, "info");
-      continue;
+      continue; // stay in the surface — header/detail refresh on the next pass
     }
     if (result.kind === "profile") {
       // ---- Profile editor (levels + Default Profile designation) ----
-      const profile = result.profile.slice("profile:".length) as ReasoningProfileName;
+      const profile = result.profile;
       if (!REASONING_PROFILES.includes(profile)) continue;
       {
         interface Choice { kind: "default" | "level"; label: string; runtime?: string }

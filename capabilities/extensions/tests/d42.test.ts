@@ -19,7 +19,6 @@ import {
   panelLines,
   providerCounts,
   scopeTitle,
-  PROFILE_GROUPS,
   PROFILE_DESCRIPTIONS,
   REASONING_PROFILES,
   USER_LEVEL_MAP,
@@ -27,7 +26,6 @@ import {
   clearExecutionProfile,
   loadModelsVisibility,
   loadReasoningState,
-  mccProfileValue,
   parseProfileTag,
   resolveEffective,
   saveModelsVisibility,
@@ -35,9 +33,13 @@ import {
   scriptWritesProtectedState,
   setExecutionProfile,
   sortModelsRouterFirst,
+  type EffectiveReasoning,
+  type ModelSurfaceState,
   type MccSection,
   type MccRow,
+  type ProfileChip,
   type ReasoningProfileName,
+  type ReasoningStateV3,
 } from "../runtime-orchestrator.ts";
 
 const STATE_FILE = path.join(os.homedir(), ".pi", "agent", "harness-reasoning.json");
@@ -242,30 +244,24 @@ const DOWN = "\x1b[B";
 interface FixtureLevels extends Record<string, string> {}
 
 function buildSections(defaultProfile: ReasoningProfileName, levels: FixtureLevels): MccSection[] {
-  const sections: MccSection[] = [
-    { title: "MODEL", rows: [{ kind: "item", item: { value: "__model__", primary: "Select model…" } }] },
-  ];
-  for (const g of PROFILE_GROUPS) {
-    const rows: MccRow[] = [];
-    for (const name of g.items) {
-      if (name === "Vision" && !levels.Vision) continue; // capability-gated fixture
-      rows.push({
-        kind: "item",
-        item: {
-          value: mccProfileValue(name),
-          primary: `${name} · ${levels[name]}`,
-          description: PROFILE_DESCRIPTIONS[name],
-          marked: defaultProfile === name ? "★default" : undefined,
-        },
-      });
-    }
-    sections.push({ title: g.title, rows });
+  const profileRows: MccRow[] = [];
+  for (const name of REASONING_PROFILES) {
+    if (name === "Vision" && !levels.Vision) continue; // capability-gated fixture
+    profileRows.push({
+      kind: "item",
+      item: {
+        value: `p:${name}`,
+        primary: `${name} · ${levels[name]}`,
+        description: PROFILE_DESCRIPTIONS[name],
+        marked: defaultProfile === name ? "★default" : undefined,
+      },
+    });
   }
-  sections.push({
-    title: "",
-    rows: [{ kind: "item", item: { value: "__done__", primary: "Done", description: "Save & exit" } }],
-  });
-  return sections;
+  return [
+    { title: "PROVIDERS", rows: [{ kind: "item", item: { value: "provider:9router", primary: "9router", description: "203 models" } }] },
+    { title: "PROFILES", rows: profileRows },
+    { title: "", rows: [{ kind: "item", item: { value: "__done__", primary: "Done", description: "Save & exit" } }] },
+  ];
 }
 
 const selectedPlain = (lines: string[]) => stripAnsi(lines.find((l) => l.includes("› ") || l.includes("→ ")) ?? "");
@@ -274,7 +270,7 @@ check("headers never selectable across full navigation", () => {
   const list = new MccOverviewList(buildSections("Task", { Default: "high", Task: "medium" }), themeStub, 30);
   for (let i = 0; i < 12; i++) {
     const sel = selectedPlain(list.render(100));
-    for (const h of ["MODEL", "GENERAL", "PLANNING", "EXECUTION", "SPECIALIZED"]) {
+    for (const h of ["PROVIDERS", "PROFILES"]) {
       assert.ok(!sel.includes(h), `header selected: ${h} at step ${i}`);
     }
     assert.ok(!sel.includes("unavailable"), `disabled row selected at step ${i}`);
@@ -284,9 +280,9 @@ check("headers never selectable across full navigation", () => {
 
 check("navigation wraps both directions over items only", () => {
   const list = new MccOverviewList(buildSections("Task", { Default: "high", Task: "medium" }), themeStub, 30);
-  const totalItems = 11; // model + 8 profiles (Vision gated) + done
+  const totalItems = 11; // provider + 9 profiles (Vision gated) + done
   for (let i = 0; i < totalItems; i++) list.handleInput(DOWN);
-  assert.match(selectedPlain(list.render(100)), /Select model/, "expected wrap back to first row");
+  assert.match(selectedPlain(list.render(100)), /9router/, "expected wrap back to first row");
   list.handleInput(UP); // backwards wrap → Done
   assert.match(selectedPlain(list.render(100)), /Done/);
 });
@@ -328,18 +324,20 @@ check("LAYOUT REGRESSION: name and level columns never abut", () => {
     Default: "medium", Plan: "off", Task: "off", Review: "off", Vision: "medium",
     Advisor: "high", Synthesis: "high", Commit: "xhigh", Research: "off", Coding: "high",
   };
-  const sections: MccSection[] = PROFILE_GROUPS.map((g) => ({
-    title: g.title,
-    rows: g.items.map((name) => ({
-      kind: "item" as const,
-      item: {
-        value: `p:${name}`,
-        primary: `${name} · ${levels[name]}`,
-        description: PROFILE_DESCRIPTIONS[name],
-        marked: name === "Default" ? "★default" : undefined,
-      },
-    })),
-  }));
+  const sections: MccSection[] = [
+    {
+      title: "PROFILES",
+      rows: REASONING_PROFILES.map((name) => ({
+        kind: "item" as const,
+        item: {
+          value: `p:${name}`,
+          primary: `${name} · ${levels[name]}`,
+          description: PROFILE_DESCRIPTIONS[name],
+          marked: name === "Default" ? "★default" : undefined,
+        },
+      })),
+    },
+  ];
 
   for (const width of [40, 60, 80, 100, 160, 204]) {
     const list = new MccOverviewList(sections, themeStub, 14);
@@ -422,106 +420,202 @@ check("OVERFLOW REGRESSION: unicode/marker rows stay within width", () => {
   }
 });
 
-check("D50 SURFACE: three-region at wide, stacked at narrow, never overflows", () => {
-  const sections: MccSection[] = [
-    {
-      title: "GENERAL",
-      rows: [
-        { kind: "item", item: { value: "p:Default", primary: "Default · medium", description: "Normal interactions", marked: "★default" } },
-        { kind: "item", item: { value: "p:Task", primary: "Task · high", description: "Execution-oriented work" } },
-        { kind: "item", item: { value: "p:Review", primary: "Review · high", description: "Critique & verification" } },
-      ],
-    },
-    {
-      title: "PROVIDERS",
-      rows: [{ kind: "item", item: { value: "provider:9router", primary: "9router", description: "3 models" } }],
-    },
-  ];
-  const specs = ["9router/a", "9router/b", "9router/c"];
-  for (const width of [40, 60, 80, 100, 120, 140, 160, 204, 215, 300, 400]) {
-    const surface = new ModelControlSurface(
-      sections,
-      themeStub,
-      specs,
-      {},
-      "9router/a",
-      () => [],
-      (focus, navSel, highlight, w) =>
-        focus === "models" && highlight
-          ? [`MODEL ${highlight}`, "REASONING", "High"]
-          : navSel
-            ? [navSel.primary.toUpperCase(), "REASONING", "High", "STATE", "● Active"]
-            : [],
-      { focus: "nav", provider: null, filter: "" },
-    );
-    surface.onSelectModel = () => {};
-    surface.onEditProfile = () => {};
-    surface.onClose = () => {};
+// ------------------------------------------------- D53 surface architecture
+const flatText = (lines: string[]) => stripAnsi(lines.join("\n")).replace(/\s+/g, " ");
+
+const D53_SPECS = [
+  "9router/bai/deepseek-v4-flash",
+  "9router/openrouter/stealth/ox-alpha",
+  "9router/kimi/kimi-k3",
+  "deepseek/sonnet",
+];
+const D53_AVAILABLE = [
+  { provider: "9router", id: "bai/deepseek-v4-flash", reasoning: true, input: ["text"], contextWindow: 200000 },
+  { provider: "9router", id: "openrouter/stealth/ox-alpha", reasoning: true, input: ["text"], contextWindow: 1000000 },
+  { provider: "9router", id: "kimi/kimi-k3", reasoning: false, input: ["text"], contextWindow: 256000 },
+  { provider: "deepseek", id: "sonnet", reasoning: false, input: ["text"], contextWindow: 64000 },
+];
+const D53_STATE: ReasoningStateV3 = {
+  version: 3,
+  defaultProfile: "Default",
+  profiles: { ...blankProfiles(), Default: USER_LEVEL_MAP.High },
+};
+const D53_RESOLVED: EffectiveReasoning = {
+  profile: "Default",
+  level: D53_STATE.profiles.Default,
+  source: "default",
+};
+const D53_PROVIDER_SECTIONS: MccSection[] = [
+  {
+    title: "",
+    rows: [
+      { kind: "item", item: { value: "provider:9router", primary: "9router", description: "3 models" } },
+      { kind: "item", item: { value: "provider:deepseek", primary: "deepseek", description: "1 model" } },
+      { kind: "disabled", disabled: { primary: "○ anthropic", description: "registered · not configured" } },
+    ],
+  },
+];
+const D53_CHIPS: ProfileChip[] = REASONING_PROFILES.map((name) => ({
+  profile: name,
+  level: name === "Default" ? "High" : "Medium",
+  tone: "text" as const,
+  marker: name === "Default" ? ("default" as const) : null,
+  disabled: name === "Vision" ? "current model has no image input" : undefined,
+}));
+
+function makeSurface(
+  state: Partial<ModelSurfaceState> = {},
+  resolved: EffectiveReasoning = D53_RESOLVED,
+  chips: ProfileChip[] = D53_CHIPS,
+): ModelControlSurface {
+  const persistent: ModelSurfaceState = { focus: "models", provider: null, filter: "", profileFocus: 0, ...state };
+  const s = new ModelControlSurface(
+    D53_PROVIDER_SECTIONS,
+    themeStub,
+    D53_SPECS,
+    {},
+    "9router/bai/deepseek-v4-flash",
+    () => D53_AVAILABLE,
+    D53_STATE,
+    resolved,
+    chips,
+    persistent,
+  );
+  s.onSelectModel = () => {};
+  s.onEditProfile = () => {};
+  s.onClose = () => {};
+  return s;
+}
+
+/** Text of one titled panel region (from its padded title to the next rule/footer). */
+function regionOf(lines: string[], title: string): string {
+  const start = lines.findIndex((l) => stripAnsi(l).includes(` ${title} `));
+  if (start === -1) return "";
+  const tail: string[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const plain = stripAnsi(lines[i]).trim();
+    if (plain.length > 0 && (plain.includes("↑↓") || /^[A-Z][A-Z /]+\s*─*\s*$/.test(plain))) break;
+    tail.push(stripAnsi(lines[i]));
+  }
+  return tail.join("\n").replace(/\s+/g, " ").trim();
+}
+
+check("D53 SURFACE: providers|models browser, lower detail + profiles, never overflows", () => {
+  for (const width of [8, 16, 24, 32, 40, 60, 64, 80, 100, 120, 140, 160, 204, 215, 300, 400]) {
+    const surface = makeSurface();
     const out = surface.render(width);
     assert.ok(out.length > 0, `no output at ${width}`);
     for (const line of out) {
       assert.ok(visibleWidth(line) <= width, `surface overflow ${visibleWidth(line)} > ${width}: ${JSON.stringify(stripAnsi(line).slice(0, 60))}`);
     }
-    // Detail content always present (nav detail at start, model detail after focus switch).
-    const joined = stripAnsi(out.join("\n")).replace(/\s+/g, " ");
-    assert.match(joined, /REASONING/, `detail missing at ${width}`);
-    // Wide shows three columns (two dividers); narrow stacked has none.
-    if (width >= 140) {
-      assert.ok(out.some((l) => l.split("│").length >= 3), `three-region missing at ${width}`);
-    } else if (width < 100) {
+    if (width < 40) continue; // tiny widths prove width safety only
+    const joined = flatText(out);
+    assert.match(joined, /PROVIDERS/, `providers pane missing at ${width}`);
+    assert.match(joined, /MODELS/, `models pane missing at ${width}`);
+    assert.match(joined, /REASONING PROFILES/, `profiles region missing at ${width}`);
+    assert.match(joined, /SELECTED MODEL/, `model detail missing at ${width}`);
+    assert.match(joined, /bai\/deepseek-v4-flash/, `model rows not immediately visible at ${width}`);
+    if (width >= 64) {
+      assert.ok(out.some((l) => l.includes("│")), `two-pane divider missing at ${width}`);
+    } else {
       assert.ok(!out.join("\n").includes("│"), `unexpected divider at ${width}`);
     }
   }
 });
 
-check("D50 DETAIL: detail follows the focused pane", () => {
-  const sections: MccSection[] = [
-    {
-      title: "GENERAL",
-      rows: [
-        { kind: "item", item: { value: "p:Default", primary: "Default · medium", description: "Normal interactions" } },
-        { kind: "item", item: { value: "p:Task", primary: "Task · high", description: "Execution-oriented work" } },
-      ],
-    },
-    {
-      title: "PROVIDERS",
-      rows: [{ kind: "item", item: { value: "provider:9router", primary: "9router", description: "2 models" } }],
-    },
-  ];
-  const specs = ["9router/alpha", "9router/beta"];
-  const surface = new ModelControlSurface(
-    sections,
-    themeStub,
-    specs,
-    {},
-    "9router/alpha",
-    () => [],
-    (focus, navSel, highlight) => {
-      if (focus === "models") return highlight ? [`SELECTED ${highlight}`] : ["(no model)"];
-      if (navSel?.value.startsWith("provider:")) return [`PROVIDER ${navSel.primary}`];
-      return [`PROFILE ${navSel?.primary ?? "?"}`];
-    },
-    { focus: "nav", provider: null, filter: "" },
-  );
-  const flat = (lines: string[]) => stripAnsi(lines.join("\n")).replace(/\s+/g, " ");
+check("D53 PROVIDERS: counts visible, unconfigured rows present but never selectable", () => {
+  const surface = makeSurface({ focus: "providers" });
+  const joined = flatText(surface.render(100));
+  assert.match(joined, /3 models/);
+  assert.match(joined, /anthropic/);
+  // Navigation wraps over configured rows only — the dimmed row is never
+  // selected, so the detail panel always shows a real provider.
+  for (let i = 0; i < 5; i++) {
+    surface.handleInput(DOWN);
+    const detail = regionOf(surface.render(100), "PROVIDER");
+    assert.match(detail, /selectable model/, `selection landed on a non-provider row at step ${i}`);
+  }
+});
 
-  // Focus NAV → detail shows profile for the nav selection.
-  assert.match(flat(surface.render(160)), /PROFILE Default/);
-  surface.handleInput("\u001b[B"); // Task
-  assert.match(flat(surface.render(160)), /PROFILE Task/);
-  surface.handleInput("\u001b[B"); // 9router
-  assert.match(flat(surface.render(160)), /PROVIDER 9router/);
+check("D53 SCOPE: Enter on a provider scopes the model list and advances to models", () => {
+  const surface = makeSurface();
+  let joined = flatText(surface.render(120));
+  assert.match(joined, /ALL MODELS/);
+  assert.match(joined, /sonnet/, "ALL scope must show every provider's models");
+  surface.handleInput("\x1b[D"); // ← to providers
+  assert.equal(surface.focus, "providers");
+  surface.handleInput("\r"); // Enter on 9router
+  assert.equal(surface.focus, "models");
+  joined = flatText(surface.render(120));
+  assert.match(joined, /9ROUTER MODELS/);
+  assert.match(joined, /bai\/deepseek-v4-flash/);
+  assert.ok(!joined.includes("sonnet"), "out-of-scope model leaked into the scoped list");
+});
 
-  // Focus MODELS → detail shows the selected model, not the nav selection.
+check("D53 SEARCH: typing filters within scope, visible search line, backspace restores", () => {
+  const surface = makeSurface();
+  surface.handleInput("s");
+  surface.handleInput("t");
+  let joined = flatText(surface.render(120));
+  assert.match(joined, /> st/, "search line not visible");
+  assert.match(joined, /stealth/);
+  assert.ok(!joined.includes("kimi-k3"), "filter did not remove non-matching models");
+  surface.handleInput("\x7f");
+  surface.handleInput("\x7f");
+  joined = flatText(surface.render(120));
+  assert.match(joined, /kimi-k3/, "backspace did not restore the full list");
+  surface.handleInput("\x1b[D"); // providers
+  surface.handleInput("\r"); // scope 9router (also resets the filter)
+  surface.handleInput("x");
+  joined = flatText(surface.render(120));
+  assert.match(joined, /openrouter\/stealth\/ox-alpha/);
+  assert.ok(!joined.includes("deepseek-v4-flash"), "scoped search leaked other models");
+});
+
+check("D53 DETAIL: context follows focus — provider, model, profile", () => {
+  const surface = makeSurface({ focus: "providers" });
+  let joined = flatText(surface.render(140));
+  assert.match(joined, / PROVIDER /);
+  assert.match(joined, /Availability: Configured/);
+  assert.ok(!joined.includes("SELECTED MODEL"), "model detail leaked into providers focus");
   surface.handleInput("\x1b[C"); // → models
-  const modelJoined = flat(surface.render(160));
-  assert.match(modelJoined, /SELECTED 9router\/alpha/);
-  assert.ok(!modelJoined.includes("PROVIDER 9router"), "nav detail leaked into models focus");
-  surface.handleInput("\u001b[B"); // beta
-  assert.match(flat(surface.render(160)), /SELECTED 9router\/beta/);
-  // Focus back to NAV → provider detail returns.
-  surface.handleInput("\x1b[D");
-  assert.match(flat(surface.render(160)), /PROVIDER 9router/);
+  joined = flatText(surface.render(140));
+  assert.match(joined, / SELECTED MODEL /);
+  assert.match(joined, /200k ctx/);
+  assert.match(joined, /✓ Current Model/);
+  assert.ok(!joined.includes("Availability:"), "provider detail leaked into models focus");
+  surface.handleInput(DOWN); // highlight → ox-alpha
+  joined = flatText(surface.render(140));
+  assert.match(joined, /ox-alpha/);
+  assert.ok(!joined.includes("✓ Current Model"), "stale current marker on a non-current model");
+  surface.handleInput("\x1b[C"); // → profiles
+  joined = flatText(surface.render(140));
+  assert.match(joined, / PROFILE /);
+  assert.match(joined, /Normal interactions/);
+  assert.ok(!joined.includes("SELECTED MODEL"), "model detail leaked into profiles focus");
+});
+
+check("D53 MODEL DETAIL: structured horizontal metadata, no debug dump", () => {
+  const detail = regionOf(makeSurface({ focus: "models" }).render(140), "SELECTED MODEL");
+  assert.match(detail, /bai\/deepseek-v4-flash/); // canonical id line
+  assert.match(detail, /200k ctx/);
+  assert.match(detail, /● reasoning/);
+  assert.match(detail, /○ vision/);
+  assert.match(detail, /9router \/ bai/); // provider route
+  assert.match(detail, /✓ Current Model/);
+});
+
+check("D53 MODEL ROWS: provider prefix stripped from every row, ✓ marks current", () => {
+  const models = regionOf(makeSurface({ focus: "models" }).render(140), "ALL MODELS");
+  assert.match(models, /bai\/deepseek-v4-flash/);
+  assert.match(models, /✓ bai\/deepseek-v4-flash/);
+  assert.ok(!models.includes("9router/"), "row repeated the provider prefix");
+});
+
+check("D53 FOOTER: contextual per focused region", () => {
+  assert.match(flatText(makeSurface({ focus: "providers" }).render(120)), /Enter Browse/);
+  assert.match(flatText(makeSurface({ focus: "models" }).render(120)), /Type Search/);
+  assert.match(flatText(makeSurface({ focus: "profiles" }).render(120)), /Enter Edit/);
 });
 
 check("D48 SCOPE: provider counts are truthful and sorted", () => {
@@ -553,32 +647,6 @@ check("D48 SCOPE: provider counts derive only from selectable specs", () => {
   assert.deepEqual(visible, [{ name: "9router", count: 2 }]);
 });
 
-check("D50 SURFACE: divider separates regions at wide, absent when stacked", () => {
-  const sections: MccSection[] = [
-    { title: "GENERAL", rows: [{ kind: "item", item: { value: "p:Default", primary: "Default · medium", description: "Normal interactions" } }] },
-  ];
-  const surface = new ModelControlSurface(
-    sections,
-    themeStub,
-    ["9router/alpha"],
-    {},
-    "9router/alpha",
-    () => [],
-    (focus, navSel, highlight) => (focus === "models" ? ["REVIEW"] : ["DEFAULT"]),
-    { focus: "models", provider: null, filter: "" },
-  );
-  surface.onSelectModel = () => {};
-  surface.onEditProfile = () => {};
-  surface.onClose = () => {};
-  const out = surface.render(120); // medium → nav | models (divider), detail below
-  assert.ok(out.some((l) => l.includes("│")), "no divider in medium two-region layout");
-  // Stacked: no divider.
-  const stacked = surface.render(80);
-  assert.ok(!stacked.join("\n").includes("│"), "divider present in stacked mode");
-  // Wide three-region: two dividers on at least one line.
-  const wide = surface.render(160);
-  assert.ok(wide.some((l) => l.split("│").length >= 3), "three-region divider missing at wide");
-});
 
 check("PANELS: panelLines wraps content with a titled rule", () => {
   const lines = panelLines("TEST", ["line 1", "line 2"], 40, themeStub);

@@ -14,7 +14,7 @@ Handoff: what the next session must do first. Current state lives in [PROJECT_ST
 6. **D47 (2026-08-25):** `/model` is a navigation + detail surface (NavDetailPane). Any UI work must keep NAV+DETAIL + overflow + abutment suites green.
 7. **D48 (2026-08-25):** `/model` is scope/navigation-based — PROVIDERS nav, two-pane scoped browser, scope titles, truthful counts. New scope tests must stay green alongside NAV+DETAIL/overflow/abutment.
 8. **D51 (2026-08-25):** `/model` opens the control surface directly (host bridge intercepts dispatch). After `pi update`, re-run the bridge script.
-8. **D50 (2026-08-25):** `/model` is the unified Model Control Surface — three-region layout, detail follows focus, truthful provider wording, browser retired. Preserve D50 surface tests (three-region, focus-precedence, divider).
+8. **D53 (2026-09-01):** `/model` final IA — PROVIDERS | MODELS two-pane browser, focus-following detail (PROVIDER/SELECTED MODEL/PROFILE), horizontal REASONING PROFILES (all ten visible), in-pane search, contextual footer. The D50/D51 three-region composition is retired; do not reintroduce it. `modelSurfaceLoops` guard absorbs model_select fired by the surface's own setModel — keep it when touching runModelControlCenter. New D53 surface tests must stay green alongside overflow/abutment suites.
 4. **D44 (2026-08-25):** unified `/model` via host bridge — after any `pi update`, re-run `node capabilities/scripts/pi-model-bridge.mjs apply`; `/doctor` reports bridge state.
 5. **D43 (2026-08-25):** Pi skips `model_select` for same-model picks (host, verified to 0.84.3) — reasoning-only access is Alt+M or bare `/reasoning`; upstream ask recorded in DECISIONS D43.
 
