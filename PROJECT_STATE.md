@@ -72,3 +72,4 @@ None open.
 - Continuous Evolution (2026-08-25): `/model` scope/navigation architecture (D48) — PROVIDERS nav section with truthful counts, two-pane scoped model browser (provider | models), scope-aware titles, ✓ current marker, dash suppressed for non-profile rows; no runtime behavior changes.
 
 - Continuous Evolution (2026-08-25): `/model` unified Model Control Surface (D50) — three-region NAVIGATION | MODELS | DETAIL layout, detail follows focus, provider wording corrected (never 'Connected'), standalone browser retired; 27-check suite green.
+- Continuous Evolution (2026-08-25): `/model` opens the Model Control Surface directly (D51) — version-guarded host bridge extends the D44 pattern to intercept `/model` dispatch in interactive-mode.js, routing to the extension's control surface instead of the native picker; `openModelBrowser` retired.

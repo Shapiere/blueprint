@@ -108,6 +108,7 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `feat`: D49 — `/model` panelization: CURRENT MODEL / NAVIGATION · DETAIL / SELECTED MODEL / footer as titled-rule regions with a subtle pane divider ([docs/DECISIONS.md](docs/DECISIONS.md) D49)
 - `docs`: validation evidence — strict type-check PASS; 15-check regression suite PASS; live battery PASS (boot restore → footer ox-alpha; Vision high→low immediate; Set-Default persisted; workflow config-immutability; override prompt + Keep-strip)
 - `feat`: D50 — `/model` unified Model Control Surface: three-region responsive layout, detail follows focus, truthful provider wording, standalone browser retired ([docs/DECISIONS.md](docs/DECISIONS.md) D50)
+- `feat`: D51 — `/model` opens the Model Control Surface directly: version-guarded host bridge intercepts `/model` dispatch and routes to the extension's control surface; native picker no longer the first screen; `openModelBrowser` retired ([docs/DECISIONS.md](docs/DECISIONS.md) D51)
 
  ## Notes
 

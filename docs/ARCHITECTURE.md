@@ -351,3 +351,8 @@ The `/model` control surface renders as four semantic regions built from one sha
 ### D50 addendum — unified Model Control Surface (2026-08-25)
 
 `/model` is one three-region surface: NAVIGATION (profiles + providers with configured/unconfigured distinction) | MODELS (scoped, searchable, `✓` current marker) | DETAIL (follows the focused pane). Wide ≥140 renders three columns; medium 100–139 renders nav | models with detail below; narrow stacks. Provider rows never claim upstream connectivity — "Configured / available to Pi" + "Connectivity: Unverified". The standalone model browser is retired; the model list lives on the primary screen.
+
+
+### D51 addendum — direct /model entry (2026-08-25)
+
+`/model` routes to the extension's Model Control Surface via a D51 host bridge patch to `interactive-mode.js`. The bridge inserts an extension-command check before the hard-coded `/model` dispatch, so the native picker is bypassed when the extension has registered a `model` command. The D44 same-model bridge remains unchanged.

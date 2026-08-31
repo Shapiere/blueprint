@@ -2464,6 +2464,15 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
+  // D51: /model routes here via the host bridge (interactive-mode.js override).
+  // This is the unified Model Control Surface entry point.
+  pi.registerCommand("model", {
+    description: "Model Control Center",
+    handler: async (_args: string, ctx: ExtensionCommandContext) => {
+      await runModelControlCenter(pi, ctx);
+    },
+  });
+
   pi.registerCommand("doctor", {
     description: "Run Harness Pi environment, router, MCP, permissions, and sync diagnostics",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
