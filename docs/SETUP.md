@@ -176,14 +176,34 @@ node capabilities/scripts/pi-model-bridge.mjs restore  # revert to pristine host
 
 Re-run `apply` after every `pi update`; `/doctor` reports whether the bridge is active.
 
-### Extension type-check & regression tests
+### Extension type-check & regression tests (27 checks)
 
 ```bash
 # strict type-check (paths mapped to the global pi installation)
 npx -y -p typescript@latest tsc -p <tsconfig-with-paths>
-# regression suite (15 checks: migration, resolver, visibility, guards, control-center UI)
+# regression suite (27 checks: migration, resolver, visibility, guards, surface UI)
 npx -y tsx --tsconfig <tsconfig-with-paths> capabilities/extensions/tests/d42.test.ts
 ```
+
+`<tsconfig-with-paths>` — validated recipe (D52, 2026-09-01; TS7):
+
+```jsonc
+{
+  "compilerOptions": {
+    "strict": true, "noEmit": true, "module": "nodenext",
+    "moduleResolution": "nodenext", "target": "es2022",
+    "allowImportingTsExtensions": true, "skipLibCheck": true, "types": ["node"],
+    "typeRoots": ["C:/Users/<user>/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent/node_modules/@types"],
+    "paths": {
+      "@earendil-works/pi-coding-agent": ["C:/Users/<user>/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent"],
+      "@earendil-works/pi-tui": ["C:/Users/<user>/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-tui"]
+    }
+  },
+  "include": ["<repo>/capabilities/extensions/runtime-orchestrator.ts", "<repo>/capabilities/extensions/tests/d42.test.ts"]
+}
+```
+
+Rules: paths point at **package roots** (not `index.d.ts`; tsx resolves via package exports — `.d.ts` targets fail with `Cannot find module './autocomplete.ts'`); no `baseUrl` (removed in TS7); no global `@types/node` exists at the npm prefix, hence `typeRoots` into pi-coding-agent's bundled `@types`. Keep the file **outside the repo** (verify.py flags strays).
 
 ## Operations
 
