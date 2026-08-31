@@ -110,6 +110,10 @@ Chronological log of repository and setup changes. This file owns the history; c
 - `feat`: D50 — `/model` unified Model Control Surface: three-region responsive layout, detail follows focus, truthful provider wording, standalone browser retired ([docs/DECISIONS.md](docs/DECISIONS.md) D50)
 - `feat`: D51 — `/model` opens the Model Control Surface directly: version-guarded host bridge intercepts `/model` dispatch and routes to the extension's control surface; native picker no longer the first screen; `openModelBrowser` retired ([docs/DECISIONS.md](docs/DECISIONS.md) D51)
 
+## 2026-09-01
+
+- `docs`: D52 — Phase 2 admin-integration stance confirmed: skip; Phase 1 transparent UNVERIFIED fallback stays locked, consent file remains unused, upstream read-only status token noted as the preferred future path ([docs/DECISIONS.md](docs/DECISIONS.md) D52)
+
  ## Notes
 
 - Entries must be added in the same session as the change they describe (capture loop).

@@ -20,7 +20,7 @@ Handoff: what the next session must do first. Current state lives in [PROJECT_ST
 
 ## Left Unresolved / Deferred
 
-- **Phase 2 (admin-derived CONNECTED/ENABLED)** — blocked on user choosing an access pattern (none / open-local / cookie) per D42 audit §18; consent file `~/.pi/agent/harness-router.json` designed but unused.
+- **Phase 2 (admin-derived CONNECTED/ENABLED)** — stance resolved 2026-09-01 (D52): **skip**. Phase 1 transparent fallback stays locked (providers "Configured / available to Pi" + "Connectivity: Unverified"); consent file `~/.pi/agent/harness-router.json` stays designed-but-unused; revisit path = upstream read-only status token if the user ever reopens it.
 - Execution-profile status chip can persist up to its 30-min window after a workflow ends (documented v1 semantics).
 - Sub-agent inheritance of execution profiles is delivered via injected prompts; direct prompt-level observation requires instrumentation.
 - Interactive-only validations (plan-mode, ask-user, simplify, pi-lens); cold-install; `/login` on fresh machine.
