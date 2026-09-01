@@ -557,8 +557,7 @@ check("D53 SEARCH: typing filters within scope, visible search line, backspace r
   surface.handleInput("s");
   surface.handleInput("t");
   let joined = flatText(surface.render(120));
-  assert.match(joined, /> st/, "search line not visible");
-  assert.match(joined, /stealth/);
+  assert.match(joined, /Search: st/, "search line not visible");
   assert.ok(!joined.includes("kimi-k3"), "filter did not remove non-matching models");
   surface.handleInput("\x7f");
   surface.handleInput("\x7f");
@@ -616,6 +615,39 @@ check("D53 FOOTER: contextual per focused region", () => {
   assert.match(flatText(makeSurface({ focus: "providers" }).render(120)), /Enter Browse/);
   assert.match(flatText(makeSurface({ focus: "models" }).render(120)), /Type Search/);
   assert.match(flatText(makeSurface({ focus: "profiles" }).render(120)), /Enter Edit/);
+});
+
+check("D53b FOCUS: exactly one region shows the keyboard cursor at a time", () => {
+  // Cursor signatures: the cursor row carries the focused region's selected
+  // item (provider row, highlighted model row, focused profile chip).
+  const CURSOR_IN: Record<ModelSurfaceState["focus"], RegExp> = {
+    providers: /› 9router/,
+    models: /› ✓ bai\/deepseek-v4-flash/,
+    profiles: /› ★ Default/,
+  };
+  for (const focus of ["providers", "models", "profiles"] as const) {
+    const flat = flatText(makeSurface({ focus }).render(140));
+    for (const [region, pattern] of Object.entries(CURSOR_IN)) {
+      const present = pattern.test(flat);
+      assert.equal(
+        present,
+        region === focus,
+        `cursor signature of ${region} ${present ? "visible" : "missing"} under ${focus} focus`,
+      );
+    }
+  }
+});
+
+check("D53b FOCUS: application-state markers survive passive rendering", () => {
+  // ✓ current model and ★ default profile are state, not focus — they render
+  // even in regions without the keyboard cursor.
+  const out = makeSurface({ focus: "providers" }).render(140);
+  const flat = flatText(out);
+  assert.match(flat, /✓ bai\/deepseek-v4-flash/, "current-model marker lost in passive models pane");
+  assert.match(flat, /★ Default/, "default-profile marker lost in passive profiles region");
+  // And the providers cursor is the ONLY cursor on screen.
+  const cursors = (flat.match(/› /g) ?? []).length;
+  assert.equal(cursors, 1, `expected exactly one cursor, found ${cursors}`);
 });
 
 check("D48 SCOPE: provider counts are truthful and sorted", () => {

@@ -1697,6 +1697,12 @@ export class ReasoningProfilesPanel implements Component {
   private index = 0;
   onSelect?: (profile: ReasoningProfileName) => void;
   onSelectionChange?: (chip: ProfileChip | null) => void;
+  /**
+   * Whether the keyboard cursor (› + highlight) is visible. The surface keeps
+   * exactly ONE region active at a time; a passive profiles region renders
+   * chips without any cursor or selection background.
+   */
+  showCursor = true;
 
   constructor(
     private readonly chips: readonly ProfileChip[],
@@ -1751,6 +1757,7 @@ export class ReasoningProfilesPanel implements Component {
   }
 
   private renderChip(chip: ProfileChip, focused: boolean): string {
+    const cursor = focused && this.showCursor;
     const marker =
       chip.marker === "default"
         ? this.theme.fg("success", "★ ")
@@ -1760,7 +1767,7 @@ export class ReasoningProfilesPanel implements Component {
     const name = this.theme.fg(chip.disabled ? "dim" : "text", chip.profile);
     const level = this.theme.fg(chip.disabled ? "dim" : chip.tone, chip.disabled ? "unavailable" : chip.level);
     const content = `${marker}${name} ${level}`;
-    if (focused) return this.theme.bg("selectedBg", this.theme.bold(`› ${content}`));
+    if (cursor) return this.theme.bg("selectedBg", this.theme.bold(`› ${content}`));
     return `  ${content}`;
   }
 }
@@ -1784,7 +1791,7 @@ export class ModelControlSurface implements Component {
   onEditProfile?: (profile: ReasoningProfileName) => void;
   onClose?: () => void;
   private providers: MccOverviewList;
-  private models: SelectList;
+  private models: MccOverviewList;
   private profilesPanel: ReasoningProfilesPanel;
   private highlight: string | null = null;
 
@@ -1830,18 +1837,7 @@ export class ModelControlSurface implements Component {
     this.models = this.buildModels();
   }
 
-  private listTheme(): SelectListTheme {
-    const theme = this.theme;
-    return {
-      selectedPrefix: (t) => theme.fg("accent", "→ "),
-      selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
-      description: (t) => theme.fg("muted", t),
-      scrollInfo: (t) => theme.fg("dim", t),
-      noMatch: (t) => theme.fg("warning", t),
-    };
-  }
-
-  private buildModels(): SelectList {
+  private buildModels(): MccOverviewList {
     const scoped = (
       this.persistent.provider
         ? this.allSpecs.filter((spec) => spec.startsWith(`${this.persistent.provider}/`))
@@ -1851,12 +1847,15 @@ export class ModelControlSurface implements Component {
     const pool = filter
       ? fuzzyFilter(scoped, filter.toLowerCase(), (spec) => `${spec} ${this.names[spec] ?? ""}`.toLowerCase())
       : scoped;
-    const items: SelectItem[] = pool.map((spec) => {
+    const rows: MccRow[] = pool.map((spec) => {
       const row = modelRowLabel(spec, this.names);
       return {
-        value: spec,
-        label: `${spec === this.modelLabel ? "✓ " : ""}${row.label}`,
-        description: row.description,
+        kind: "item" as const,
+        item: {
+          value: spec,
+          primary: `${spec === this.modelLabel ? "✓ " : ""}${row.label}`,
+          description: row.description,
+        },
       };
     });
     // Initialize the highlight to the first scoped model so the detail panel
@@ -1864,10 +1863,11 @@ export class ModelControlSurface implements Component {
     if (pool.length > 0 && (!this.highlight || !pool.includes(this.highlight))) {
       this.highlight = pool[0];
     }
-    const l = new SelectList(items, 10, this.listTheme());
-    l.onSelect = (item) => this.onSelectModel?.(item.value);
+    const l = new MccOverviewList([{ title: "", rows }], this.theme, 11);
+    l.showCursor = this.persistent.focus === "models";
+    l.onSelect = (value) => this.onSelectModel?.(value);
     l.onSelectionChange = (item) => {
-      this.highlight = item.value;
+      this.highlight = item?.value ?? null;
     };
     return l;
   }
@@ -1953,8 +1953,8 @@ export class ModelControlSurface implements Component {
 
   /** Visible search line inside the model pane. */
   private searchLine(width: number): string[] {
-    if (this.persistent.filter) return [this.fitLine(this.theme.fg("text", `> ${this.persistent.filter}`), width)];
-    if (this.persistent.focus === "models") return [this.fitLine(this.theme.fg("dim", "> type to search"), width)];
+    if (this.persistent.filter) return [this.fitLine(this.theme.fg("text", `Search: ${this.persistent.filter}`), width)];
+    if (this.persistent.focus === "models") return [this.fitLine(this.theme.fg("dim", "type to search"), width)];
     return [];
   }
 
@@ -1962,15 +1962,21 @@ export class ModelControlSurface implements Component {
     const full = width >= 60;
     const text =
       this.persistent.focus === "providers"
-        ? "↑↓ Provider · ←→ Region · Enter Browse · Esc Close"
+        ? "↑↓ Navigate   ←→ Switch Region   Enter Browse   Esc Close"
         : this.persistent.focus === "models"
-          ? "↑↓ Model · ←→ Region · Type Search · Enter Select · Esc Close"
-          : "↑↓ Profile · ←→ Region · Enter Edit · Esc Close";
+          ? "↑↓ Navigate   Type Search   Enter Select   ← Providers   Esc Close"
+          : "↑↓ Navigate   Enter Edit   ← Models   Esc Close";
     return this.theme.fg("dim", full ? text : "↑↓ · ←→ · Enter · Esc");
   }
 
   render(width: number): string[] {
     const wide = width >= 64;
+    // ONE ACTIVE FOCUS: the keyboard cursor (› + highlight) renders in the
+    // focused region only; passive regions stay readable with no competing
+    // selection indicators.
+    this.providers.showCursor = this.persistent.focus === "providers";
+    this.models.showCursor = this.persistent.focus === "models";
+    this.profilesPanel.showCursor = this.persistent.focus === "profiles";
     const detail = this.detailLines();
     const detailPanel = panelLines(detail.title, detail.lines, width, this.theme);
     const profilesPanel = panelLines("REASONING PROFILES", this.profilesPanel.render(width), width, this.theme);
@@ -1988,7 +1994,6 @@ export class ModelControlSurface implements Component {
           ...clampLines(this.models.render(width), width),
           "",
           ...detailPanel,
-          "",
           ...profilesPanel,
           "",
           footer,
@@ -2208,6 +2213,12 @@ export function profileDetailLines(
 export class MccOverviewList implements Component {
   private readonly items: MccItem[] = [];
   private selectedIndex = 0;
+  /**
+   * Whether the keyboard cursor (› + bounded highlight) is visible. The
+   * surface keeps exactly ONE region active at a time; passive panes render
+   * their tracked selection as a plain readable row with no competing cursor.
+   */
+  showCursor = true;
   onSelect?: (value: string) => void;
   onCancel?: () => void;
   /** Fired when arrow navigation changes the selected row (detail panels). */
@@ -2386,7 +2397,7 @@ export class MccOverviewList implements Component {
     cols: { name: number; level: number; desc: number },
     width: number,
   ): string {
-    const prefix = selected ? this.theme.fg("accent", "› ") : "  ";
+    const prefix = selected && this.showCursor ? this.theme.fg("accent", "› ") : "  ";
     const markerText = MccOverviewList.markerOf(item.marked);
     const markerW = markerText ? visibleWidth(markerText) + 1 : 0;
     const nameMax = Math.max(1, cols.name - markerW - 2);
@@ -2406,7 +2417,7 @@ export class MccOverviewList implements Component {
         ? this.theme.fg("muted", truncateToWidth(item.description, cols.desc, "…"))
         : "";
     const content = prefix + nameCell + levelCell + descCell;
-    if (selected) {
+    if (selected && this.showCursor) {
       // Subtle, bounded highlight: only the row's own text, never a full-width bar.
       return this.fitLine(this.theme.bg("selectedBg", this.theme.bold(content)), width);
     }

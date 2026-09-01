@@ -114,6 +114,7 @@ Chronological log of repository and setup changes. This file owns the history; c
 
 
 - `feat`: D53 — `/model` final information architecture: PROVIDERS | MODELS two-pane browser (provider selection scopes the model list), SELECTED MODEL detail region that follows focus (provider / model / profile), horizontally dense REASONING PROFILES region with all ten profiles visible and distinct ›/★/● markers, visible in-pane search, contextual footer; model rows drop the repeated provider prefix; `modelSurfaceLoops` guard absorbs `model_select` fired by the surface's own `setModel`; D50 three-region composition retired ([docs/DECISIONS.md](docs/DECISIONS.md) D53)
+- `feat`: D54 — `/model` single-active-focus: only the focused region (providers/models/reasoning) renders the keyboard cursor and highlight; passive regions stay readable with state markers intact; models pane rebuilt on the focus-gated `MccOverviewList` (pi-tui SelectList hard-codes its arrow); `Search: <query>` prompt; region-specific footers (`←→ Switch Region` / `← Providers` / `← Models`) ([docs/DECISIONS.md](docs/DECISIONS.md) D54)
 
  ## Notes
 
