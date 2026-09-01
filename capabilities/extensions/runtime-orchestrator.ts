@@ -1739,35 +1739,46 @@ export class ReasoningProfilesPanel implements Component {
   }
 
   render(width: number): string[] {
-    const gap = "   ";
+    const GAP = 2;
+    const focusedIdx = this.selectable[this.index];
+    const nameW = Math.max(...this.chips.map((c) => visibleWidth(this.nameLine(c, false))));
+    const levelW = Math.max(...this.chips.map((c) => visibleWidth(c.disabled ? "unavailable" : c.level)));
+    const colW = Math.max(nameW, 2 + levelW);
+    const cols = Math.max(1, Math.floor((width + GAP) / (colW + GAP)));
     const lines: string[] = [];
-    let current = "";
-    for (let i = 0; i < this.chips.length; i++) {
-      const piece = this.renderChip(this.chips[i], this.selectable[this.index] === i);
-      if (current && visibleWidth(current + gap + piece) > width) {
-        lines.push(truncateToWidth(current, width, ""));
-        current = piece;
-      } else {
-        current = current ? current + gap + piece : piece;
-      }
+    for (let start = 0; start < this.chips.length; start += cols) {
+      const l1: string[] = [];
+      const l2: string[] = [];
+      this.chips.slice(start, start + cols).forEach((c, i) => {
+        const selected = start + i === focusedIdx;
+        const cursor = selected && this.showCursor;
+        const marker =
+          c.marker === "default"
+            ? this.theme.fg("success", "★ ")
+            : c.marker === "execution"
+              ? this.theme.fg("warning", "● ")
+              : "";
+        const name = this.theme.fg(c.disabled ? "dim" : "text", c.profile);
+        const nameLine = cursor
+          ? this.theme.bg("selectedBg", this.theme.bold(`› ${marker}${name}`))
+          : `  ${marker}${name}`;
+        const level = this.theme.fg(c.disabled ? "dim" : "muted", c.disabled ? "unavailable" : c.level);
+        l1.push(this.padCellTo(nameLine, colW));
+        l2.push(this.padCellTo(`    ${level}`, colW));
+      });
+      lines.push(truncateToWidth(l1.join(" ".repeat(GAP)), width, ""));
+      lines.push(truncateToWidth(l2.join(" ".repeat(GAP)), width, ""));
     }
-    if (current) lines.push(truncateToWidth(current, width, ""));
     return lines;
   }
 
-  private renderChip(chip: ProfileChip, focused: boolean): string {
-    const cursor = focused && this.showCursor;
-    const marker =
-      chip.marker === "default"
-        ? this.theme.fg("success", "★ ")
-        : chip.marker === "execution"
-          ? this.theme.fg("warning", "● ")
-          : "";
-    const name = this.theme.fg(chip.disabled ? "dim" : "text", chip.profile);
-    const level = this.theme.fg("muted", chip.disabled ? "unavailable" : chip.level);
-    const content = `${marker}${name}${this.theme.fg("muted", " · ")}${level}`;
-    if (cursor) return this.theme.bg("selectedBg", this.theme.bold(`› ${content}`));
-    return `  ${content}`;
+  private nameLine(c: ProfileChip, cursor: boolean): string {
+    const marker = c.marker === "default" ? "★ " : c.marker === "execution" ? "● " : "";
+    return `${cursor ? "› " : "  "}${marker}${c.profile}`;
+  }
+
+  private padCellTo(line: string, width: number): string {
+    return line + " ".repeat(Math.max(0, width - visibleWidth(line)));
   }
 }
 
@@ -1940,6 +1951,14 @@ export class ModelControlSurface implements Component {
     };
   }
 
+  /** Pane title line inside the browser box (no rule — the border frames it). */
+  private paneTitle(title: string, focused: boolean): string {
+    const text = ` ${title}`;
+    return focused
+      ? this.theme.fg("accent", this.theme.bold(text))
+      : this.theme.fg("muted", text);
+  }
+
   /** Pane rule header with a focus-aware tone. */
   private paneHeader(title: string, width: number, focused: boolean): string[] {
     const text = ` ${title} `;
@@ -1993,6 +2012,7 @@ export class ModelControlSurface implements Component {
           ...clampLines(this.models.render(width), width),
           "",
           ...detailPanel,
+          "",
           ...profilesPanel,
           "",
           footer,
@@ -2001,28 +2021,35 @@ export class ModelControlSurface implements Component {
       );
     }
 
-    // Two-pane browser: providers left, models right — horizontal space is
-    // used aggressively; only genuinely narrow terminals stack.
-    const provW = Math.max(24, Math.min(36, Math.floor(width * 0.32)));
-    const modelW = Math.max(20, width - provW - 2);
+    // Two-pane browser as ONE box-drawn component: providers left, models
+    // right, a single continuous divider, one shared boundary.
+    const provW = Math.max(26, Math.min(38, Math.floor(width * 0.32)));
+    const modelW = Math.max(20, width - provW - 3);
     const provLines = [
-      ...this.paneHeader("PROVIDERS", provW, this.persistent.focus === "providers"),
+      this.paneTitle("PROVIDERS", this.persistent.focus === "providers"),
+      "",
       ...clampLines(this.providers.render(provW), provW),
     ];
     const modelLines = [
-      ...this.paneHeader(scopeTitle(this.persistent.provider), modelW, this.persistent.focus === "models"),
+      this.paneTitle(scopeTitle(this.persistent.provider), this.persistent.focus === "models"),
+      "",
       ...this.searchLine(modelW),
       ...clampLines(this.models.render(modelW), modelW),
     ];
+    const t = this.theme;
+    const top = t.fg("dim", "┌" + "─".repeat(provW) + "┬" + "─".repeat(modelW) + "┐");
+    const bottom = t.fg("dim", "└" + "─".repeat(provW) + "┴" + "─".repeat(modelW) + "┘");
     const rows = Math.max(provLines.length, modelLines.length);
-    const out: string[] = [];
+    const out: string[] = [top];
     for (let i = 0; i < rows; i++) {
       const l = provLines[i] ?? "";
       const m = modelLines[i] ?? "";
-      const lp = " ".repeat(Math.max(1, provW - visibleWidth(l)));
-      const line = l + lp + "│" + m;
+      const lp = " ".repeat(Math.max(0, provW - visibleWidth(l)));
+      const mp = " ".repeat(Math.max(0, modelW - visibleWidth(m)));
+      const line = `${l}${lp}│${m}${mp}│`;
       out.push(visibleWidth(line) > width ? truncateToWidth(line, width, "") : line);
     }
+    out.push(bottom);
     return clampLines([...out, "", ...detailPanel, "", ...profilesPanel, "", footer], width);
   }
 
@@ -2067,13 +2094,14 @@ export function providerDetailLines(
   theme: Theme,
   maxLines: number,
 ): string[] {
-  return [
+  const lines = [
     theme.fg("text", theme.bold(provider)),
-    theme.fg("muted", `${count} selectable model${count === 1 ? "" : "s"} · Configured / available to Pi`),
-    theme.fg("muted", "Connectivity: Unverified"),
+    theme.fg("muted", `${count} selectable model${count === 1 ? "" : "s"}`),
+    theme.fg("muted", "Configured / available to Pi · Connectivity: Unverified"),
     "",
     theme.fg("dim", "Enter — Browse models"),
-  ].slice(0, maxLines);
+  ];
+  return lines.map((l) => (l ? `  ${l}` : l)).slice(0, maxLines);
 }
 
 /** Splits a selectable spec ("9router/bai/deepseek-v4-flash") into display parts. */
@@ -2097,17 +2125,18 @@ export function modelRowLabel(
   return display ? { label: display, description: bare } : { label: bare };
 }
 
-/** Compact capability metadata: "200k ctx · reasoning · vision" (available only). */
-function modelMetaText(model: AvailableModelMeta | undefined): string {
+/** Capability status line: success dots, available capabilities only. */
+function modelCapsLine(model: AvailableModelMeta | undefined, theme: Theme): string | null {
   const caps = modelCaps(model ?? {});
-  const parts = [caps.ctx === "—" ? "context size unknown" : `${caps.ctx} ctx`];
-  if (caps.reasoning) parts.push("reasoning");
-  if (caps.vision) parts.push("vision");
-  return parts.join(" · ");
+  const words: string[] = [];
+  if (caps.reasoning) words.push("reasoning");
+  if (caps.vision) words.push("vision");
+  if (words.length === 0) return null;
+  return theme.fg("success", words.map((c) => `● ${c}`).join("   "));
 }
 
 /** Detail content for the highlighted model (title supplied by panelLines).
- * One coherent object: identity, then route+metadata, then status. */
+ * One indented object: identity, route+context, capabilities, status. */
 function selectedModelDetailLines(
   spec: string,
   displayName: string | undefined,
@@ -2121,13 +2150,17 @@ function selectedModelDetailLines(
   const model = getAvailable().find((m) => m.provider === prov && m.id === rest.join("/"));
   const isCurrent = spec === currentLabel;
   const routeText = route ? `${provider} / ${route}` : provider;
-  return [
+  const caps = modelCaps(model ?? {});
+  const ctxText = caps.ctx === "—" ? "context size unknown" : `${caps.ctx} ctx`;
+  const lines = [
     theme.fg("text", theme.bold(displayName ?? name)),
-    ...(displayName ? [theme.fg("muted", spec)] : []),
-    theme.fg("muted", `${routeText} · ${modelMetaText(model)}`),
-    "",
-    isCurrent ? theme.fg("success", "✓ Current Model") : theme.fg("dim", "Enter — Select"),
-  ].slice(0, maxLines);
+    theme.fg("muted", routeText),
+    theme.fg("muted", ctxText),
+  ];
+  const capsLine = modelCapsLine(model, theme);
+  if (capsLine) lines.push(capsLine);
+  lines.push("", isCurrent ? theme.fg("success", "✓ Current Model") : theme.fg("dim", "Enter — Select"));
+  return lines.map((l) => (l ? `  ${l}` : l)).slice(0, maxLines);
 }
 
 /** Detail content for the current model when no catalog highlight exists. */
@@ -2143,13 +2176,16 @@ function currentModelDetailLines(
   }
   const { provider, route, name } = splitModelSpec(modelLabel);
   const routeText = route ? `${provider} / ${route}` : provider;
-  return [
+  const caps = modelCaps(model ?? {});
+  const lines = [
     theme.fg("text", theme.bold(displayName ?? name)),
-    ...(displayName ? [theme.fg("muted", modelLabel)] : []),
-    theme.fg("muted", `${routeText} · ${modelMetaText(model)}`),
-    "",
-    theme.fg("success", "✓ Current Model"),
-  ].slice(0, maxLines);
+    theme.fg("muted", routeText),
+    theme.fg("muted", caps.ctx === "—" ? "context size unknown" : `${caps.ctx} ctx`),
+  ];
+  const capsLine = modelCapsLine(model, theme);
+  if (capsLine) lines.push(capsLine);
+  lines.push("", theme.fg("success", "✓ Current Model"));
+  return lines.map((l) => (l ? `  ${l}` : l)).slice(0, maxLines);
 }
 /** Compact CURRENT MODEL header lines (tier 1 — name strong, context muted). */
 function currentModelHeaderLines(
@@ -2179,14 +2215,11 @@ export function profileDetailLines(
   const level = state.profiles[profile];
   const isDefault = state.defaultProfile === profile;
   const isActive = resolved.profile === profile;
+  const levelText = levelLabelForRuntime(level) ?? level;
   const lines = [
     theme.fg("text", theme.bold(profile)),
     theme.fg("muted", PROFILE_DESCRIPTIONS[profile]),
-    "",
-    theme.fg("dim", "REASONING"),
-    theme.fg("text", levelLabelForRuntime(level) ?? level),
-    "",
-    theme.fg("dim", "STATE"),
+    theme.fg("dim", "Reasoning") + theme.fg("text", `  ${levelText}`),
   ];
   if (resolved.source === "execution" && isActive) {
     lines.push(theme.fg("warning", `● Execution · ${levelLabelForRuntime(resolved.level) ?? resolved.level}`));
@@ -2194,7 +2227,7 @@ export function profileDetailLines(
     lines.push(theme.fg("success", "● Active"));
   }
   lines.push(isDefault ? theme.fg("success", "★ Default") : theme.fg("muted", "○ Not default"));
-  return lines.slice(0, maxLines);
+  return lines.map((l) => (l ? `  ${l}` : l)).slice(0, maxLines);
 }
 /**
  * Grouped selection list for the /mcc overview. Headers and disabled rows are

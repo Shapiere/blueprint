@@ -523,6 +523,20 @@ check("D53 SURFACE: providers|models browser, lower detail + profiles, never ove
   }
 });
 
+check("D53b BROWSER: box-drawn container with continuous divider at wide", () => {
+  const out = makeSurface().render(140);
+  const flat = out.map(stripAnsi);
+  assert.ok(flat.some((l) => l.startsWith("┌") && l.includes("┬") && l.endsWith("┐")), "box top border missing");
+  assert.ok(flat.some((l) => l.startsWith("└") && l.includes("┴") && l.endsWith("┘")), "box bottom border missing");
+  // Every interior row carries the divider in the same column (no fragments).
+  const dividerCols = new Set(
+    flat.filter((l) => l.includes("│")).map((l) => l.indexOf("│")),
+  );
+  assert.equal(dividerCols.size, 1, `divider column drift: ${[...dividerCols]}`);
+  // Titles live on the first interior row inside the box.
+  assert.ok(flat.some((l) => l.includes("│") && l.includes("PROVIDERS") && l.includes("ALL MODELS")));
+});
+
 check("D53 PROVIDERS: counts visible, unconfigured rows present but never selectable", () => {
   const surface = makeSurface({ focus: "providers" });
   const joined = flatText(surface.render(100));
