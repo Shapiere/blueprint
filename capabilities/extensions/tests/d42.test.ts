@@ -575,7 +575,7 @@ check("D53 DETAIL: context follows focus — provider, model, profile", () => {
   const surface = makeSurface({ focus: "providers" });
   let joined = flatText(surface.render(140));
   assert.match(joined, / PROVIDER /);
-  assert.match(joined, /Availability: Configured/);
+  assert.match(joined, /Configured \/ available to Pi/);
   assert.ok(!joined.includes("SELECTED MODEL"), "model detail leaked into providers focus");
   surface.handleInput("\x1b[C"); // → models
   joined = flatText(surface.render(140));
@@ -594,13 +594,14 @@ check("D53 DETAIL: context follows focus — provider, model, profile", () => {
   assert.ok(!joined.includes("SELECTED MODEL"), "model detail leaked into profiles focus");
 });
 
-check("D53 MODEL DETAIL: structured horizontal metadata, no debug dump", () => {
+check("D53 MODEL DETAIL: one coherent inspector — identity, metadata, status", () => {
   const detail = regionOf(makeSurface({ focus: "models" }).render(140), "SELECTED MODEL");
-  assert.match(detail, /bai\/deepseek-v4-flash/); // canonical id line
-  assert.match(detail, /200k ctx/);
-  assert.match(detail, /● reasoning/);
-  assert.match(detail, /○ vision/);
-  assert.match(detail, /9router \/ bai/); // provider route
+  assert.match(detail, /deepseek-v4-flash/);   // identity (bold name)
+  assert.match(detail, /9router \/ bai/);      // route
+  assert.match(detail, /200k ctx/);            // context
+  assert.match(detail, /reasoning/);           // available capability listed
+  assert.ok(!/\bvision\b/.test(detail));       // unavailable capability omitted
+  assert.ok(!detail.includes("9router/bai/deepseek-v4-flash"), "redundant canonical id line");
   assert.match(detail, /✓ Current Model/);
 });
 

@@ -1652,7 +1652,7 @@ function clampLines(lines: readonly string[], width: number): string[] {
 export function panelLines(title: string, lines: readonly string[], width: number, theme: Theme): string[] {
   const label = ` ${title} `;
   const rule = theme.fg("dim", "─".repeat(Math.max(0, width - visibleWidth(label))));
-  const head = theme.fg("accent", theme.bold(label)) + rule;
+  const head = theme.fg("text", theme.bold(label)) + rule;
   return [head, ...clampLines(lines, width)];
 }
 
@@ -1677,9 +1677,8 @@ export interface ModelSurfaceState {
 /** One reasoning-profile chip in the horizontal profiles region. */
 export interface ProfileChip {
   profile: ReasoningProfileName;
-  /** User-facing level labels (Off/Low/Medium/High/Ultra). */
+  /** User-facing level label (Off/Low/Medium/High/Ultra). */
   level: string;
-  tone: "dim" | "muted" | "text" | "accent";
   /** ★ user-designated default; ● ephemeral execution profile. */
   marker: "default" | "execution" | null;
   /** Set when the profile is not selectable (capability gate). */
@@ -1765,8 +1764,8 @@ export class ReasoningProfilesPanel implements Component {
           ? this.theme.fg("warning", "● ")
           : "";
     const name = this.theme.fg(chip.disabled ? "dim" : "text", chip.profile);
-    const level = this.theme.fg(chip.disabled ? "dim" : chip.tone, chip.disabled ? "unavailable" : chip.level);
-    const content = `${marker}${name} ${level}`;
+    const level = this.theme.fg("muted", chip.disabled ? "unavailable" : chip.level);
+    const content = `${marker}${name}${this.theme.fg("muted", " · ")}${level}`;
     if (cursor) return this.theme.bg("selectedBg", this.theme.bold(`› ${content}`));
     return `  ${content}`;
   }
@@ -1947,14 +1946,14 @@ export class ModelControlSurface implements Component {
     const ruleW = Math.max(0, Math.min(width - visibleWidth(text), Math.max(12, Math.floor(width / 4))));
     const head = focused
       ? this.theme.fg("accent", this.theme.bold(text)) + this.theme.fg("dim", "─".repeat(ruleW))
-      : this.theme.fg("dim", text + "─".repeat(Math.max(0, ruleW)));
+      : this.theme.fg("muted", text) + this.theme.fg("dim", "─".repeat(Math.max(0, ruleW)));
     return [this.fitLine(head, width)];
   }
 
   /** Visible search line inside the model pane. */
   private searchLine(width: number): string[] {
     if (this.persistent.filter) return [this.fitLine(this.theme.fg("text", `Search: ${this.persistent.filter}`), width)];
-    if (this.persistent.focus === "models") return [this.fitLine(this.theme.fg("dim", "type to search"), width)];
+    if (this.persistent.focus === "models") return [this.fitLine(this.theme.fg("dim", "search…"), width)];
     return [];
   }
 
@@ -2070,8 +2069,7 @@ export function providerDetailLines(
 ): string[] {
   return [
     theme.fg("text", theme.bold(provider)),
-    theme.fg("muted", `${count} selectable model${count === 1 ? "" : "s"}`),
-    theme.fg("muted", "Availability: Configured / available to Pi"),
+    theme.fg("muted", `${count} selectable model${count === 1 ? "" : "s"} · Configured / available to Pi`),
     theme.fg("muted", "Connectivity: Unverified"),
     "",
     theme.fg("dim", "Enter — Browse models"),
@@ -2099,18 +2097,17 @@ export function modelRowLabel(
   return display ? { label: display, description: bare } : { label: bare };
 }
 
-/** Horizontal capability/context metadata: "200k ctx · ● reasoning · ○ vision". */
-function modelMetaLine(model: AvailableModelMeta | undefined, theme: Theme): string {
+/** Compact capability metadata: "200k ctx · reasoning · vision" (available only). */
+function modelMetaText(model: AvailableModelMeta | undefined): string {
   const caps = modelCaps(model ?? {});
-  const ctxText = caps.ctx === "—" ? "context size unknown" : `${caps.ctx} ctx`;
-  return [
-    ctxText,
-    theme.fg(caps.reasoning ? "success" : "muted", `${caps.reasoning ? "●" : "○"} reasoning`),
-    theme.fg(caps.vision ? "success" : "muted", `${caps.vision ? "●" : "○"} vision`),
-  ].join(theme.fg("muted", " · "));
+  const parts = [caps.ctx === "—" ? "context size unknown" : `${caps.ctx} ctx`];
+  if (caps.reasoning) parts.push("reasoning");
+  if (caps.vision) parts.push("vision");
+  return parts.join(" · ");
 }
 
-/** Detail content for the highlighted model (title supplied by panelLines). */
+/** Detail content for the highlighted model (title supplied by panelLines).
+ * One coherent object: identity, then route+metadata, then status. */
 function selectedModelDetailLines(
   spec: string,
   displayName: string | undefined,
@@ -2126,8 +2123,9 @@ function selectedModelDetailLines(
   const routeText = route ? `${provider} / ${route}` : provider;
   return [
     theme.fg("text", theme.bold(displayName ?? name)),
-    theme.fg("muted", spec),
-    modelMetaLine(model, theme) + theme.fg("muted", ` · ${routeText}`),
+    ...(displayName ? [theme.fg("muted", spec)] : []),
+    theme.fg("muted", `${routeText} · ${modelMetaText(model)}`),
+    "",
     isCurrent ? theme.fg("success", "✓ Current Model") : theme.fg("dim", "Enter — Select"),
   ].slice(0, maxLines);
 }
@@ -2143,37 +2141,31 @@ function currentModelDetailLines(
   if (modelLabel.startsWith("(none")) {
     return [theme.fg("muted", modelLabel), theme.fg("dim", "Pick a provider, then a model")].slice(0, maxLines);
   }
+  const { provider, route, name } = splitModelSpec(modelLabel);
+  const routeText = route ? `${provider} / ${route}` : provider;
   return [
-    theme.fg("text", theme.bold(displayName ?? splitModelSpec(modelLabel).name)),
-    theme.fg("muted", modelLabel),
-    modelMetaLine(model, theme),
+    theme.fg("text", theme.bold(displayName ?? name)),
+    ...(displayName ? [theme.fg("muted", modelLabel)] : []),
+    theme.fg("muted", `${routeText} · ${modelMetaText(model)}`),
+    "",
     theme.fg("success", "✓ Current Model"),
   ].slice(0, maxLines);
 }
-
-/** Compact CURRENT MODEL header lines (tier 1 of the surface). */
+/** Compact CURRENT MODEL header lines (tier 1 — name strong, context muted). */
 function currentModelHeaderLines(
   modelLabel: string,
   displayName: string | undefined,
   theme: Theme,
-  state: ReasoningStateV3,
-  resolved: EffectiveReasoning,
 ): string[] {
-  const lines: string[] = [];
   if (modelLabel.startsWith("(none")) {
-    lines.push(theme.fg("muted", theme.bold(modelLabel)));
-  } else {
-    const { provider, route, name } = splitModelSpec(modelLabel);
-    const routeText = route ? `${provider} / ${route}` : provider;
-    lines.push(theme.fg("text", theme.bold(displayName ?? name)) + theme.fg("muted", `  ·  ${routeText}`));
+    return [theme.fg("muted", theme.bold(modelLabel))];
   }
-  lines.push(theme.fg("muted", "Connectivity: Unverified"));
-  lines.push(
-    resolved.source === "execution"
-      ? theme.fg("warning", `● Execution: ${resolved.profile} · ${levelLabelForRuntime(resolved.level) ?? resolved.level}`)
-      : theme.fg("muted", `★ Default profile: ${state.defaultProfile} · ${levelLabelForRuntime(state.profiles[state.defaultProfile]) ?? state.profiles[state.defaultProfile]}`),
-  );
-  return lines;
+  const { provider, route, name } = splitModelSpec(modelLabel);
+  const routeText = route ? `${provider} / ${route}` : provider;
+  return [
+    theme.fg("text", theme.bold(displayName ?? name)),
+    theme.fg("muted", `${routeText} · Connectivity: Unverified`),
+  ];
 }
 
 /** Detail content for a focused profile (title supplied by panelLines). */
@@ -2188,11 +2180,11 @@ export function profileDetailLines(
   const isDefault = state.defaultProfile === profile;
   const isActive = resolved.profile === profile;
   const lines = [
-    theme.fg("accent", theme.bold(profile)),
+    theme.fg("text", theme.bold(profile)),
     theme.fg("muted", PROFILE_DESCRIPTIONS[profile]),
     "",
     theme.fg("dim", "REASONING"),
-    theme.fg(levelTone(level), levelLabelForRuntime(level) ?? level),
+    theme.fg("text", levelLabelForRuntime(level) ?? level),
     "",
     theme.fg("dim", "STATE"),
   ];
@@ -2204,7 +2196,6 @@ export function profileDetailLines(
   lines.push(isDefault ? theme.fg("success", "★ Default") : theme.fg("muted", "○ Not default"));
   return lines.slice(0, maxLines);
 }
-
 /**
  * Grouped selection list for the /mcc overview. Headers and disabled rows are
  * rendered but skipped by navigation; arrow keys wrap across selectable items
@@ -2908,7 +2899,7 @@ async function runModelControlSurfaceLoop(pi: ExtensionAPI, ctx: ExtensionContex
     const configuredNames = new Set(configured.map((c) => c.name));
     const providerRows: MccRow[] = configured.map((p) => ({
       kind: "item" as const,
-      item: { value: `provider:${p.name}`, primary: p.name, description: `${p.count} model${p.count === 1 ? "" : "s"}` },
+      item: { value: `provider:${p.name}`, primary: p.name, description: String(p.count) },
     }));
     for (const registered of ctx.modelRegistry.getRegisteredProviderIds() ?? []) {
       if (!configuredNames.has(registered)) {
@@ -2925,7 +2916,6 @@ async function runModelControlSurfaceLoop(pi: ExtensionAPI, ctx: ExtensionContex
       return {
         profile: name,
         level: levelLabelForRuntime(runtime) ?? runtime,
-        tone: levelTone(runtime),
         marker:
           resolved.source === "execution" && resolved.profile === name
             ? ("execution" as const)
@@ -2959,11 +2949,11 @@ async function runModelControlSurfaceLoop(pi: ExtensionAPI, ctx: ExtensionContex
         render: (w: number) =>
           clampLines(
             [
-              theme.fg("accent", theme.bold("MODEL CONTROL CENTER")),
+              theme.fg("text", theme.bold("MODEL CONTROL CENTER")),
               "",
               ...panelLines(
                 "CURRENT MODEL",
-                currentModelHeaderLines(modelLabel, names[modelLabel], theme, state, resolved),
+                currentModelHeaderLines(modelLabel, names[modelLabel], theme),
                 w,
                 theme,
               ),
