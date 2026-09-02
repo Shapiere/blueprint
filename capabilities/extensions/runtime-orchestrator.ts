@@ -15,7 +15,6 @@ import {
 } from "@earendil-works/pi-tui";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as child_process from "node:child_process";
 import * as os from "node:os";
 import * as crypto from "node:crypto";
 
@@ -348,40 +347,21 @@ export async function check9routerHealth(): Promise<{ ok: boolean; modelCount?: 
   }
 }
 
-export async function autoStart9router(ctx: ExtensionContext): Promise<boolean> {
-  // All UI access is guarded: extension contexts go stale after the session
-  // ends (headless -p runs), and every ctx property getter throws via assertActive.
-  try {
-    if (ctx.hasUI) ctx.ui.setStatus("9router", "starting…");
-    const child = child_process.spawn("9router", [], {
-      detached: true,
-      stdio: "ignore",
-      shell: true,
-    });
-    child.unref();
 
-    for (let i = 0; i < 7; i++) {
-      await sleep(500);
-      const health = await check9routerHealth();
-      if (health.ok) {
-        try {
-          if (ctx.hasUI) {
-            ctx.ui.setStatus("9router", "online");
-            ctx.ui.notify("9router auto-started successfully (:20128)", "info");
-          }
-        } catch {}
-        return true;
-      }
-    }
-  } catch {}
-
+/**
+ * D56/D57: when the router is healthy, the catalog is refreshed exactly
+ * ONCE per readiness transition — at boot when it is already up, or on the
+ * next explicit user-triggered refresh after the user starts it manually.
+ * Refresh failures are absorbed (the provider stays unavailable until a
+ * later successful refresh); nothing is ever spawned and no polling occurs.
+ * 9router startup itself is the USER's action (D57 manual-start policy).
+ */
+export async function refreshCatalogWhenRouterReady(
+  refresh: () => unknown,
+): Promise<void> {
   try {
-    if (ctx.hasUI) {
-      ctx.ui.setStatus("9router", "offline");
-      ctx.ui.notify("9router is offline (:20128). Run '9router' in a terminal.", "warning");
-    }
+    await refresh();
   } catch {}
-  return false;
 }
 
 /**
@@ -2517,9 +2497,10 @@ export default function (pi: ExtensionAPI) {
           try {
             if (health.ok) {
               if (ctx.hasUI) ctx.ui.setStatus("9router", "online");
-              try {
-                void ctx.modelRegistry.refresh();
-              } catch {}
+              // D57 manual-start policy: never spawn the router. Refresh the
+              // catalog exactly once when it is already healthy at boot; a
+              // failing refresh simply leaves the provider unavailable.
+              await refreshCatalogWhenRouterReady(() => ctx.modelRegistry.refresh());
               // D42 boot-default restoration: a bounded startup handshake.
               // The dynamic catalog populates asynchronously after launch; a
               // few short attempts run once at startup and then stop. This is
@@ -2540,20 +2521,20 @@ export default function (pi: ExtensionAPI) {
               };
               setTimeout(tryRestore, 1200);
             } else {
-              await autoStart9router(ctx);
+              // D57: router is offline — leave it to the user. No spawning,
+              // no retries, no polling. The next explicit refresh trigger
+              // (e.g. /model open) picks the catalog up once the user has
+              // started the router manually.
+              if (ctx.hasUI) {
+                ctx.ui.setStatus("9router", "offline");
+                ctx.ui.notify("9router is offline (:20128). Start it manually, then open /model to load its catalog.", "warning");
+              }
             }
           } catch {}
         })
         .catch(() => {});
     } catch {}
   });
-  // D42/D43: /model is the single entry point. Native selector stays
-  // authoritative for picking a model; on a CHANGED selection Pi emits
-  // model_select and we open the control center. NOTE (host constraint,
-  // agent-session.js _emitModelSelect): Pi SKIPS the event when the selected
-  // model equals the current one, so re-confirming the current model cannot
-  // trigger any extension hook. Ctrl+G and `/reasoning` open the identical
-  // control center for reasoning-only access.
   pi.on("model_select", async (event, ctx) => {
     if (!ctx.hasUI) return;
     if (restoringBootDefault) {
@@ -2912,7 +2893,20 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
 
 async function runModelControlSurfaceLoop(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   const surfaceState: ModelSurfaceState = { focus: "models", provider: null, filter: "", profileFocus: 0 };
+  // D57 manual-start recovery (one-shot per surface open): when the dynamic
+  // catalog is empty but the router is now reachable (the user started it
+  // manually after Pi booted), refresh once so this very surface shows the
+  // models. No polling, no retries — if the router is still down the surface
+  // renders the truthful offline state and the next open tries again.
+  let recoveryRefreshed = false;
   for (;;) {
+    if (!recoveryRefreshed && listAvailableModelSpecsSafe(ctx).length === 0) {
+      recoveryRefreshed = true;
+      const health = await check9routerHealth();
+      if (health.ok) {
+        await refreshCatalogWhenRouterReady(() => ctx.modelRegistry.refresh());
+      }
+    }
     const state = loadReasoningState();
     const resolved = resolveEffective(state);
     const isPlaceholder =
@@ -2925,7 +2919,6 @@ async function runModelControlSurfaceLoop(pi: ExtensionAPI, ctx: ExtensionContex
     const allSpecs = sortModelsRouterFirst(listAvailableModelSpecsSafe(ctx));
     const names = loadModelsVisibility().names;
     const getAvailable = () => ctx.modelRegistry.getAvailable();
-
     // PROVIDERS pane: configured rows (selectable, truthful counts) + registered-
     // but-unconfigured rows (dimmed, non-selectable). Never claim upstream auth.
     const configured = providerCounts(allSpecs);
@@ -2936,7 +2929,13 @@ async function runModelControlSurfaceLoop(pi: ExtensionAPI, ctx: ExtensionContex
     }));
     for (const registered of ctx.modelRegistry.getRegisteredProviderIds() ?? []) {
       if (!configuredNames.has(registered)) {
-        providerRows.push({ kind: "disabled" as const, disabled: { primary: `○ ${registered}`, description: "registered · not configured" } });
+        // D57 wording: the provider contributes no models to the current
+        // availability snapshot. For 9router specifically the usual cause is
+        // that the user has not started it yet (manual-start policy) — say
+        // that, without ever claiming it is un/configured upstream.
+        const note =
+          registered === "9router" ? "not running — start 9router manually" : "registered · not configured";
+        providerRows.push({ kind: "disabled" as const, disabled: { primary: `○ ${registered}`, description: note } });
       }
     }
     const providerSections: MccSection[] = [{ title: "", rows: providerRows }];

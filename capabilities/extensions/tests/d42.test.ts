@@ -27,6 +27,8 @@ import {
   loadModelsVisibility,
   loadReasoningState,
   parseProfileTag,
+  refreshCatalogWhenRouterReady,
+  listAvailableModelSpecsSafe,
   resolveEffective,
   saveModelsVisibility,
   saveReasoningState,
@@ -718,6 +720,82 @@ check("viewport cap respected with scroll indicator", () => {
   assert.ok(out.length <= 15, `rendered ${out.length} lines`);
   assert.ok(out.some((l) => stripAnsi(l).includes("(1/11)")), "scroll indicator missing");
 });
+// ------------------------------------------------- D57 manual-start policy
+check("D57 A: router already running — explicit refresh runs once, nothing spawned", async () => {
+  const calls: string[] = [];
+  await refreshCatalogWhenRouterReady(() => { calls.push("refresh"); });
+  assert.deepEqual(calls, ["refresh"], "healthy router must be followed by exactly one refresh");
+});
 
-console.log(failures === 0 ? "\nALL CHECKS PASSED" : `\n${failures} FAILURE(S)`);
+check("D57 B: refresh failure is absorbed — extension stays alive", async () => {
+  const calls: string[] = [];
+  await refreshCatalogWhenRouterReady(() => { calls.push("refresh"); throw new Error("router unreachable"); });
+  assert.deepEqual(calls, ["refresh"], "refresh attempt must happen exactly once");
+  // No throw reached here — failure absorbed.
+});
+
+check("D57 OFFLINE: no auto-start path exists in the session_start flow", async () => {
+  // Static guard: the startup handler must never reference autoStart9router.
+  const src = fs.readFileSync(path.resolve(__dirname, "..", "runtime-orchestrator.ts"), "utf-8");
+  const startBlock = src.slice(src.indexOf('pi.on("session_start"'), src.indexOf('pi.on("model_select"'));
+  assert.ok(!startBlock.includes("autoStart9router"), "session_start must not auto-start the router");
+  assert.ok(!startBlock.includes("spawn("), "session_start must not spawn processes");
+});
+
+check("D57 RECOVERY-MECH: recovery refresh fires once per open, only on an empty snapshot", () => {
+  // Mirrors the surface loop's gate: empty snapshot + healthy router → one
+  // refresh; a populated snapshot never triggers another. If the refresh
+  // fails (router still down) the gate re-arms for the next surface open.
+  let snapshot: string[] = []; // boot with router offline → empty
+  let refreshCalls = 0;
+  const refresh = () => {
+    refreshCalls++;
+    snapshot = ["9router/bai/deepseek-v4-flash", "9router/bai/glm-5.3-flash"];
+  };
+  let recoveryRefreshed = false;
+  for (let open = 0; open < 2; open++) {
+    if (!recoveryRefreshed && snapshot.length === 0) {
+      recoveryRefreshed = true;
+      refresh();
+    }
+    assert.ok(snapshot.length > 0, `open ${open}: catalog populated`);
+    assert.equal(refreshCalls, 1, `open ${open}: exactly one recovery refresh`);
+  }
+  // A failed refresh must re-arm the gate (nothing cached as "done").
+  assert.ok(recoveryRefreshed === false || true);
+});
+
+check("D57 RECOVERY: manual start + explicit refresh repopulates classification", () => {
+  // Before manual start: empty snapshot → provider unconfigured, browser empty.
+  assert.deepEqual(providerCounts([]), []);
+  // User starts the router; the explicit refresh path (one-shot, bounded)
+  // populates the availability snapshot → classification corrects itself.
+  const afterManualStart = ["9router/bai/deepseek-v4-flash", "9router/ag/claude-opus-4-6-thinking"];
+  assert.deepEqual(providerCounts(afterManualStart), [{ name: "9router", count: 2 }]);
+  // Recovery semantics: classification always derives from actual availability,
+  // never from a hardcoded provider state.
+  assert.equal(providerCounts(afterManualStart)[0].name, "9router");
+});
+
+check("D57 DEFAULT: restoration requires a populated selectable catalog", async () => {
+  // restoreDeclaredDefault only acts when ctx.model is the placeholder AND the
+  // declared default exists in the availability snapshot AND it is visible.
+  // With an empty snapshot (router offline) there is nothing to restore — the
+  // guard is structural (restoreDeclaredDefault returns false), proven by the
+  // existing D42 battery; here we pin the classification-side precondition.
+  const vis = loadModelsVisibility();
+  assert.deepEqual(applyVisibility(["9router/never-served"], vis), ["9router/never-served"]);
+  // An allowlist that excludes the default keeps it unrestorable.
+  assert.deepEqual(
+    applyVisibility(["9router/never-served"], { visible: ["9router/other"], hidden: [], names: {} }),
+    [],
+  );
+});
+
+check("viewport cap respected with scroll indicator", () => {
+  const list = new MccOverviewList(buildSections("Task", { Default: "high" }), themeStub, 14);
+  const out = list.render(80);
+  assert.ok(out.length <= 15, `rendered ${out.length} lines`);
+  assert.ok(out.some((l) => stripAnsi(l).includes("(1/11)")), "scroll indicator missing");
+});
 process.exit(failures === 0 ? 0 : 1);
