@@ -16,6 +16,8 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   MccOverviewList,
   ModelControlSurface,
+  ReasoningProfilesPanel,
+  frameLines,
   panelLines,
   providerCounts,
   scopeTitle,
@@ -432,7 +434,7 @@ const D53_SPECS = [
   "deepseek/sonnet",
 ];
 const D53_AVAILABLE = [
-  { provider: "9router", id: "bai/deepseek-v4-flash", reasoning: true, input: ["text"], contextWindow: 200000 },
+  { provider: "9router", id: "bai/deepseek-v4-flash", reasoning: true, input: ["text"], contextWindow: 200000, maxTokens: 131072 },
   { provider: "9router", id: "openrouter/stealth/ox-alpha", reasoning: true, input: ["text"], contextWindow: 1000000 },
   { provider: "9router", id: "kimi/kimi-k3", reasoning: false, input: ["text"], contextWindow: 256000 },
   { provider: "deepseek", id: "sonnet", reasoning: false, input: ["text"], contextWindow: 64000 },
@@ -517,12 +519,24 @@ check("D53 SURFACE: providers|models browser, lower detail + profiles, never ove
     assert.match(joined, /REASONING PROFILES/, `profiles region missing at ${width}`);
     assert.match(joined, /SELECTED MODEL/, `model detail missing at ${width}`);
     assert.match(joined, /bai\/deepseek-v4-flash/, `model rows not immediately visible at ${width}`);
-    if (width >= 64) {
-      assert.ok(out.some((l) => stripAnsi(l).includes("│")), `two-pane divider missing at ${width}`);
+    if (width >= 60) {
+      // innerWidth >= 56: boxed browser (two-column below innerWidth 78,
+      // three-column above) — the box divider column exists.
+      assert.ok(out.some((l) => stripAnsi(l).includes("│")), `browser divider missing at ${width}`);
     } else {
-      // Narrow: no browser divider — but the outer frame's side rails (│) are
+      // Narrow: no browser box — but the outer frame's side rails (│) are
       // expected, so assert only that no T-junction (┬) exists.
       assert.ok(!out.join("\n").includes("┬"), `unexpected browser divider at ${width}`);
+    }
+    if (width >= 82) {
+      // D59 three-column: all three column titles share one box row.
+      assert.ok(
+        out.some((l) => {
+          const s = stripAnsi(l);
+          return s.includes("PROVIDERS") && s.includes("ALL MODELS") && s.includes("SELECTED MODEL");
+        }),
+        `three-column title row missing at ${width}`,
+      );
     }
   }
 });
@@ -535,35 +549,43 @@ check("D53b SURFACE: outer frame + boxed browser with continuous divider", () =>
   assert.ok(outerTop, "outer frame top with title missing");
   assert.ok(flat.some((l) => l.startsWith("│") && l.endsWith("│")), "outer frame side rails missing");
   assert.ok(flat.some((l) => l.startsWith("└") && l.endsWith("┘")), "outer frame bottom missing");
-  // Inner browser box: top with ┬, bottom with ┴, both fully bordered.
+  // Inner browser box: top with TWO ┬ junctions, bottom with two ┴s — the
+  // D59 three-column browser — both fully bordered.
   const innerTop = flat.find((l) => l.includes("┌") && l.includes("┬") && l.includes("┐"));
   const innerBot = flat.find((l) => l.includes("└") && l.includes("┴") && l.includes("┘"));
   assert.ok(innerTop, "browser top border missing");
   assert.ok(innerBot, "browser bottom border missing");
-  // The browser divider column is stable across all interior rows (no drift).
-  const dividerCol = innerTop.lastIndexOf("┬");
-  const interior = flat.filter((l) => l.startsWith("│") && l.includes("│", 1));
-  for (const l of interior) {
-    const idx = l.lastIndexOf("│");
-    assert.ok(
-      idx === 139 || l.lastIndexOf("│", idx - 1) === dividerCol || idx - 1 === dividerCol || l.includes("┬") === false,
-      `divider drift at column ${idx}`,
-    );
+  assert.equal((innerTop.match(/┬/g) ?? []).length, 2, `expected two top junctions: ${innerTop}`);
+  assert.equal((innerBot.match(/┴/g) ?? []).length, 2, `expected two bottom junctions: ${innerBot}`);
+  // Both divider columns are stable across all interior rows (no drift).
+  // Interior box rows have no left border column, so each divider sits one
+  // column left of its top-border junction.
+  const jCols = [...new Set([innerTop.indexOf("┬"), innerTop.lastIndexOf("┬")])];
+  const topIdx = flat.indexOf(innerTop);
+  const botIdx = flat.indexOf(innerBot);
+  assert.ok(botIdx > topIdx, "browser box borders out of order");
+  for (let i = topIdx + 1; i < botIdx; i++) {
+    for (const jc of jCols) {
+      assert.ok(
+        flat[i][jc - 1] === "│",
+        `divider drift at column ${jc - 1}: ${JSON.stringify(flat[i].slice(0, 60))}`,
+      );
+    }
   }
-  // Titles live on the first interior row inside the box.
-  assert.ok(flat.some((l) => l.includes("│") && l.includes("PROVIDERS") && l.includes("ALL MODELS")));
+  // Titles live on the first interior row inside the box: all three columns.
+  assert.ok(flat.some((l) => l.includes("│") && l.includes("PROVIDERS") && l.includes("ALL MODELS") && l.includes("SELECTED MODEL")));
 });
 
 check("D53 PROVIDERS: counts visible, unconfigured rows present but never selectable", () => {
   const surface = makeSurface({ focus: "providers" });
-  const joined = flatText(surface.render(100));
+  const joined = flatText(surface.render(50));
   assert.match(joined, /3 models/);
   assert.match(joined, /anthropic/);
   // Navigation wraps over configured rows only — the dimmed row is never
-  // selected, so the detail panel always shows a real provider.
+  // selected, so the focus-following detail always shows a real provider.
   for (let i = 0; i < 5; i++) {
     surface.handleInput(DOWN);
-    const detail = regionOf(surface.render(100), "PROVIDER");
+    const detail = regionOf(surface.render(50), "PROVIDER");
     assert.match(detail, /selectable model/, `selection landed on a non-provider row at step ${i}`);
   }
 });
@@ -599,30 +621,44 @@ check("D53 SEARCH: typing filters within scope, visible search line, backspace r
   surface.handleInput("x");
   joined = flatText(surface.render(120));
   assert.match(joined, /openrouter\/stealth\/ox-alpha/);
-  assert.ok(!joined.includes("deepseek-v4-flash"), "scoped search leaked other models");
+  // kimi-k3 is inside the 9router scope but does not match the filter — it
+  // must vanish. deepseek-v4-flash legitimately stays visible: it is the
+  // current model (CURRENT MODEL band) and the D59 inspector mirrors it.
+  assert.ok(!joined.includes("kimi-k3"), "scoped search leaked filtered-out models");
 });
 
-check("D53 DETAIL: context follows focus — provider, model, profile", () => {
-  const surface = makeSurface({ focus: "providers" });
-  let joined = flatText(surface.render(140));
+check("D53 DETAIL: focus-following in narrow, persistent inspector in three-column", () => {
+  // Narrow stack (D58): the detail region follows focus.
+  const stacked = makeSurface({ focus: "providers" });
+  let joined = flatText(stacked.render(50));
   assert.match(joined, / PROVIDER /);
   assert.match(joined, /Configured \/ available to Pi/);
   assert.ok(!joined.includes("SELECTED MODEL"), "model detail leaked into providers focus");
-  surface.handleInput("\x1b[C"); // → models
-  joined = flatText(surface.render(140));
+  stacked.handleInput("\x1b[C"); // → models
+  joined = flatText(stacked.render(50));
   assert.match(joined, / SELECTED MODEL /);
   assert.match(joined, /200k ctx/);
   assert.match(joined, /✓ Current Model/);
   assert.ok(!joined.includes("Availability:"), "provider detail leaked into models focus");
-  surface.handleInput(DOWN); // highlight → ox-alpha
-  joined = flatText(surface.render(140));
+  stacked.handleInput(DOWN); // highlight → ox-alpha
+  joined = flatText(stacked.render(50));
   assert.match(joined, /ox-alpha/);
   assert.ok(!joined.includes("✓ Current Model"), "stale current marker on a non-current model");
-  surface.handleInput("\x1b[C"); // → profiles
-  joined = flatText(surface.render(140));
+  stacked.handleInput("\x1b[C"); // → profiles
+  joined = flatText(stacked.render(50));
   assert.match(joined, / PROFILE /);
   assert.match(joined, /Normal interactions/);
   assert.ok(!joined.includes("SELECTED MODEL"), "model detail leaked into profiles focus");
+
+  // Three-column (D59): the inspector column is passive — it always shows
+  // the selected model, whatever region holds the keyboard focus.
+  for (const focus of ["providers", "models", "profiles"] as const) {
+    const wide = makeSurface({ focus });
+    const flat = flatText(wide.render(140));
+    assert.match(flat, / SELECTED MODEL/, `inspector column missing under ${focus} focus`);
+    assert.match(flat, /200k ctx/, `inspector content missing under ${focus} focus`);
+    assert.ok(!flat.includes(" PROFILE "), "profile detail leaked into three-column layout");
+  }
 });
 
 check("D53 MODEL DETAIL: one coherent inspector — identity, metadata, status", () => {
@@ -812,5 +848,114 @@ check("viewport cap respected with scroll indicator", () => {
   const out = list.render(80);
   assert.ok(out.length <= 15, `rendered ${out.length} lines`);
   assert.ok(out.some((l) => stripAnsi(l).includes("(1/11)")), "scroll indicator missing");
+});
+
+// ------------------------------------------------------- D59 three-column IA
+check("D59 T1 INSPECTOR: capabilities gated by meta, route and ctx on ONE line", () => {
+  const out = makeSurface({ focus: "models" }).render(140);
+  const inspector = regionOf(out, "SELECTED MODEL");
+  // Capabilities render only when meta carries them (reasoning yes, vision no).
+  assert.match(inspector, /Capabilities/);
+  assert.match(inspector, /● reasoning/);
+  assert.ok(!/\bvision\b/.test(inspector), "unavailable capability fabricated");
+  // Route and ctx share ONE merged metadata line; the output limit rides on
+  // its own line below (it cannot fit the 34-column inspector budget merged).
+  const flat = inspector.replace(/\s+/g, " ");
+  assert.match(flat, /9router \/ bai · 200k ctx/);
+  assert.match(flat, /131k output/);
+  assert.match(flat, /✓ Current Model/);
+});
+
+check("D59 T2 OUTPUT LIMIT: maxTokens quoted, absent entries never fabricated", () => {
+  // bai entry carries maxTokens: 131072 → "131k output" in the inspector.
+  const withLimit = flatText(makeSurface({ focus: "models" }).render(140));
+  assert.match(withLimit, /131k output/);
+  // ox-alpha carries NO maxTokens → no output fragment anywhere for it.
+  const surface = makeSurface({ focus: "models" });
+  surface.handleInput(DOWN); // highlight → ox-alpha
+  const withoutLimit = regionOf(surface.render(140), "SELECTED MODEL").replace(/\s+/g, " ");
+  assert.match(withoutLimit, /ox-alpha/);
+  assert.ok(!withoutLimit.includes("output"), "output limit fabricated for an entry without maxTokens");
+});
+
+check("D59 T3 THREE COLUMNS: wide shows 3 titles, mid collapses, narrow stacks", () => {
+  // Wide (innerWidth 136 ≥ 78): one box row carries all three titles.
+  const wide = makeSurface().render(140).map(stripAnsi);
+  assert.ok(
+    wide.some((l) => l.includes("PROVIDERS") && l.includes("ALL MODELS") && l.includes("SELECTED MODEL")),
+    "three-column title row missing at 140",
+  );
+  // Mid (innerWidth 74, boxed two-column): inspector moved BELOW the box.
+  const mid = makeSurface().render(78).map(stripAnsi);
+  const midTop = mid.find((l) => l.includes("┌") && l.includes("┬") && l.includes("┐"));
+  assert.ok(midTop, "two-column browser box missing at 78");
+  assert.equal((midTop.match(/┬/g) ?? []).length, 1, "expected ONE junction in two-column collapse");
+  assert.ok(!mid.some((l) => l.includes("PROVIDERS") && l.includes("SELECTED MODEL")), "inspector must not sit inside the two-column box");
+  assert.ok(mid.some((l) => l.includes("SELECTED MODEL")), "inspector region missing below the box at 78");
+  // Narrow (innerWidth 52 < 56): full stack — no box junctions anywhere.
+  const narrow = makeSurface().render(56).map(stripAnsi);
+  assert.ok(!narrow.join("\n").includes("┬"), "browser box leaked into stacked layout");
+  assert.ok(narrow.some((l) => l.includes("SELECTED MODEL")), "stacked layout lost the model detail region");
+});
+
+check("D59 T4 GRID ALIGNMENT: level dot aligns under the profile name column", () => {
+  const panel = new ReasoningProfilesPanel(D53_CHIPS, themeStub, 0);
+  const lines = panel.render(100).map(stripAnsi);
+  assert.ok(lines.length >= 2, "profile grid needs name+level rows");
+  for (let i = 0; i + 1 < lines.length; i += 2) {
+    const nameRow = lines[i];
+    const levelRow = lines[i + 1];
+    for (const name of REASONING_PROFILES) {
+      const nameCol = nameRow.indexOf(name);
+      if (nameCol === -1) continue;
+      // Disabled chips render the dim "unavailable" text without a dot.
+      if (D53_CHIPS.find((c) => c.profile === name)?.disabled) {
+        assert.ok(levelRow.includes("unavailable"), `disabled ${name} lost its note`);
+        continue;
+      }
+      const dotCol = levelRow.indexOf("●", Math.max(0, nameCol - 2));
+      assert.ok(dotCol !== -1, `no level dot near ${name}`);
+      assert.equal(dotCol, nameCol, `● misaligned for ${name}: dot ${dotCol}, name ${nameCol}`);
+    }
+  }
+});
+
+check("D59 T5 EDITOR FRAME: frameLines draws the titled MCC rule", () => {
+  const out = frameLines(["line one", "line two"], 60, themeStub);
+  const flat = out.map(stripAnsi);
+  assert.ok(flat[0].startsWith("┌") && flat[0].includes("MODEL CONTROL CENTER") && flat[0].endsWith("┐"), "top rule missing title");
+  assert.ok(flat[flat.length - 1].startsWith("└") && flat[flat.length - 1].endsWith("┘"), "bottom rule missing");
+  assert.ok(flat.some((l) => l.startsWith("│") && l.includes("line one") && l.endsWith("│")), "content not framed");
+  // Same frame implementation backs the surface render.
+  const surfaceOut = makeSurface().render(60).map(stripAnsi);
+  assert.ok(surfaceOut[0].includes("MODEL CONTROL CENTER"), "surface does not use the shared frame");
+});
+
+check("D59 T6 THEME FILE: mcc-purple.json parses with the approved palette", () => {
+  const raw = fs.readFileSync(path.join(__dirname, "..", "mcc-purple.json"), "utf8");
+  const theme = JSON.parse(raw);
+  for (const key of ["name", "vars", "colors", "export"]) assert.ok(key in theme, `missing key: ${key}`);
+  assert.equal(theme.name, "mcc-purple");
+  assert.equal(theme.colors.accent, "#b48ead");
+  assert.equal(theme.colors.borderAccent, "#9575cd");
+  assert.equal(theme.colors.customMessageLabel, "#9575cd");
+  assert.equal(theme.colors.thinkingXhigh, "#c792ea");
+  assert.equal(theme.colors.thinkingHigh, "#e0af68");
+  // Every color value is either a var reference or a hex string — no raw ANSI.
+  for (const [k, v] of Object.entries(theme.colors)) {
+    assert.ok(
+      typeof v === "string" && (v.startsWith("#") || v in theme.vars),
+      `color ${k} must be hex or a var reference, got ${JSON.stringify(v)}`,
+    );
+  }
+});
+
+check("D59 LEVEL SEMANTICS: dot+level is one span, dot aligns, colors per map", () => {
+  const panel = new ReasoningProfilesPanel(D53_CHIPS, themeStub, 0);
+  const rendered = panel.render(100).join("\n");
+  // Semantic span: the dot and the level word share ONE color span.
+  assert.match(rendered, /\x1b\[38;2;180;180;180m● High\x1b\[0m/);
+  // Disabled chips keep the dim "unavailable" text, no fabricated dot.
+  assert.match(rendered, /unavailable/);
 });
 process.exit(failures === 0 ? 0 : 1);

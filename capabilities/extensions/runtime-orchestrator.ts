@@ -1,14 +1,11 @@
-import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import {
-  Container,
   fuzzyFilter,
   getKeybindings,
   type Component,
   type SelectItem,
   SelectList,
   type SelectListTheme,
-  Spacer,
-  Text,
   truncateToWidth,
   type TUI,
   visibleWidth,
@@ -641,6 +638,22 @@ export function executeSync(options?: {
         "extensions",
         path.join(sourceExtDir, file),
         path.join(runtimeExtDir, file)
+      );
+    }
+  }
+
+  // 3b. Sync Bundled Themes (capabilities/extensions/*.theme.json ->
+  // ~/.pi/agent/themes/*). Pi discovers themes ONLY from the themes dir
+  // (resource-loader), so the MCC purple theme must land there for
+  // name-based setTheme to find it.
+  if (fs.existsSync(sourceExtDir)) {
+    const themeFiles = fs.readdirSync(sourceExtDir).filter((f) => f.startsWith("mcc-") && f.endsWith(".json"));
+    for (const file of themeFiles) {
+      evaluateAssetSync(
+        `themes/${file}`,
+        "extensions",
+        path.join(sourceExtDir, file),
+        path.join(agentDir, "themes", file)
       );
     }
   }
@@ -1566,29 +1579,18 @@ function levelTone(level: string): "dim" | "muted" | "text" | "accent" {
 }
 
 /**
- * Width-safe single-line text: the content is produced from the ACTUAL render
- * width (so narrow terminals can simplify wording), then clamped so the final
- * rendered line never exceeds that width. ANSI-styled input is measured with
- * pi-tui's display-width helper, never with string length.
+ * D59 semantic color per user-facing reasoning level. Theme tokens only —
+ * under mcc-purple these resolve to the approved gray/green/purple/amber/
+ * violet set; under any other theme they resolve to that theme's own tokens.
+ * Never raw hex.
  */
-class WidthSafeText implements Component {
-  constructor(
-    private readonly build: (width: number) => string,
-    private readonly paddingX = 0,
-    private readonly paddingY = 0,
-  ) {}
-
-  invalidate(): void {}
-
-  render(width: number): string[] {
-    const inner = Math.max(1, width - this.paddingX * 2);
-    const line = truncateToWidth(this.build(width), inner, "");
-    const pad = " ".repeat(this.paddingX);
-    const out = [pad + line];
-    for (let i = 0; i < this.paddingY; i++) out.push("");
-    return out;
-  }
-}
+const LEVEL_COLOR: Record<string, ThemeColor> = {
+  Off: "dim",
+  Low: "success",
+  Medium: "borderAccent",
+  High: "warning",
+  Ultra: "customMessageLabel",
+};
 
 /**
  * Pads a cell to its column width while guaranteeing at least one trailing
@@ -1643,6 +1645,8 @@ type AvailableModelMeta = {
   reasoning?: boolean;
   input?: unknown[];
   contextWindow?: number;
+  /** Output limit (Pi Model.maxTokens) when the registry entry carries it. */
+  maxTokens?: number;
 };
 
 /** Surface state persisted across the /model loop: focus, scope, search and
@@ -1720,12 +1724,17 @@ export class ReasoningProfilesPanel implements Component {
 
   render(width: number): string[] {
     const GAP = 2;
-    const focusedIdx = this.selectable[this.index];
+    // D59 aligned grid: every cell is two lines (name / level). The level
+    // cell indents by exactly the name line's prefix width (cursor slot 2 +
+    // marker width), so `● level` aligns under the profile name's first
+    // letter in EVERY column. Column width must fit the widest cell of
+    // either line: name (incl. prefix+marker) or dot+level at max indent.
     const nameW = Math.max(...this.chips.map((c) => visibleWidth(this.nameLine(c, false))));
     const levelW = Math.max(...this.chips.map((c) => visibleWidth(c.disabled ? "unavailable" : c.level)));
-    const colW = Math.max(nameW, 2 + levelW);
+    const colW = Math.max(nameW, 6 + levelW);
     const cols = Math.max(1, Math.floor((width + GAP) / (colW + GAP)));
     const lines: string[] = [];
+    const focusedIdx = this.selectable[this.index];
     for (let start = 0; start < this.chips.length; start += cols) {
       const l1: string[] = [];
       const l2: string[] = [];
@@ -1742,9 +1751,17 @@ export class ReasoningProfilesPanel implements Component {
         const nameLine = cursor
           ? this.theme.bg("selectedBg", this.theme.bold(`› ${marker}${name}`))
           : `  ${marker}${name}`;
-        const level = this.theme.fg(c.disabled ? "dim" : "muted", c.disabled ? "unavailable" : c.level);
+        // D59 semantic level: dot + word in one LEVEL_COLOR span. The level
+        // cell indents by exactly the name line's prefix width (cursor slot
+        // 2 + marker width) so `● level` aligns under the profile name's
+        // first letter in EVERY column, markers included.
+        const markerW = c.marker === "default" || c.marker === "execution" ? 2 : 0;
+        const levelText = c.disabled ? "unavailable" : c.level;
+        const level = c.disabled
+          ? this.theme.fg("dim", levelText)
+          : this.theme.fg(LEVEL_COLOR[levelText] ?? "muted", `● ${levelText}`);
         l1.push(this.padCellTo(nameLine, colW));
-        l2.push(this.padCellTo(`    ${level}`, colW));
+        l2.push(this.padCellTo(`${" ".repeat(2 + markerW)}${level}`, colW));
       });
       lines.push(truncateToWidth(l1.join(" ".repeat(GAP)), width, ""));
       lines.push(truncateToWidth(l2.join(" ".repeat(GAP)), width, ""));
@@ -1967,27 +1984,51 @@ export class ModelControlSurface implements Component {
     return this.theme.fg("dim", full ? text : "↑↓ · ←→ · Enter · Esc");
   }
 
+  /**
+   * D59 third-column inspector: ALWAYS the selected (or current) model,
+   * never focus-following — the column is passive. Same content functions
+   * as the narrow layouts' detail region, minus the titled rule (the box
+   * borders frame it).
+   */
+  private modelInspectorLines(): string[] {
+    if (this.highlight) {
+      return selectedModelDetailLines(this.highlight, this.names[this.highlight], this.getAvailable, this.modelLabel, this.theme, 10);
+    }
+    const [prov, ...rest] = this.modelLabel.split("/");
+    const model = this.getAvailable().find((m) => m.provider === prov && m.id === rest.join("/"));
+    return currentModelDetailLines(this.modelLabel, this.names[this.modelLabel], model, this.theme, 10);
+  }
+
   render(width: number): string[] {
-    const wide = width >= 64;
+    const innerWidth = width - 4; // inside the outer frame (│ + 1-space gutters)
+    // D59 IA: three columns (providers | models | inspector) at innerWidth
+    // ≥ 78; two-column collapse below; full stack below innerWidth 56.
+    const threeCol = innerWidth >= 78;
+    const boxed = innerWidth >= 56;
     // ONE ACTIVE FOCUS: the keyboard cursor (› + highlight) renders in the
     // focused region only; passive regions stay readable with no competing
-    // selection indicators.
+    // selection indicators. The inspector column is NEVER focused (§12).
     this.providers.showCursor = this.persistent.focus === "providers";
     this.models.showCursor = this.persistent.focus === "models";
     this.profilesPanel.showCursor = this.persistent.focus === "profiles";
-    const detail = this.detailLines();
-    const detailPanel = panelLines(detail.title, detail.lines, width, this.theme);
-    const profilesPanel = panelLines("REASONING PROFILES", this.profilesPanel.render(width), width, this.theme);
     const footer = this.footerLine(width);
+    // Row 1 context: CURRENT MODEL band directly under the inline title rule.
+    const header = [
+      this.theme.fg("customMessageLabel", this.theme.bold(" CURRENT MODEL")),
+      ...currentModelHeaderLines(this.modelLabel, this.names[this.modelLabel], this.theme),
+    ];
 
-    const innerWidth = width - 4; // inside the outer frame (│ + 1-space gutters)
-
-    if (!wide) {
-      // Stacked: providers, models, detail, profiles, footer — all inside
-      // the outer Model Control Center frame.
+    if (!boxed) {
+      // Stacked (D58): providers, models, focus-following detail, profiles,
+      // footer — all inside the outer Model Control Center frame.
+      const detail = this.detailLines();
+      const detailPanel = panelLines(detail.title, detail.lines, innerWidth, this.theme);
+      const profilesPanel = panelLines("REASONING PROFILES", this.profilesPanel.render(innerWidth), innerWidth, this.theme);
       return this.frame(
         clampLines(
           [
+            ...header,
+            "",
             " " + this.paneTitle("PROVIDERS", this.persistent.focus === "providers"),
             ...clampLines(this.providers.render(innerWidth), innerWidth),
             "",
@@ -2007,60 +2048,101 @@ export class ModelControlSurface implements Component {
       );
     }
 
-    // Two-pane browser as ONE box-drawn component: providers left, models
-    // right, a single continuous divider, one shared boundary.
-    const provW = Math.max(24, Math.min(36, Math.floor(innerWidth * 0.32)));
-    const modelW = innerWidth - provW - 3; // ┌, ┬/│ divider, ┐ each occupy one column
+    if (!threeCol) {
+      // Two-column collapse (D59): providers | models in one box; the model
+      // inspector moves to the full-width region below the box (today's D58
+      // detail slot). Focus-following detail is preserved here.
+      const detail = this.detailLines();
+      const detailPanel = panelLines(detail.title, detail.lines, innerWidth, this.theme);
+      const profilesPanel = panelLines("REASONING PROFILES", this.profilesPanel.render(innerWidth), innerWidth, this.theme);
+      const provW = Math.max(24, Math.min(36, Math.floor(innerWidth * 0.32)));
+      const modelW = innerWidth - provW - 3; // ┌, ┬/│ divider, ┐ each occupy one column
+      const provLines = [
+        " " + this.paneTitle("PROVIDERS", this.persistent.focus === "providers"),
+        "",
+        ...clampLines(this.providers.render(provW), provW),
+      ];
+      const modelLines = [
+        " " + this.paneTitle(scopeTitle(this.persistent.provider), this.persistent.focus === "models"),
+        "",
+        ...this.searchLine(modelW).map((l) => " " + l),
+        ...clampLines(this.models.render(modelW), modelW),
+      ];
+      const t = this.theme;
+      const top = t.fg("dim", "┌" + "─".repeat(provW) + "┬" + "─".repeat(modelW) + "┐");
+      const bottom = t.fg("dim", "└" + "─".repeat(provW) + "┴" + "─".repeat(modelW) + "┘");
+      const rows = Math.max(provLines.length, modelLines.length);
+      const browser: string[] = [top];
+      for (let i = 0; i < rows; i++) {
+        const l = provLines[i] ?? "";
+        const m = modelLines[i] ?? "";
+        const lp = " ".repeat(Math.max(0, provW - visibleWidth(l)));
+        const mp = " ".repeat(Math.max(0, modelW - visibleWidth(m)));
+        const line = `${l}${lp}│${m}${mp}│`;
+        browser.push(visibleWidth(line) > innerWidth ? truncateToWidth(line, innerWidth, "") : line);
+      }
+      browser.push(bottom);
+      return this.frame(
+        clampLines([...header, "", ...browser, "", ...detailPanel, "", ...profilesPanel, "", footer], innerWidth),
+        width,
+      );
+    }
+
+    // Three-column browser (D59): PROVIDERS | MODELS | SELECTED MODEL — one
+    // box, two continuous ┬/┴ junctions. The inspector column is passive:
+    // it always mirrors the highlighted (or current) model, so ←→ focus
+    // cycling never moves content into or out of it.
+    const provW = Math.max(22, Math.min(30, Math.floor(innerWidth * 0.22)));
+    const selW = Math.max(26, Math.min(34, Math.floor(innerWidth * 0.28)));
+    const modelW = innerWidth - provW - selW - 4; // two junction columns + one spare
     const provLines = [
       " " + this.paneTitle("PROVIDERS", this.persistent.focus === "providers"),
-      "",
       ...clampLines(this.providers.render(provW), provW),
     ];
     const modelLines = [
       " " + this.paneTitle(scopeTitle(this.persistent.provider), this.persistent.focus === "models"),
-      "",
       ...this.searchLine(modelW).map((l) => " " + l),
       ...clampLines(this.models.render(modelW), modelW),
     ];
+    const selLines = [
+      " " + this.paneTitle("SELECTED MODEL", false),
+      ...this.modelInspectorLines(),
+    ];
     const t = this.theme;
-    const top = t.fg("dim", "┌" + "─".repeat(provW) + "┬" + "─".repeat(modelW) + "┐");
-    const bottom = t.fg("dim", "└" + "─".repeat(provW) + "┴" + "─".repeat(modelW) + "┘");
-    const rows = Math.max(provLines.length, modelLines.length);
+    const top = t.fg("dim", "┌" + "─".repeat(provW) + "┬" + "─".repeat(modelW) + "┬" + "─".repeat(selW) + "┐");
+    const bottom = t.fg("dim", "└" + "─".repeat(provW) + "┴" + "─".repeat(modelW) + "┴" + "─".repeat(selW) + "┘");
+    const rows = Math.max(provLines.length, modelLines.length, selLines.length);
     const browser: string[] = [top];
     for (let i = 0; i < rows; i++) {
       const l = provLines[i] ?? "";
       const m = modelLines[i] ?? "";
+      const s = selLines[i] ?? "";
       const lp = " ".repeat(Math.max(0, provW - visibleWidth(l)));
       const mp = " ".repeat(Math.max(0, modelW - visibleWidth(m)));
-      const line = `${l}${lp}│${m}${mp}│`;
+      const sp = " ".repeat(Math.max(0, selW - visibleWidth(s)));
+      const line = `${l}${lp}│${m}${mp}│${s}${sp}│`;
       browser.push(visibleWidth(line) > innerWidth ? truncateToWidth(line, innerWidth, "") : line);
     }
     browser.push(bottom);
+    // Row 2 band: REASONING PROFILES label + aligned grid + footer.
+    const profilesBand = [
+      t.fg("customMessageLabel", t.bold(" REASONING PROFILES")),
+      ...clampLines(this.profilesPanel.render(innerWidth), innerWidth),
+    ];
     return this.frame(
-      clampLines([...browser, "", ...detailPanel, "", ...profilesPanel, "", footer], innerWidth),
+      clampLines([...header, "", ...browser, "", ...profilesBand, "", footer], innerWidth),
       width,
     );
   }
 
   /**
-   * Outer Model Control Center boundary (§19): one subtle frame that separates
-   * the control surface from the surrounding chat UI. Title sits inline in
-   * the top rule. This is the ONLY full-width frame — regions inside use
-   * spacing and the single browser box, never nested borders.
+   * Outer Model Control Center boundary (§19): one subtle frame shared with
+   * the profile editor (D59 single implementation in frameLines). Title sits
+   * inline in the top rule. This is the ONLY full-width frame — regions
+   * inside use spacing and the single browser box, never nested borders.
    */
   private frame(lines: readonly string[], width: number): string[] {
-    const t = this.theme;
-    const title = " MODEL CONTROL CENTER ";
-    const topRest = width - visibleWidth(title) - 2;
-    const out: string[] = [
-      t.fg("dim", "┌" + title + "─".repeat(Math.max(0, topRest)) + "┐"),
-      ...lines.map((l) => {
-        const pad = " ".repeat(Math.max(0, width - 2 - visibleWidth(l)));
-        return t.fg("dim", "│") + l + pad + t.fg("dim", "│");
-      }),
-      t.fg("dim", "└" + "─".repeat(Math.max(0, width - 2)) + "┘"),
-    ];
-    return clampLines(out, width);
+    return frameLines(lines, width, this.theme);
   }
 
   private fitLine(line: string, width: number): string {
@@ -2068,16 +2150,23 @@ export class ModelControlSurface implements Component {
   }
 }
 
-function modelCaps(model: { reasoning?: boolean; input?: unknown[]; contextWindow?: number }): {
-  reasoning: boolean;
-  vision: boolean;
-  ctx: string;
-} {
-  return {
-    reasoning: model.reasoning === true,
-    vision: Array.isArray(model.input) && model.input.includes("image"),
-    ctx: typeof model.contextWindow === "number" ? `${Math.round(model.contextWindow / 1000)}k` : "—",
-  };
+/**
+ * D59: the ONE Model Control Center frame implementation, shared by the
+ * control surface and the profile editor so both carry the same identity.
+ * Title sits inline in the top rule; all output clamped to width (D45).
+ */
+export function frameLines(lines: readonly string[], width: number, theme: Theme): string[] {
+  const title = " MODEL CONTROL CENTER ";
+  const topRest = width - visibleWidth(title) - 2;
+  const out: string[] = [
+    theme.fg("dim", "┌" + title + "─".repeat(Math.max(0, topRest)) + "┐"),
+    ...lines.map((l) => {
+      const pad = " ".repeat(Math.max(0, width - 2 - visibleWidth(l)));
+      return theme.fg("dim", "│") + l + pad + theme.fg("dim", "│");
+    }),
+    theme.fg("dim", "└" + "─".repeat(Math.max(0, width - 2)) + "┘"),
+  ];
+  return clampLines(out, width);
 }
 
 /** Provider -> selectable model count from the availability snapshot. */
@@ -2135,6 +2224,18 @@ export function modelRowLabel(
   return display ? { label: display, description: bare } : { label: bare };
 }
 
+function modelCaps(model: { reasoning?: boolean; input?: unknown[]; contextWindow?: number }): {
+  reasoning: boolean;
+  vision: boolean;
+  ctx: string;
+} {
+  return {
+    reasoning: model.reasoning === true,
+    vision: Array.isArray(model.input) && model.input.includes("image"),
+    ctx: typeof model.contextWindow === "number" ? `${Math.round(model.contextWindow / 1000)}k` : "—",
+  };
+}
+
 /** Capability status line: "Capabilities   ● reasoning   ● vision" (available only). */
 function modelCapsLine(model: AvailableModelMeta | undefined, theme: Theme): string | null {
   const caps = modelCaps(model ?? {});
@@ -2145,9 +2246,46 @@ function modelCapsLine(model: AvailableModelMeta | undefined, theme: Theme): str
   return theme.fg("dim", "Capabilities   ") + theme.fg("success", words.map((c) => `● ${c}`).join("   "));
 }
 
+/**
+ * Formats an output limit the way the inspector quotes it: 131072 → "131k",
+ * 1050000 → "1.1M". Returns undefined when the entry omits maxTokens —
+ * never fabricated.
+ */
+function outputLimitText(maxTokens: number | undefined): string | undefined {
+  if (typeof maxTokens !== "number" || !Number.isFinite(maxTokens) || maxTokens <= 0) return undefined;
+  return maxTokens >= 1_000_000
+    ? `${Math.round(maxTokens / 100_000) / 10}M`
+    : `${Math.round(maxTokens / 1000)}k`;
+}
+
+/** Shared inspector body: name / route·ctx (+output) / capabilities / status. */
+function inspectorBodyLines(
+  displayName: string,
+  routeText: string,
+  model: AvailableModelMeta | undefined,
+  theme: Theme,
+  status: string,
+): string[] {
+  const caps = modelCaps(model ?? {});
+  const ctxText = caps.ctx === "—" ? "context size unknown" : `${caps.ctx} ctx`;
+  const outText = outputLimitText(model?.maxTokens);
+  const lines = [
+    theme.fg("text", theme.bold(displayName)),
+    theme.fg("muted", `${routeText} · ${ctxText}`),
+  ];
+  // Output limit on its own metadata line — it is the one fragment that can
+  // overflow the 34-column inspector budget, and a truncated limit would
+  // read as a wrong number. Absent maxTokens → absent line (no fabrication).
+  if (outText) lines.push(theme.fg("muted", `${outText} output`));
+  const capsLine = modelCapsLine(model, theme);
+  if (capsLine) lines.push(capsLine);
+  lines.push("", status);
+  return lines;
+}
+
 /** Detail content for the highlighted model (title supplied by panelLines).
- * One indented object: identity, route · context metadata, grouped
- * capabilities, status. */
+ * D59 third-column inspector: identity dominant, merged metadata line,
+ * grouped capabilities, status. */
 function selectedModelDetailLines(
   spec: string,
   displayName: string | undefined,
@@ -2161,18 +2299,11 @@ function selectedModelDetailLines(
   const model = getAvailable().find((m) => m.provider === prov && m.id === rest.join("/"));
   const isCurrent = spec === currentLabel;
   const routeText = route ? `${provider} / ${route}` : provider;
-  const caps = modelCaps(model ?? {});
-  const ctxText = caps.ctx === "—" ? "context size unknown" : `${caps.ctx} ctx`;
-  const lines = [
-    theme.fg("text", theme.bold(displayName ?? name)),
-    theme.fg("muted", `${routeText} · ${ctxText}`),
-  ];
-  const capsLine = modelCapsLine(model, theme);
-  if (capsLine) lines.push(capsLine);
-  lines.push("", isCurrent ? theme.fg("success", "✓ Current Model") : theme.fg("dim", "Enter — Select"));
-  return lines.map((l) => (l ? `  ${l}` : l)).slice(0, maxLines);
+  const status = isCurrent ? theme.fg("success", "✓ Current Model") : theme.fg("dim", "Enter — Select");
+  return inspectorBodyLines(displayName ?? name, routeText, model, theme, status)
+    .map((l) => (l ? `  ${l}` : l))
+    .slice(0, maxLines);
 }
-
 /** Detail content for the current model when no catalog highlight exists. */
 function currentModelDetailLines(
   modelLabel: string,
@@ -2186,16 +2317,11 @@ function currentModelDetailLines(
   }
   const { provider, route, name } = splitModelSpec(modelLabel);
   const routeText = route ? `${provider} / ${route}` : provider;
-  const caps = modelCaps(model ?? {});
-  const lines = [
-    theme.fg("text", theme.bold(displayName ?? name)),
-    theme.fg("muted", `${routeText} · ${caps.ctx === "—" ? "context size unknown" : caps.ctx + " ctx"}`),
-  ];
-  const capsLine = modelCapsLine(model, theme);
-  if (capsLine) lines.push(capsLine);
-  lines.push("", theme.fg("success", "✓ Current Model"));
-  return lines.map((l) => (l ? `  ${l}` : l)).slice(0, maxLines);
+  return inspectorBodyLines(displayName ?? name, routeText, model, theme, theme.fg("success", "✓ Current Model"))
+    .map((l) => (l ? `  ${l}` : l))
+    .slice(0, maxLines);
 }
+
 /** Compact CURRENT MODEL header lines (name dominant, context secondary,
  * connectivity muted-warning — §5 hierarchy). */
 function currentModelHeaderLines(
@@ -2913,11 +3039,26 @@ let modelSurfaceLoops = 0;
  * profiles, contextual footer. Focus, scope, search and the profile cursor
  * persist across model selections and profile edits. */
 async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+  // D59 purple identity: the surface renders with enum tokens only, and the
+  // bundled mcc-purple theme resolves them into the approved palette. Loaded
+  // when the surface opens; the user's previous theme is restored on close.
+  const previousTheme = typeof ctx.ui?.theme?.name === "string" ? ctx.ui.theme.name : null;
+  try {
+    const mccTheme = ctx.ui.getTheme?.("mcc-purple");
+    if (mccTheme) ctx.ui.setTheme?.(mccTheme);
+  } catch {
+    // D59: best-effort theme identity; graceful fallback to the active theme.
+  }
   modelSurfaceLoops++;
   try {
     return await runModelControlSurfaceLoop(pi, ctx);
   } finally {
     modelSurfaceLoops--;
+    try {
+      if (previousTheme) ctx.ui.setTheme?.(previousTheme);
+    } catch {
+      // Restore is best-effort too — never mask a surface error with a theme error.
+    }
   }
 }
 
@@ -3007,23 +3148,11 @@ async function runModelControlSurfaceLoop(pi: ExtensionAPI, ctx: ExtensionContex
       surface.onEditProfile = (profile) => done({ kind: "profile", profile });
       surface.onClose = () => done(null);
 
+      // D59: the surface renders the whole Row 1 band itself — inline title
+      // rule, CURRENT MODEL context, browser box — so the frame is drawn in
+      // exactly one place (frameLines).
       return {
-        render: (w: number) =>
-          clampLines(
-            [
-              theme.fg("text", theme.bold("MODEL CONTROL CENTER")),
-              "",
-              ...panelLines(
-                "CURRENT MODEL",
-                currentModelHeaderLines(modelLabel, names[modelLabel], theme),
-                w,
-                theme,
-              ),
-              "",
-              ...surface.render(w),
-            ],
-            w,
-          ),
+        render: (w: number) => surface.render(w),
         invalidate: () => surface.invalidate(),
         handleInput: (data: string) => {
           surface.handleInput(data);
@@ -3061,18 +3190,9 @@ async function runModelControlSurfaceLoop(pi: ExtensionAPI, ctx: ExtensionContex
           });
         }
         const chosen = await ctx.ui.custom<Choice | null>((tui, theme, _kb, done) => {
-          const container = new Container();
-          container.addChild(new WidthSafeText(() => theme.fg("accent", theme.bold(profile.toUpperCase())), 1));
-          container.addChild(new WidthSafeText(() => theme.fg("muted", PROFILE_DESCRIPTIONS[profile]), 0));
-          container.addChild(new WidthSafeText(() => theme.fg("dim", "REASONING LEVEL"), 0, 1));
-          container.addChild(new WidthSafeText(() => {
-            const isDefault = state.defaultProfile === profile;
-            return theme.fg("text", `Current  ${state.profiles[profile]}${isDefault ? "   ★ default profile" : ""}`);
-          }));
-          container.addChild(new Spacer(1));
           const items: SelectItem[] = choices.map((c) => ({ value: c.runtime ?? c.kind, label: c.label }));
           const list = new SelectList(items, Math.max(7, items.length), {
-            selectedPrefix: (t) => theme.fg("accent", "→ "),
+            selectedPrefix: (t) => theme.fg("accent", "› "),
             selectedText: (t) => theme.bg("selectedBg", theme.bold(t)),
             description: (t) => theme.fg("muted", t),
             scrollInfo: (t) => theme.fg("dim", t),
@@ -3084,12 +3204,29 @@ async function runModelControlSurfaceLoop(pi: ExtensionAPI, ctx: ExtensionContex
             if (c) done(c);
           };
           list.onCancel = () => done(null);
-          container.addChild(list);
-          container.addChild(new Spacer(1));
-          container.addChild(new WidthSafeText((w) => theme.fg("dim", w >= 46 ? "↑↓ Choose   Enter Save   Esc Cancel" : "↑↓ · Enter · Esc"), 1));
+          const currentLabel = levelLabelForRuntime(state.profiles[profile]) ?? state.profiles[profile];
           return {
-            render: (w: number) => container.render(w),
-            invalidate: () => container.invalidate(),
+            render: (w: number) => {
+              // D59: the editor keeps the MCC identity — the SAME outer
+              // frame (single frameLines implementation), centered as a
+              // 52-column panel, clamped to the terminal (D45).
+              const inner = Math.max(24, Math.min(52, w - 8));
+              const listW = Math.max(1, inner - 4);
+              const lines = [
+                theme.fg("customMessageLabel", theme.bold("EDIT PROFILE")),
+                theme.fg("text", theme.bold(profile)),
+                theme.fg("muted", PROFILE_DESCRIPTIONS[profile]),
+                theme.fg("dim", "Reasoning") + "  " + theme.fg(LEVEL_COLOR[currentLabel] ?? "muted", currentLabel),
+                "",
+                ...clampLines(list.render(listW), listW).map((l) => `  ${l}`),
+                "",
+                theme.fg("dim", "Enter Save   Esc Cancel"),
+              ];
+              const framed = frameLines(clampLines(lines, inner), inner + 2, theme);
+              const indent = " ".repeat(Math.max(0, Math.floor((w - (inner + 2)) / 2)));
+              return clampLines(framed.map((l) => indent + l), w);
+            },
+            invalidate: () => list.invalidate(),
             handleInput: (data: string) => {
               list.handleInput(data);
               tui.requestRender();
