@@ -1980,57 +1980,87 @@ export class ModelControlSurface implements Component {
     const profilesPanel = panelLines("REASONING PROFILES", this.profilesPanel.render(width), width, this.theme);
     const footer = this.footerLine(width);
 
+    const innerWidth = width - 4; // inside the outer frame (│ + 1-space gutters)
+
     if (!wide) {
-      // Stacked: providers, models, detail, profiles, footer.
-      return clampLines(
-        [
-          ...this.paneHeader("PROVIDERS", width, this.persistent.focus === "providers"),
-          ...clampLines(this.providers.render(width), width),
-          "",
-          ...this.paneHeader(scopeTitle(this.persistent.provider), width, this.persistent.focus === "models"),
-          ...this.searchLine(width),
-          ...clampLines(this.models.render(width), width),
-          "",
-          ...detailPanel,
-          "",
-          ...profilesPanel,
-          "",
-          footer,
-        ],
+      // Stacked: providers, models, detail, profiles, footer — all inside
+      // the outer Model Control Center frame.
+      return this.frame(
+        clampLines(
+          [
+            " " + this.paneTitle("PROVIDERS", this.persistent.focus === "providers"),
+            ...clampLines(this.providers.render(innerWidth), innerWidth),
+            "",
+            " " + this.paneTitle(scopeTitle(this.persistent.provider), this.persistent.focus === "models"),
+            ...this.searchLine(innerWidth).map((l) => " " + l),
+            ...clampLines(this.models.render(innerWidth), innerWidth),
+            "",
+            ...detailPanel,
+            "",
+            ...profilesPanel,
+            "",
+            footer,
+          ],
+          innerWidth,
+        ),
         width,
       );
     }
 
     // Two-pane browser as ONE box-drawn component: providers left, models
     // right, a single continuous divider, one shared boundary.
-    const provW = Math.max(26, Math.min(38, Math.floor(width * 0.32)));
-    const modelW = Math.max(20, width - provW - 3);
+    const provW = Math.max(24, Math.min(36, Math.floor(innerWidth * 0.32)));
+    const modelW = innerWidth - provW - 3; // ┌, ┬/│ divider, ┐ each occupy one column
     const provLines = [
-      this.paneTitle("PROVIDERS", this.persistent.focus === "providers"),
+      " " + this.paneTitle("PROVIDERS", this.persistent.focus === "providers"),
       "",
       ...clampLines(this.providers.render(provW), provW),
     ];
     const modelLines = [
-      this.paneTitle(scopeTitle(this.persistent.provider), this.persistent.focus === "models"),
+      " " + this.paneTitle(scopeTitle(this.persistent.provider), this.persistent.focus === "models"),
       "",
-      ...this.searchLine(modelW),
+      ...this.searchLine(modelW).map((l) => " " + l),
       ...clampLines(this.models.render(modelW), modelW),
     ];
     const t = this.theme;
     const top = t.fg("dim", "┌" + "─".repeat(provW) + "┬" + "─".repeat(modelW) + "┐");
     const bottom = t.fg("dim", "└" + "─".repeat(provW) + "┴" + "─".repeat(modelW) + "┘");
     const rows = Math.max(provLines.length, modelLines.length);
-    const out: string[] = [top];
+    const browser: string[] = [top];
     for (let i = 0; i < rows; i++) {
       const l = provLines[i] ?? "";
       const m = modelLines[i] ?? "";
       const lp = " ".repeat(Math.max(0, provW - visibleWidth(l)));
       const mp = " ".repeat(Math.max(0, modelW - visibleWidth(m)));
       const line = `${l}${lp}│${m}${mp}│`;
-      out.push(visibleWidth(line) > width ? truncateToWidth(line, width, "") : line);
+      browser.push(visibleWidth(line) > innerWidth ? truncateToWidth(line, innerWidth, "") : line);
     }
-    out.push(bottom);
-    return clampLines([...out, "", ...detailPanel, "", ...profilesPanel, "", footer], width);
+    browser.push(bottom);
+    return this.frame(
+      clampLines([...browser, "", ...detailPanel, "", ...profilesPanel, "", footer], innerWidth),
+      width,
+    );
+  }
+
+  /**
+   * Outer Model Control Center boundary (§19): one subtle frame that separates
+   * the control surface from the surrounding chat UI. Title sits inline in
+   * the top rule. This is the ONLY full-width frame — regions inside use
+   * spacing and the single browser box, never nested borders.
+   */
+  private frame(lines: readonly string[], width: number): string[] {
+    const t = this.theme;
+    const title = " MODEL CONTROL CENTER ";
+    const topRest = width - visibleWidth(title) - 2;
+    const out: string[] = [
+      t.fg("dim", "┌" + title + "─".repeat(Math.max(0, topRest)) + "┐"),
+      ...lines.map((l) => {
+        const pad = " ".repeat(Math.max(0, width - 2 - visibleWidth(l)));
+        return t.fg("dim", "│") + l + pad + t.fg("dim", "│");
+      }),
+      t.fg("dim", "└" + "─".repeat(Math.max(0, width - 2)) + "┘"),
+    ];
+    return clampLines(out, width);
   }
 
   private fitLine(line: string, width: number): string {
@@ -2105,18 +2135,19 @@ export function modelRowLabel(
   return display ? { label: display, description: bare } : { label: bare };
 }
 
-/** Capability status line: success dots, available capabilities only. */
+/** Capability status line: "Capabilities   ● reasoning   ● vision" (available only). */
 function modelCapsLine(model: AvailableModelMeta | undefined, theme: Theme): string | null {
   const caps = modelCaps(model ?? {});
   const words: string[] = [];
   if (caps.reasoning) words.push("reasoning");
   if (caps.vision) words.push("vision");
   if (words.length === 0) return null;
-  return theme.fg("success", words.map((c) => `● ${c}`).join("   "));
+  return theme.fg("dim", "Capabilities   ") + theme.fg("success", words.map((c) => `● ${c}`).join("   "));
 }
 
 /** Detail content for the highlighted model (title supplied by panelLines).
- * One indented object: identity, route+context, capabilities, status. */
+ * One indented object: identity, route · context metadata, grouped
+ * capabilities, status. */
 function selectedModelDetailLines(
   spec: string,
   displayName: string | undefined,
@@ -2134,8 +2165,7 @@ function selectedModelDetailLines(
   const ctxText = caps.ctx === "—" ? "context size unknown" : `${caps.ctx} ctx`;
   const lines = [
     theme.fg("text", theme.bold(displayName ?? name)),
-    theme.fg("muted", routeText),
-    theme.fg("muted", ctxText),
+    theme.fg("muted", `${routeText} · ${ctxText}`),
   ];
   const capsLine = modelCapsLine(model, theme);
   if (capsLine) lines.push(capsLine);
@@ -2159,15 +2189,15 @@ function currentModelDetailLines(
   const caps = modelCaps(model ?? {});
   const lines = [
     theme.fg("text", theme.bold(displayName ?? name)),
-    theme.fg("muted", routeText),
-    theme.fg("muted", caps.ctx === "—" ? "context size unknown" : `${caps.ctx} ctx`),
+    theme.fg("muted", `${routeText} · ${caps.ctx === "—" ? "context size unknown" : caps.ctx + " ctx"}`),
   ];
   const capsLine = modelCapsLine(model, theme);
   if (capsLine) lines.push(capsLine);
   lines.push("", theme.fg("success", "✓ Current Model"));
   return lines.map((l) => (l ? `  ${l}` : l)).slice(0, maxLines);
 }
-/** Compact CURRENT MODEL header lines (tier 1 — name strong, context muted). */
+/** Compact CURRENT MODEL header lines (name dominant, context secondary,
+ * connectivity muted-warning — §5 hierarchy). */
 function currentModelHeaderLines(
   modelLabel: string,
   displayName: string | undefined,
@@ -2180,7 +2210,7 @@ function currentModelHeaderLines(
   const routeText = route ? `${provider} / ${route}` : provider;
   return [
     theme.fg("text", theme.bold(displayName ?? name)),
-    theme.fg("muted", `${routeText} · Connectivity: Unverified`),
+    theme.fg("muted", routeText) + theme.fg("warning", " · Connectivity: Unverified"),
   ];
 }
 

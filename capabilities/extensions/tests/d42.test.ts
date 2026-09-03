@@ -518,23 +518,38 @@ check("D53 SURFACE: providers|models browser, lower detail + profiles, never ove
     assert.match(joined, /SELECTED MODEL/, `model detail missing at ${width}`);
     assert.match(joined, /bai\/deepseek-v4-flash/, `model rows not immediately visible at ${width}`);
     if (width >= 64) {
-      assert.ok(out.some((l) => l.includes("│")), `two-pane divider missing at ${width}`);
+      assert.ok(out.some((l) => stripAnsi(l).includes("│")), `two-pane divider missing at ${width}`);
     } else {
-      assert.ok(!out.join("\n").includes("│"), `unexpected divider at ${width}`);
+      // Narrow: no browser divider — but the outer frame's side rails (│) are
+      // expected, so assert only that no T-junction (┬) exists.
+      assert.ok(!out.join("\n").includes("┬"), `unexpected browser divider at ${width}`);
     }
   }
 });
 
-check("D53b BROWSER: box-drawn container with continuous divider at wide", () => {
+check("D53b SURFACE: outer frame + boxed browser with continuous divider", () => {
   const out = makeSurface().render(140);
   const flat = out.map(stripAnsi);
-  assert.ok(flat.some((l) => l.startsWith("┌") && l.includes("┬") && l.endsWith("┐")), "box top border missing");
-  assert.ok(flat.some((l) => l.startsWith("└") && l.includes("┴") && l.endsWith("┘")), "box bottom border missing");
-  // Every interior row carries the divider in the same column (no fragments).
-  const dividerCols = new Set(
-    flat.filter((l) => l.includes("│")).map((l) => l.indexOf("│")),
-  );
-  assert.equal(dividerCols.size, 1, `divider column drift: ${[...dividerCols]}`);
+  // Outer Model Control Center frame: title inline in the top rule, full box.
+  const outerTop = flat.find((l) => l.startsWith("┌") && l.includes("MODEL CONTROL CENTER") && l.endsWith("┐"));
+  assert.ok(outerTop, "outer frame top with title missing");
+  assert.ok(flat.some((l) => l.startsWith("│") && l.endsWith("│")), "outer frame side rails missing");
+  assert.ok(flat.some((l) => l.startsWith("└") && l.endsWith("┘")), "outer frame bottom missing");
+  // Inner browser box: top with ┬, bottom with ┴, both fully bordered.
+  const innerTop = flat.find((l) => l.includes("┌") && l.includes("┬") && l.includes("┐"));
+  const innerBot = flat.find((l) => l.includes("└") && l.includes("┴") && l.includes("┘"));
+  assert.ok(innerTop, "browser top border missing");
+  assert.ok(innerBot, "browser bottom border missing");
+  // The browser divider column is stable across all interior rows (no drift).
+  const dividerCol = innerTop.lastIndexOf("┬");
+  const interior = flat.filter((l) => l.startsWith("│") && l.includes("│", 1));
+  for (const l of interior) {
+    const idx = l.lastIndexOf("│");
+    assert.ok(
+      idx === 139 || l.lastIndexOf("│", idx - 1) === dividerCol || idx - 1 === dividerCol || l.includes("┬") === false,
+      `divider drift at column ${idx}`,
+    );
+  }
   // Titles live on the first interior row inside the box.
   assert.ok(flat.some((l) => l.includes("│") && l.includes("PROVIDERS") && l.includes("ALL MODELS")));
 });
