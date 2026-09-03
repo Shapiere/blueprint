@@ -19,8 +19,9 @@ import {
   ReasoningProfilesPanel,
   frameLines,
   panelLines,
-  providerCounts,
   scopeTitle,
+  providerCounts,
+  LEVEL_COLOR,
   PROFILE_DESCRIPTIONS,
   REASONING_PROFILES,
   USER_LEVEL_MAP,
@@ -557,18 +558,23 @@ check("D53b SURFACE: outer frame + boxed browser with continuous divider", () =>
   assert.ok(innerBot, "browser bottom border missing");
   assert.equal((innerTop.match(/┬/g) ?? []).length, 2, `expected two top junctions: ${innerTop}`);
   assert.equal((innerBot.match(/┴/g) ?? []).length, 2, `expected two bottom junctions: ${innerBot}`);
-  // Both divider columns are stable across all interior rows (no drift).
-  // Interior box rows have no left border column, so each divider sits one
-  // column left of its top-border junction.
-  const jCols = [...new Set([innerTop.indexOf("┬"), innerTop.lastIndexOf("┬")])];
+  // Both divider columns are stable across all interior rows and sit EXACTLY
+  // on their top-border junction columns (D60 geometry fix — the pre-D60
+  // renderer omitted the leading rail, putting dividers one column left).
+  // Interior rows are full-width box rows: │ cell │ cell │ cell │.
+  const j1 = innerTop.indexOf("┬");
+  const j2 = innerTop.lastIndexOf("┬");
+  const jCols = j1 === j2 ? [j1] : [j1, j2];
   const topIdx = flat.indexOf(innerTop);
   const botIdx = flat.indexOf(innerBot);
   assert.ok(botIdx > topIdx, "browser box borders out of order");
   for (let i = topIdx + 1; i < botIdx; i++) {
+    assert.equal(flat[i][0], "│", `interior row missing leading rail: ${JSON.stringify(flat[i].slice(0, 60))}`);
+    assert.equal(stripAnsi(flat[i]).length, stripAnsi(innerTop).length, `row width mismatch: ${JSON.stringify(flat[i].slice(0, 60))}`);
     for (const jc of jCols) {
       assert.ok(
-        flat[i][jc - 1] === "│",
-        `divider drift at column ${jc - 1}: ${JSON.stringify(flat[i].slice(0, 60))}`,
+        flat[i][jc] === "│",
+        `divider not on junction column ${jc}: ${JSON.stringify(flat[i].slice(0, 60))}`,
       );
     }
   }
@@ -851,18 +857,18 @@ check("viewport cap respected with scroll indicator", () => {
 });
 
 // ------------------------------------------------------- D59 three-column IA
-check("D59 T1 INSPECTOR: capabilities gated by meta, route and ctx on ONE line", () => {
+check("D60 T1 INSPECTOR: capabilities gated by meta, one fact per line", () => {
   const out = makeSurface({ focus: "models" }).render(140);
   const inspector = regionOf(out, "SELECTED MODEL");
-  // Capabilities render only when meta carries them (reasoning yes, vision no).
-  assert.match(inspector, /Capabilities/);
+  // Capabilities render only when meta carries them (reasoning yes, vision no):
+  // a dim CAPABILITIES header, then one ● row per available capability.
+  assert.match(inspector, /CAPABILITIES/);
   assert.match(inspector, /● reasoning/);
   assert.ok(!/\bvision\b/.test(inspector), "unavailable capability fabricated");
-  // Route and ctx share ONE merged metadata line; the output limit rides on
-  // its own line below (it cannot fit the 34-column inspector budget merged).
+  // D60 layout: route on its own line; ctx (· output) merged on the next.
   const flat = inspector.replace(/\s+/g, " ");
-  assert.match(flat, /9router \/ bai · 200k ctx/);
-  assert.match(flat, /131k output/);
+  assert.match(flat, /9router \/ bai/);
+  assert.match(flat, /200k ctx · 131k output/);
   assert.match(flat, /✓ Current Model/);
 });
 
@@ -953,9 +959,68 @@ check("D59 T6 THEME FILE: mcc-purple.json parses with the approved palette", () 
 check("D59 LEVEL SEMANTICS: dot+level is one span, dot aligns, colors per map", () => {
   const panel = new ReasoningProfilesPanel(D53_CHIPS, themeStub, 0);
   const rendered = panel.render(100).join("\n");
+
   // Semantic span: the dot and the level word share ONE color span.
   assert.match(rendered, /\x1b\[38;2;180;180;180m● High\x1b\[0m/);
   // Disabled chips keep the dim "unavailable" text, no fabricated dot.
   assert.match(rendered, /unavailable/);
 });
+
+// ------------------------------------------------------------- D60 precision pass
+check("D60 GEOMETRY: box rows exactly span innerWidth with dividers on junctions", () => {
+  for (const width of [82, 90, 100, 120, 140, 160, 200, 300, 400]) {
+    const out = makeSurface().render(width).map(stripAnsi);
+    const top = out.find((l) => l.includes("┌") && (l.match(/┬/g) ?? []).length === 2 && l.includes("┐"));
+    const bot = out.find((l) => l.includes("└") && (l.match(/┴/g) ?? []).length === 2 && l.includes("┘"));
+    assert.ok(top && bot, `three-column borders missing at width ${width}`);
+    assert.equal(top.length, bot.length, `top/bottom border width mismatch at ${width}`);
+    const j1 = top.indexOf("┬");
+    const j2 = top.lastIndexOf("┬");
+    const topIdx = out.indexOf(top);
+    const botIdx = out.indexOf(bot);
+    for (let i = topIdx + 1; i < botIdx; i++) {
+      assert.equal(out[i].length, top.length, `row width drift at width ${width}, line ${i}`);
+      assert.equal(out[i][j1], "│", `divider 1 off junction at width ${width}`);
+      assert.equal(out[i][j2], "│", `divider 2 off junction at width ${width}`);
+      assert.equal(out[i][0], "│", `leading rail missing at width ${width}`);
+      assert.equal(out[i][out[i].length - 1], "│", `trailing rail missing at width ${width}`);
+    }
+  }
+});
+
+check("D60 INSPECTOR BOUNDS: worst-case long values never cross column or frame", () => {
+  // A worst-case spec exercises the inspector's bounded rendering: long
+  // display name and route must truncate INSIDE the column (ellipsis), never
+  // cross the column bounds or the outer MCC frame.
+  const longName = "gemini-3.5-flash-preview-ultra-extended-thinking-latest";
+  const longSpec = "9router/openrouter/stealth-router/deepseek-v4-flash-xhigh-2026-01-31-preview";
+  const surface = makeSurface({}, D53_RESOLVED, D53_CHIPS);
+  (surface as unknown as { highlight: string | null }).highlight = longSpec;
+  const out = surface.render(120).map(stripAnsi);
+  const top = out.find((l) => l.includes("┌") && (l.match(/┬/g) ?? []).length === 2 && l.includes("┐"));
+  assert.ok(top, "three-column box missing for long-value case");
+  for (const line of out) {
+    assert.ok(visibleWidth(line) <= 120, `outer frame overflow: ${JSON.stringify(line.slice(0, 60))}`);
+  }
+  // The long display name/route must appear truncated (ellipsis), never full.
+  const flat = out.join("\n");
+  assert.ok(flat.includes("…"), "long inspector values must truncate with an ellipsis");
+  assert.ok(!flat.includes(longName), "untruncated long display name leaked");
+  // The untruncated canonical spec id must not leak either.
+  assert.ok(!flat.includes(longSpec), "untruncated long spec id leaked");
+});
+
+check("D60 LEVEL COLORS: Medium and Ultra resolve to DISTINCT theme tokens", () => {
+  assert.equal(LEVEL_COLOR.Medium, "thinkingMedium");
+  assert.equal(LEVEL_COLOR.Ultra, "thinkingXhigh");
+  assert.notEqual(LEVEL_COLOR.Medium, LEVEL_COLOR.Ultra);
+  // The mcc-purple theme resolves them to distinct, palette-correct colors:
+  // Medium = steel blue (#81a2be), Ultra = violet (#c792ea) — never both purple.
+  const raw = fs.readFileSync(path.join(__dirname, "..", "mcc-purple.json"), "utf8");
+  const theme = JSON.parse(raw);
+  assert.equal(theme.colors.thinkingMedium, "#81a2be");
+  assert.equal(theme.colors.thinkingXhigh, "#c792ea");
+  assert.notEqual(theme.colors.thinkingMedium, theme.colors.thinkingXhigh);
+});
+
 process.exit(failures === 0 ? 0 : 1);

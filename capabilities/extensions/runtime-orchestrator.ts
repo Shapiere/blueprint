@@ -1579,17 +1579,19 @@ function levelTone(level: string): "dim" | "muted" | "text" | "accent" {
 }
 
 /**
- * D59 semantic color per user-facing reasoning level. Theme tokens only —
- * under mcc-purple these resolve to the approved gray/green/purple/amber/
- * violet set; under any other theme they resolve to that theme's own tokens.
+ * D59/D60 semantic color per user-facing reasoning level. Theme tokens only —
+ * under mcc-purple these resolve to the approved gray/green/blue/amber/violet
+ * ladder (the theme's own thinking-depth palette); under any other theme they
+ * resolve to that theme's tokens. Medium and Ultra are DISTINCT tokens: purple
+ * is reserved for the MCC identity (accent) and Ultra (violet) alone.
  * Never raw hex.
  */
-const LEVEL_COLOR: Record<string, ThemeColor> = {
+export const LEVEL_COLOR: Record<string, ThemeColor> = {
   Off: "dim",
   Low: "success",
-  Medium: "borderAccent",
-  High: "warning",
-  Ultra: "customMessageLabel",
+  Medium: "thinkingMedium",
+  High: "thinkingHigh",
+  Ultra: "thinkingXhigh",
 };
 
 /**
@@ -1985,18 +1987,29 @@ export class ModelControlSurface implements Component {
   }
 
   /**
-   * D59 third-column inspector: ALWAYS the selected (or current) model,
-   * never focus-following — the column is passive. Same content functions
-   * as the narrow layouts' detail region, minus the titled rule (the box
-   * borders frame it).
+   * D60 bounded inspector: lines are built against an explicit column budget
+   * (never the terminal width) so long display names, ids, routes, and
+   * capability text truncate INSIDE the column.
    */
-  private modelInspectorLines(): string[] {
+  private modelInspectorLines(width: number): string[] {
+    let lines: string[];
     if (this.highlight) {
-      return selectedModelDetailLines(this.highlight, this.names[this.highlight], this.getAvailable, this.modelLabel, this.theme, 10);
+      lines = selectedModelDetailLines(
+        this.highlight,
+        this.names[this.highlight],
+        this.getAvailable,
+        this.modelLabel,
+        this.theme,
+        10,
+      );
+    } else {
+      const [prov, ...rest] = this.modelLabel.split("/");
+      const model = this.getAvailable().find((m) => m.provider === prov && m.id === rest.join("/"));
+      lines = currentModelDetailLines(this.modelLabel, this.names[this.modelLabel], model, this.theme, 10);
     }
-    const [prov, ...rest] = this.modelLabel.split("/");
-    const model = this.getAvailable().find((m) => m.provider === prov && m.id === rest.join("/"));
-    return currentModelDetailLines(this.modelLabel, this.names[this.modelLabel], model, this.theme, 10);
+    // Readable truncation: long display names/ids keep an ellipsis tail
+    // instead of a hard cut, per the D60 bounding rule.
+    return lines.map((l) => (visibleWidth(l) > width ? truncateToWidth(l, width, "…") : l));
   }
 
   render(width: number): string[] {
@@ -2056,17 +2069,17 @@ export class ModelControlSurface implements Component {
       const detailPanel = panelLines(detail.title, detail.lines, innerWidth, this.theme);
       const profilesPanel = panelLines("REASONING PROFILES", this.profilesPanel.render(innerWidth), innerWidth, this.theme);
       const provW = Math.max(24, Math.min(36, Math.floor(innerWidth * 0.32)));
-      const modelW = innerWidth - provW - 3; // ┌, ┬/│ divider, ┐ each occupy one column
+      const modelW = Math.max(14, innerWidth - provW - 3); // divider rails: leading │, ┬/│, trailing │
       const provLines = [
         " " + this.paneTitle("PROVIDERS", this.persistent.focus === "providers"),
         "",
-        ...clampLines(this.providers.render(provW), provW),
+        ...clampLines(this.providers.render(provW - 2), provW - 2),
       ];
       const modelLines = [
         " " + this.paneTitle(scopeTitle(this.persistent.provider), this.persistent.focus === "models"),
         "",
-        ...this.searchLine(modelW).map((l) => " " + l),
-        ...clampLines(this.models.render(modelW), modelW),
+        ...this.searchLine(modelW - 2).map((l) => " " + l),
+        ...clampLines(this.models.render(modelW - 2), modelW - 2),
       ];
       const t = this.theme;
       const top = t.fg("dim", "┌" + "─".repeat(provW) + "┬" + "─".repeat(modelW) + "┐");
@@ -2078,8 +2091,10 @@ export class ModelControlSurface implements Component {
         const m = modelLines[i] ?? "";
         const lp = " ".repeat(Math.max(0, provW - visibleWidth(l)));
         const mp = " ".repeat(Math.max(0, modelW - visibleWidth(m)));
-        const line = `${l}${lp}│${m}${mp}│`;
-        browser.push(visibleWidth(line) > innerWidth ? truncateToWidth(line, innerWidth, "") : line);
+        // D60: same contract as the three-column box — rows carry the
+        // leading rail, close with the trailing rail, and match the border
+        // width exactly (1 + provW + 1 + modelW + 1 = innerWidth).
+        browser.push(`│${l}${lp}│${m}${mp}│`);
       }
       browser.push(bottom);
       return this.frame(
@@ -2088,25 +2103,33 @@ export class ModelControlSurface implements Component {
       );
     }
 
-    // Three-column browser (D59): PROVIDERS | MODELS | SELECTED MODEL — one
-    // box, two continuous ┬/┴ junctions. The inspector column is passive:
-    // it always mirrors the highlighted (or current) model, so ←→ focus
-    // cycling never moves content into or out of it.
-    const provW = Math.max(22, Math.min(30, Math.floor(innerWidth * 0.22)));
-    const selW = Math.max(26, Math.min(34, Math.floor(innerWidth * 0.28)));
-    const modelW = innerWidth - provW - selW - 4; // two junction columns + one spare
+    // Three-column browser (D60): PROVIDERS | MODELS | SELECTED MODEL — ONE
+    // rectangular layout surface. Exact geometry contract (no drift possible):
+    //   interior row width = 1 (leading │) + provW + 1 (│) + modelW + 1 (│)
+    //                       + selW + 1 (trailing │)  == innerWidth
+    // which matches the top/bottom borders ┌─provW─┬─modelW─┬─selW─┐
+    // (1 + provW+1+modelW+1+selW+1). Every divider therefore starts exactly
+    // at its top-border ┬ column and ends exactly at its ┴ column.
+    const provW = Math.max(20, Math.min(30, Math.floor(innerWidth * 0.22)));
+    const selW = Math.max(24, Math.min(34, Math.floor(innerWidth * 0.28)));
+    const modelW = Math.max(14, innerWidth - provW - selW - 4); // two junction columns + one spare
     const provLines = [
       " " + this.paneTitle("PROVIDERS", this.persistent.focus === "providers"),
-      ...clampLines(this.providers.render(provW), provW),
+      ...clampLines(this.providers.render(provW - 2), provW - 2),
     ];
     const modelLines = [
       " " + this.paneTitle(scopeTitle(this.persistent.provider), this.persistent.focus === "models"),
-      ...this.searchLine(modelW).map((l) => " " + l),
-      ...clampLines(this.models.render(modelW), modelW),
+      ...this.searchLine(modelW - 2).map((l) => " " + l),
+      ...clampLines(this.models.render(modelW - 2), modelW - 2),
     ];
+    // D60 bounding rule: the inspector renders against its OWN column width
+    // (selW − 2 content budget inside the two pad columns) — never against
+    // the terminal width. Long ids/routes/capabilities are truncated with a
+    // readable ellipsis here, before any padding or border join.
+    const selContentW = Math.max(10, selW - 2);
     const selLines = [
       " " + this.paneTitle("SELECTED MODEL", false),
-      ...this.modelInspectorLines(),
+      ...this.modelInspectorLines(selContentW),
     ];
     const t = this.theme;
     const top = t.fg("dim", "┌" + "─".repeat(provW) + "┬" + "─".repeat(modelW) + "┬" + "─".repeat(selW) + "┐");
@@ -2120,8 +2143,11 @@ export class ModelControlSurface implements Component {
       const lp = " ".repeat(Math.max(0, provW - visibleWidth(l)));
       const mp = " ".repeat(Math.max(0, modelW - visibleWidth(m)));
       const sp = " ".repeat(Math.max(0, selW - visibleWidth(s)));
-      const line = `${l}${lp}│${m}${mp}│${s}${sp}│`;
-      browser.push(visibleWidth(line) > innerWidth ? truncateToWidth(line, innerWidth, "") : line);
+      // ONE continuous box row: leading │ + cells + trailing │. Each divider
+      // is a single │ on one display column, on EVERY row, including blank
+      // rows — no floating, no drift, no gaps.
+      const line = `│${l}${lp}│${m}${mp}│${s}${sp}│`;
+      browser.push(line);
     }
     browser.push(bottom);
     // Row 2 band: REASONING PROFILES label + aligned grid + footer.
@@ -2236,16 +2262,6 @@ function modelCaps(model: { reasoning?: boolean; input?: unknown[]; contextWindo
   };
 }
 
-/** Capability status line: "Capabilities   ● reasoning   ● vision" (available only). */
-function modelCapsLine(model: AvailableModelMeta | undefined, theme: Theme): string | null {
-  const caps = modelCaps(model ?? {});
-  const words: string[] = [];
-  if (caps.reasoning) words.push("reasoning");
-  if (caps.vision) words.push("vision");
-  if (words.length === 0) return null;
-  return theme.fg("dim", "Capabilities   ") + theme.fg("success", words.map((c) => `● ${c}`).join("   "));
-}
-
 /**
  * Formats an output limit the way the inspector quotes it: 131072 → "131k",
  * 1050000 → "1.1M". Returns undefined when the entry omits maxTokens —
@@ -2258,7 +2274,10 @@ function outputLimitText(maxTokens: number | undefined): string | undefined {
     : `${Math.round(maxTokens / 1000)}k`;
 }
 
-/** Shared inspector body: name / route·ctx (+output) / capabilities / status. */
+/** Shared inspector body — D60 target layout:
+ *   name / route / ctx · output / CAPABILITIES header + one cap per row / status.
+ * Each fact gets its own short line so narrow columns truncate at word
+ * boundaries instead of dropping whole capabilities. */
 function inspectorBodyLines(
   displayName: string,
   routeText: string,
@@ -2267,18 +2286,24 @@ function inspectorBodyLines(
   status: string,
 ): string[] {
   const caps = modelCaps(model ?? {});
-  const ctxText = caps.ctx === "—" ? "context size unknown" : `${caps.ctx} ctx`;
   const outText = outputLimitText(model?.maxTokens);
   const lines = [
     theme.fg("text", theme.bold(displayName)),
-    theme.fg("muted", `${routeText} · ${ctxText}`),
+    theme.fg("muted", routeText),
   ];
-  // Output limit on its own metadata line — it is the one fragment that can
-  // overflow the 34-column inspector budget, and a truncated limit would
-  // read as a wrong number. Absent maxTokens → absent line (no fabrication).
-  if (outText) lines.push(theme.fg("muted", `${outText} output`));
-  const capsLine = modelCapsLine(model, theme);
-  if (capsLine) lines.push(capsLine);
+  // ctx and output share one metadata line; absent facts never fabricate —
+  // with neither present the line says so plainly.
+  const metaParts: string[] = [];
+  if (caps.ctx !== "—") metaParts.push(`${caps.ctx} ctx`);
+  if (outText) metaParts.push(`${outText} output`);
+  lines.push(theme.fg("muted", metaParts.length > 0 ? metaParts.join(" · ") : "context size unknown"));
+  const words: string[] = [];
+  if (caps.reasoning) words.push("reasoning");
+  if (caps.vision) words.push("vision");
+  if (words.length > 0) {
+    lines.push(theme.fg("dim", "CAPABILITIES"));
+    for (const w of words) lines.push(theme.fg("success", `● ${w}`));
+  }
   lines.push("", status);
   return lines;
 }
