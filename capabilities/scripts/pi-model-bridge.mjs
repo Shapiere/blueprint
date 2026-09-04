@@ -45,9 +45,13 @@ const D44_PATCHED = `if (modelsAreEqual(previousModel, nextModel)) {
         }`;
 
 // ---- D51: interactive-mode.js /model extension override ----
+// D63 fix: the extension dispatch MUST sit inside the /model text guard.
+// The original D51 blob dispatched _modelCmd.handler for EVERY submitted
+// text (typing "testing" + Enter opened the Model Control Surface).
 const D51_MARKER = "D51: extension /model override";
 const D51_SIGNATURE = 'if (text === "/model" || text.startsWith("/model ")) {';
 const D51_PATCHED = `// ${D51_MARKER}
+            if (text === "/model" || text.startsWith("/model ")) {
             const _extRunner = this.session?.extensionRunner;
             if (_extRunner) {
                 const _cmds = _extRunner.getRegisteredCommands?.() ?? [];
@@ -59,7 +63,22 @@ const D51_PATCHED = `// ${D51_MARKER}
                     return;
                 }
             }
+            }
             if (text === "/model" || text.startsWith("/model ")) {`;
+// Pre-D63 blob (applied without the text guard) — migrated by apply().
+const D51_LEGACY_PATCHED = `// ${D51_MARKER}
+            const _extRunner = this.session?.extensionRunner;
+            if (_extRunner) {
+                const _cmds = _extRunner.getRegisteredCommands?.() ?? [];
+                const _modelCmd = _cmds.find((c) => c.name === "model");
+                if (_modelCmd) {
+                    this.editor.setText("");
+                    const _extCtx = _extRunner.createCommandContext?.() ?? this.session;
+                    await _modelCmd.handler(text.startsWith("/model ") ? text.slice(7).trim() : "", _extCtx);
+                    return;
+                }
+            }
+            ${D51_SIGNATURE}`;
 
 function locatePackage() {
   const override = process.env.PI_CODE_AGENT_DIR;
@@ -133,6 +152,13 @@ function apply() {
     if (!src.includes(t.signature) && !src.includes(t.patched)) {
       console.error(`REFUSED: ${name} expected host structure not found in ${path.basename(t.file)}.`);
       process.exit(1);
+    }
+    // D63 migration: replace the legacy unguarded D51 blob before applying.
+    if (name === "d51" && src.includes(D51_LEGACY_PATCHED) && !src.includes(D51_PATCHED)) {
+      src = src.replace(D51_LEGACY_PATCHED, t.signature);
+      fs.writeFileSync(t.file, src, "utf-8");
+      console.log(`${name}: legacy unguarded blob migrated.`);
+      changed = true;
     }
     if (src.includes(t.patched)) {
       console.log(`${name}: already applied.`);

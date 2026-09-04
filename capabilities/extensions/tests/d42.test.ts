@@ -1371,5 +1371,120 @@ check("D62 TOTALS: reducer aggregates all entry kinds, CH from last assistant", 
   assert.equal(empty.cacheHitRate, undefined);
 });
 
+// ------------------------------------------------------- D63 /model provenance
+// The D51 host bridge originally dispatched the extension `model` command for
+// EVERY submitted text (typing "testing" + Enter opened the Model Control
+// Surface). The fix requires the extension dispatch to sit INSIDE the
+// `/model` text guard. These tests pin the shipped patch text.
+
+const BRIDGE_PATH = path.resolve(__dirname, "..", "..", "scripts", "pi-model-bridge.mjs");
+const bridgeSrc = fs.readFileSync(BRIDGE_PATH, "utf8");
+
+function extractBlob(name: string): string {
+  const marker = `const ${name} = \``;
+  const start = bridgeSrc.indexOf(marker);
+  assert.ok(start >= 0, `bridge script must define ${name}`);
+  const bodyStart = bridgeSrc.indexOf("\n", start) + 1;
+  const end = bridgeSrc.indexOf("`;", bodyStart);
+  return bridgeSrc.slice(bodyStart, end);
+}
+
+const D51_FIXED = extractBlob("D51_PATCHED");
+const D51_LEGACY = extractBlob("D51_LEGACY_PATCHED");
+
+/** Simulates the host onSubmit semantics against a shipped patch blob. */
+function simulateSubmit(blob: string, text: string): { mccOpened: boolean; editorCleared: boolean; handlerArgs: string | undefined } {
+  // The blob re-emits the builtin guard line at the end (which continues into
+  // the ORIGINAL host body we do not simulate); strip that trailing line.
+  const body = blob.split("\n").slice(0, -1).join("\n");
+  let mccOpened = false;
+  let editorCleared = false;
+  let handlerArgs: string | undefined;
+  const host = {
+    session: {
+      extensionRunner: {
+        getRegisteredCommands: () => [
+          { name: "model", handler: async (args: string) => { mccOpened = true; handlerArgs = args; } },
+        ],
+        createCommandContext: () => ({}),
+      },
+    },
+    editor: { setText: (t: string) => { editorCleared = t === ""; } },
+  };
+  const fn = new Function("text", `"use strict";\nreturn (async () => {\n${body}\n})();`);
+  void (async () => { await fn.call(host, text); })();
+  return { mccOpened, editorCleared, handlerArgs };
+}
+
+check("D63 PATCH GUARD: extension dispatch sits inside the /model text guard", () => {
+  const guardIdx = D51_FIXED.indexOf('if (text === "/model" || text.startsWith("/model ")) {');
+  const dispatchIdx = D51_FIXED.indexOf("_modelCmd.handler(");
+  assert.ok(guardIdx >= 0, "patch blob must carry the /model text guard");
+  assert.ok(dispatchIdx >= 0, "patch blob must dispatch the extension model command");
+  assert.ok(guardIdx < dispatchIdx, "dispatch must be INSIDE the text guard (D63 fix)");
+  // The legacy blob dispatched BEFORE any guard — that is the D63 defect.
+  // Its guard sits at the END via the ${D51_SIGNATURE} template placeholder.
+  const legacyGuardIdx = D51_LEGACY.lastIndexOf("${D51_SIGNATURE}");
+  const legacyDispatchIdx = D51_LEGACY.indexOf("_modelCmd.handler(");
+  assert.ok(legacyDispatchIdx >= 0, "legacy blob dispatches the extension command");
+  assert.ok(legacyGuardIdx >= 0, "legacy blob re-emits the builtin guard at its end");
+  assert.ok(legacyDispatchIdx < legacyGuardIdx, "legacy blob is the confirmed defect shape: dispatch precedes any text guard");
+});
+
+check("D63 NORMAL TEXT: submit does not open MCC", () => {
+  for (const text of ["testing", "hello world", "model test", "fix this file"]) {
+    const r = simulateSubmit(D51_FIXED, text) as { mccOpened: boolean; handlerArgs?: string };
+    assert.equal(r.mccOpened, false, `"${text}" must not open the MCC`);
+  }
+});
+
+check("D63 EXPLICIT MODEL: /model still opens MCC with args", () => {
+  const bare = simulateSubmit(D51_FIXED, "/model") as { mccOpened: boolean; handlerArgs?: string };
+  assert.equal(bare.mccOpened, true, "/model must open the MCC");
+  assert.equal(bare.handlerArgs, "");
+  const arg = simulateSubmit(D51_FIXED, "/model gpt") as { mccOpened: boolean; handlerArgs?: string };
+  assert.equal(arg.mccOpened, true);
+  assert.equal(arg.handlerArgs, "gpt");
+});
+
+check("D63 FALLBACK: builtin path intact when extension lacks the command", () => {
+  // Blob ends by re-emitting the builtin guard line; assert the original
+  // builtin body still follows it in the patched HOST file.
+  const host = fs.readFileSync(
+    "C:/Users/hikari/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/interactive-mode.js",
+    "utf8",
+  );
+  const marker = "D51: extension /model override";
+  const i = host.indexOf(marker);
+  assert.ok(i >= 0, "D51 patch must be applied to the installed host");
+  const after = host.slice(i, i + 1600);
+  assert.match(after, /await this\.handleModelCommand\(searchTerm\);/, "builtin /model body preserved after the extension dispatch");
+});
+
+check("D63 MIGRATION: apply() migrates the legacy unguarded blob", () => {
+  assert.ok(bridgeSrc.includes("D51_LEGACY_PATCHED"), "legacy blob constant present");
+  assert.match(bridgeSrc, /name === "d51" && src\.includes\(D51_LEGACY_PATCHED\)/, "apply() migrates legacy hosts");
+});
+
+check("D63 D44 INTACT: same-model emission unchanged in the shipped patch", () => {
+  assert.match(bridgeSrc, /sameModel: true/, "D44 same-model emission preserved");
+  assert.match(bridgeSrc, /SUPPORTED_PREFIXES = \["0\.83\.", "0\.84\."\]/, "version guard unchanged");
+});
+
+check("D63 PROVENANCE: programmatic model_select never opens MCC", () => {
+  // The event-driven opener is RAL's model_select handler; its guard matrix
+  // (shouldOpenControlCenter) is pinned by the D44 test above. This check
+  // pins the handler's early-return ordering: restoringBootDefault first,
+  // then the matrix, then the re-entrancy guard.
+  const src = fs.readFileSync(path.resolve(__dirname, "..", "runtime-orchestrator.ts"), "utf8");
+  const i = src.indexOf('pi.on("model_select"');
+  const body = src.slice(i, i + 700);
+  const restoring = body.indexOf("restoringBootDefault");
+  const matrix = body.indexOf("shouldOpenControlCenter(ev)");
+  const loops = body.indexOf("modelSurfaceLoops > 0");
+  assert.ok(restoring >= 0 && matrix >= 0 && loops >= 0, "all three guards present");
+  assert.ok(restoring < matrix && matrix < loops, "guard order: restore-flag → provenance matrix → re-entrancy");
+});
+
 process.exit(failures === 0 ? 0 : 1);
 
