@@ -1,8 +1,11 @@
-import type { ContextUsage, ExtensionAPI, ExtensionContext, ExtensionCommandContext, ReadonlyFooterDataProvider, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { ContextUsage, CustomEditor as CustomEditorType, ExtensionAPI, ExtensionContext, ExtensionCommandContext, KeybindingsManager, ReadonlyFooterDataProvider, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import {
   fuzzyFilter,
   getKeybindings,
+  type EditorComponent,
   type Component,
+  type EditorOptions,
+  type EditorTheme,
   type SelectItem,
   SelectList,
   type SelectListTheme,
@@ -10,10 +13,11 @@ import {
   type TUI,
   visibleWidth,
 } from "@earendil-works/pi-tui";
-import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 import * as crypto from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import { pathToFileURL } from "node:url";
 
 /**
  * runtime-orchestrator: Runtime Abstraction Layer (RAL) v1 Foundation & Sync for Harness Pi.
@@ -2404,13 +2408,22 @@ export function profileDetailLines(
   return lines.map((l) => (l ? `  ${l}` : l)).slice(0, maxLines);
 }
 // ---------------------------------------------------------------------------
-// D62 Runtime Context Bar + reduced footer. The owner-facing "runtime surface"
-// is rebuilt here: one compact bar directly above the editor (lifecycle ·
-// model · reasoning · profile · workspace · context usage) and a one-line
-// custom footer (branch · token totals · cost). Token-only rendering (theme
-// tokens, never raw colors) and event-driven state: the lifecycle store below
-// is mutated only by event handlers; the 80 ms animation interval (same
-// braille cadence as the built-in Loader) merely repaints.
+// D64 Runtime Context + Input Surface. Three conceptual layers, OMP-inspired:
+//   1. ACTIVITY (transient): a dedicated widget above the context bar that
+//      renders ONLY while running — `<circle frame> MM:SS · <phrase>` — and
+//      settles to `✓ Complete · MM:SS` / `✕ Error`; empty when idle (zero
+//      vertical cost).
+//   2. CONTEXT BAR (persistent): one OMP-style information spine —
+//      `model · ● level · profile │ 📁 workspace │ used/limit · p%` — with
+//      a purple identity rail. Drop order: task (omitted — no authoritative
+//      source) → workspace → profile → compact usage → clamp. Model, level
+//      and reasoning semantics never drop.
+//   3. INPUT SURFACE: the host editor via the public setEditorComponent API —
+//      a CustomEditor subclass whose render strips the generic top/bottom
+//      rules and prefixes an accent `π │` gutter (stable, width-safe).
+// Native "Working..." duplication is suppressed through the public
+// setWorkingIndicator({frames: []}) + setWorkingMessage("") APIs — no host
+// patch. Token-only colors; event-driven; zero polling.
 // ---------------------------------------------------------------------------
 
 /** One styled segment of the bar (text + the theme token that renders it). */
@@ -2441,6 +2454,14 @@ const lifecycleStore: LifecycleStore = {
   frameIndex: 0,
 };
 
+/** Animated circle frames for the running lifecycle (premium, non-braille). */
+export const ACTIVITY_FRAMES = ["◐", "◓", "◑", "◒"];
+/** Animation cadence shared by the activity line (same as built-in Loader). */
+export const ACTIVITY_INTERVAL_MS = 80;
+/** Context-usage tone thresholds — adopted from the built-in footer. */
+const USAGE_WARNING_PCT = 70;
+const USAGE_ERROR_PCT = 90;
+
 /** Resets the store to the ready state (session_start / session_shutdown). */
 export function resetLifecycleStore(): void {
   lifecycleStore.lifecycle = "ready";
@@ -2450,14 +2471,6 @@ export function resetLifecycleStore(): void {
   lifecycleStore.errorFlag = false;
   lifecycleStore.frameIndex = 0;
 }
-
-/** Braille spinner frames — identical to the pi-tui Loader defaults. */
-const BAR_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-/** Animation cadence for the running lifecycle (same as the built-in Loader). */
-const BAR_INTERVAL_MS = 80;
-/** Context-usage tone thresholds — adopted from the built-in footer. */
-const USAGE_WARNING_PCT = 70;
-const USAGE_ERROR_PCT = 90;
 
 /** Formats a duration as MM:SS (minutes roll over: 75:00 is 1 h 15 m). */
 export function formatElapsed(ms: number): string {
@@ -2544,13 +2557,19 @@ export function formatUsageCompact(usage: ContextUsage): string {
   return `${formatTokensCompact(usage.tokens)}/${limit}`;
 }
 
-/** Lifecycle word + elapsed suffix for the bar's second segment. */
-export function lifecycleText(store: LifecycleStore): LifecycleSpan {
+/**
+ * LAYER 1 — the transient activity line, rendered ONLY while a run is in
+ * flight (or freshly settled). `<circle frame> MM:SS · <phrase>` while
+ * running; `✓ Complete · MM:SS` / `✕ Error` settle states; empty when idle —
+ * the widget contributes zero lines so no vertical space is reserved.
+ */
+export function activityLine(store: LifecycleStore): LifecycleSpan {
   switch (store.lifecycle) {
     case "running": {
       const elapsed = store.startTs !== null ? Date.now() - store.startTs : 0;
+      const phrase = store.activity ?? "Analyzing";
       return {
-        text: `${BAR_FRAMES[store.frameIndex % BAR_FRAMES.length]} Running · ${formatElapsed(elapsed)}`,
+        text: `${ACTIVITY_FRAMES[store.frameIndex % ACTIVITY_FRAMES.length]} ${formatElapsed(elapsed)} · ${phrase}`,
         token: "accent",
       };
     }
@@ -2561,7 +2580,7 @@ export function lifecycleText(store: LifecycleStore): LifecycleSpan {
     case "error":
       return { text: "✕ Error", token: "error" };
     default:
-      return { text: "○ Ready", token: "muted" };
+      return { text: "", token: "muted" };
   }
 }
 
@@ -2605,100 +2624,88 @@ export function applyToolEnd(store: LifecycleStore): void {
   if (store.lifecycle === "running") store.activity = "Analyzing";
 }
 
-/** Everything line 1 + line 2 need from the live session, pre-styled later. */
+
+/** Segment tokens for the OMP-style information spine. */
 export interface BarContext {
   modelLabel: string;
   levelLabel: string | undefined;
   levelToken: ThemeColor;
+  profileLabel: string | undefined;
   workspace: string;
   usage: ContextUsage | undefined;
-  secondLine: string | null;
 }
 
 const EMPTY_BAR_CONTEXT: BarContext = {
   modelLabel: "no-model",
   levelLabel: undefined,
   levelToken: "muted",
+  profileLabel: undefined,
   workspace: "",
   usage: undefined,
-  secondLine: null,
 };
 
 /**
- * Line 1 (+ optional line 2) for the Runtime Context Bar. Narrow-width drop
- * order (before any final clamp): workspace segment → line 2 → usage
- * compacted to "<used>/<limit>" → truncateToWidth. The first three segments
- * (π, lifecycle, model·level) are never dropped by design — only the final
- * clamp may shorten them.
+ * LAYER 2 — the persistent context spine, one line:
+ *   `<model> · ● <level> · <profile> │ 📁 <workspace> │ <used>/<limit> · <p>%`
+ * separated by a dim `│` rail. Width-aware drop order (before the final
+ * clamp): workspace segment → profile suffix → usage compacted → usage
+ * dropped → clamp. Model and `● level` never drop below the clamp.
  */
-export function contextBarLines(parts: BarContext, lifecycle: LifecycleSpan, width: number, theme: Theme): string[] {
-  const sep = "  ";
-  const head = [
-    theme.fg("accent", theme.bold("π")),
-    theme.fg(lifecycle.token, lifecycle.text),
-    theme.fg("text", theme.bold(parts.modelLabel)),
-  ];
-  if (parts.levelLabel) head.push(theme.fg(parts.levelToken, `● ${parts.levelLabel}`));
+export function contextBarLines(parts: BarContext, width: number, theme: Theme): string {
+  const rail = theme.fg("dim", "│");
+  const model = theme.fg("text", theme.bold(parts.modelLabel));
+  const level = parts.levelLabel ? theme.fg(parts.levelToken, `● ${parts.levelLabel}`) : null;
+  const profile = parts.profileLabel ? theme.fg("muted", parts.profileLabel) : null;
+  const head = [model, level, profile].filter((s): s is string => s !== null);
   const usage = parts.usage ? formatUsageBar(parts.usage) : null;
   const usageFull = usage
     ? theme.fg(usage.tone === "error" ? "error" : usage.tone === "warning" ? "warning" : "muted", usage.text)
     : null;
-  const usageCompact = parts.usage ? theme.fg("muted", formatUsageCompact(parts.usage)) : null;
-  const join = (segs: string[]): string => segs.join(sep);
-  const segsFull = [...head];
-  if (parts.workspace) segsFull.push(theme.fg("dim", parts.workspace));
-  if (usageFull) segsFull.push(usageFull);
-  const segsNoWs = [...head];
-  if (usageFull) segsNoWs.push(usageFull);
-  const segsCompact = [...head];
-  if (usageCompact) segsCompact.push(usageCompact);
-  const full = join(segsFull);
-  const noWs = join(segsNoWs);
-  const compact = join(segsCompact);
+  const usageCompact = parts.usage
+    ? theme.fg(usage && usage.tone !== "normal" ? (usage.tone === "error" ? "error" : "warning") : "muted", formatUsageCompact(parts.usage))
+    : null;
+  const workspace = parts.workspace ? theme.fg("dim", `📁 ${parts.workspace}`) : null;
+  const joinHead = (segs: string[]): string => segs.join(theme.fg("dim", " · "));
+  const join = (segs: string[]): string => segs.join(` ${rail} `);
   const fits = (s: string): boolean => visibleWidth(s) <= width;
-  let line1: string;
-  let showSecond: boolean;
-  if (fits(full)) {
-    line1 = full;
-    showSecond = true;
-  } else if (fits(noWs)) {
-    line1 = noWs;
-    showSecond = false;
-  } else if (fits(compact)) {
-    line1 = compact;
-    showSecond = false;
-  } else {
-    line1 = truncateToWidth(noWs, width, "");
-    showSecond = false;
-  }
-  const lines = [line1];
-  if (showSecond && parts.secondLine) {
-    const l2 = theme.fg("muted", parts.secondLine);
-    lines.push(fits(l2) ? l2 : truncateToWidth(l2, width, ""));
-  }
-  return lines;
+  const headLine = joinHead(head);
+  const headNoProfileLine = joinHead([model, level].filter((s): s is string => s !== null));
+  // Full spine.
+  const full = [headLine, ...(workspace ? [workspace] : []), ...(usageFull ? [usageFull] : [])].join(` ${rail} `);
+  if (fits(full)) return full;
+  // 1. drop workspace.
+  const noWs = [headLine, ...(usageFull ? [usageFull] : [])].join(` ${rail} `);
+  if (fits(noWs)) return noWs;
+  // 2. drop profile suffix.
+  const noProfile = [headNoProfileLine, ...(workspace ? [workspace] : []), ...(usageFull ? [usageFull] : [])].join(` ${rail} `);
+  if (fits(noProfile)) return noProfile;
+  // 3. compact usage, no workspace.
+  const compactUsage = [headNoProfileLine, ...(usageCompact ? [usageCompact] : [])].join(` ${rail} `);
+  if (fits(compactUsage)) return compactUsage;
+  // 4. drop usage entirely.
+  const headOnly = headNoProfileLine;
+  if (fits(headOnly)) return headOnly;
+  // 5. final clamp (never drops model/level by design).
+  return truncateToWidth(headOnly, width, "");
 }
 
 /**
- * The Runtime Context Bar: a 1–2 line component hosted above the editor.
- * Recomputes everything from live state on every render (the host repaints on
- * every session event), so no polling is needed. While the lifecycle is
- * running the bar owns a braille animation interval that only calls
- * requestRender — identical mechanism to the built-in Loader.
+ * LAYER 1 — ActivityWidget: the transient runtime line hosted above the
+ * context bar. Renders zero lines when idle, one line while running /
+ * freshly settled. Owns the animation interval; repaints are event-driven.
  */
-export class RuntimeContextBar implements Component {
+export class ActivityWidget implements Component {
   private interval: NodeJS.Timeout | null = null;
   constructor(
     private readonly tui: TUI,
     private readonly theme: Theme,
-    private readonly getContext: () => BarContext,
   ) {}
   startAnimation(): void {
     if (this.interval) return;
     this.interval = setInterval(() => {
-      lifecycleStore.frameIndex = (lifecycleStore.frameIndex + 1) % BAR_FRAMES.length;
+      lifecycleStore.frameIndex = (lifecycleStore.frameIndex + 1) % ACTIVITY_FRAMES.length;
       this.tui.requestRender();
-    }, BAR_INTERVAL_MS);
+    }, ACTIVITY_INTERVAL_MS);
   }
   stopAnimation(): void {
     if (this.interval) {
@@ -2713,7 +2720,27 @@ export class RuntimeContextBar implements Component {
     this.stopAnimation();
   }
   render(width: number): string[] {
-    return contextBarLines(this.getContext(), lifecycleText(lifecycleStore), width, this.theme);
+    const line = activityLine(lifecycleStore);
+    if (!line.text) return [];
+    const styled = this.theme.fg(line.token, line.text);
+    return [visibleWidth(styled) <= width ? styled : truncateToWidth(styled, width, "")];
+  }
+  invalidate(): void {}
+}
+
+/**
+ * LAYER 2 — RuntimeContextBar: the persistent OMP-style information spine,
+ * one line, recomputed from live state on every render (the host repaints on
+ * every session event; no polling).
+ */
+export class RuntimeContextBar implements Component {
+  constructor(
+    private readonly theme: Theme,
+    private readonly getContext: () => BarContext,
+  ) {}
+  render(width: number): string[] {
+    const line = contextBarLines(this.getContext(), width, this.theme);
+    return [line];
   }
   invalidate(): void {}
 }
@@ -2809,11 +2836,115 @@ export class ReducedFooter implements Component {
   dispose(): void {}
 }
 
+/**
+ * LAYER 3 — the input surface. A CustomEditor subclass registered through the
+ * PUBLIC setEditorComponent API (no host patch): render() strips the generic
+ * top/bottom rules and prefixes every content line with an accent `π │`
+ * gutter — open, frameless, OMP-style. All editor behavior (multiline, cursor,
+ * autocomplete, keybindings, paste) is inherited unchanged; the D63 dispatch
+ * path is unaffected because the host wires onSubmit/handlers onto whichever
+ * editor the factory returns.
+ */
+/**
+ * The render wrapper shared by the lazy PiInputEditor class below: strips the
+ * generic top/bottom rules and prefixes every content line with the accent
+ * `π │` gutter (width-safe).
+ */
+function piGutterRender(lines: string[], width: number): string[] {
+  if (lines.length < 2) return lines; // degenerate: keep as-is
+  const content = lines.slice(1, -1); // drop top/bottom horizontal rules
+  const available = Math.max(1, width - 4); // "π │ " gutter width
+  return content.map((l) => {
+    const fitted = visibleWidth(l) <= available ? l : truncateToWidth(l, available, "");
+    const pad = " ".repeat(Math.max(0, available - visibleWidth(fitted)));
+    return `${getAccentFg()("π")} ${getDimFg()("│")} ${fitted}${pad}`;
+  });
+}
+
+/** Live theme stylers for the gutter (captured from ctx.ui.theme at session start). */
+let accentFgFn: ((t: string) => string) | null = null;
+let dimFgFn: ((t: string) => string) | null = null;
+function getAccentFg(): (t: string) => string {
+  return accentFgFn ?? ((t) => t);
+}
+function getDimFg(): (t: string) => string {
+  return dimFgFn ?? ((t) => t);
+}
+/** Captures the live theme's accent/dim stylers (called at session_start). */
+export function setPiEditorThemeFns(accent: (t: string) => string, dim: (t: string) => string): void {
+  accentFgFn = accent;
+  dimFgFn = dim;
+}
+
+/** Read-only access for tests and diagnostics. */
+export function getLifecycleStore(): LifecycleStore {
+  return lifecycleStore;
+}
+
+/**
+ * LAYER 3 — the input surface. Built through the PUBLIC setEditorComponent
+ * API (no host patch): a CustomEditor subclass whose render() strips the
+ * generic top/bottom rules and prefixes every content line with an accent
+ * `π │` gutter — open, frameless, OMP-style. All editor behavior (multiline,
+ * cursor, autocomplete, keybindings, paste) is inherited unchanged; the D63
+ * dispatch path is unaffected because the host wires onSubmit/handlers onto
+ * whichever editor the factory returns. The class value is imported
+ * lazily (it lives in the host package, whose runtime internals must not be
+ * pulled into headless/tsx module graphs).
+ */
+let PiInputEditorClass: (new (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options?: EditorOptions) => EditorComponent) | null = null;
+let piEditorClassPromise: Promise<void> | null = null;
+
+async function ensurePiInputEditorClass(): Promise<void> {
+  if (PiInputEditorClass) return;
+  if (!piEditorClassPromise) {
+    piEditorClassPromise = (async () => {
+      // The host package is always present in the extension runtime (jiti);
+      // the specifier resolves to an absolute file URL so both the runtime and
+      // headless test runners can load it without package-exports ambiguity.
+      const appdata = process.env.APPDATA;
+      const dir = process.env.PI_CODE_AGENT_DIR ?? (appdata ? path.join(appdata, "npm", "node_modules", "@earendil-works", "pi-coding-agent") : "");
+      if (!dir) throw new Error("pi-coding-agent location not found");
+      const hostSpecifier = pathToFileURL(path.join(dir, "dist", "index.js")).href;
+      const mod = (await import(/* webpackIgnore: true */ hostSpecifier)) as unknown as { CustomEditor: new (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options?: EditorOptions) => EditorComponent };
+      const Base = mod.CustomEditor;
+      PiInputEditorClass = class extends (Base as new (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options?: EditorOptions) => EditorComponent) {
+        render(width: number): string[] {
+          const base = super.render(width);
+          return piGutterRender(base, width);
+        }
+        invalidate(): void {}
+      };
+    })();
+  }
+  await piEditorClassPromise;
+}
+
+/** Ensures the lazy editor class is loaded before the sync factory runs. */
+export async function loadPiInputEditorClass(): Promise<void> {
+  await ensurePiInputEditorClass();
+}
+
+/** Builds the D64 input editor inside the host's public editor factory. */
+export function piInputEditorFactory(
+  tui: TUI,
+  theme: EditorTheme,
+  keybindings: KeybindingsManager,
+): EditorComponent {
+  if (!PiInputEditorClass) throw new Error("PiInputEditor not loaded — call loadPiInputEditorClass() first");
+  return new (PiInputEditorClass as new (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options?: EditorOptions) => EditorComponent)(
+    tui,
+    theme,
+    keybindings,
+  );
+}
+
 /** Module-level singletons for the live bar + its context provider. The
  * widget factory may be re-invoked by the host (theme switches, hide/restore
  * around the Model Control Center); replacing the component must not leak the
  * previous animation interval, and event handlers reach the TUI only through
  * these refs (no ctx captured at registration time). */
+let activeActivityWidget: ActivityWidget | null = null;
 let activeRuntimeBar: RuntimeContextBar | null = null;
 let runtimeBarContext: (() => BarContext) | null = null;
 
@@ -2843,33 +2974,32 @@ function makeBarContext(ctx: ExtensionContext): () => BarContext {
       const cw = ctx.model?.contextWindow;
       return typeof cw === "number" && cw > 0 ? { tokens: null, contextWindow: cw, percent: null } : undefined;
     }, undefined);
+    const profileLabel = safe(() => loadReasoningState().defaultProfile as string | undefined, undefined);
     return {
       modelLabel,
       levelLabel,
       levelToken,
+      profileLabel,
       workspace: safe(() => shortenPath(ctx.cwd, os.homedir()), ""),
       usage,
-      secondLine: safe(() => {
-        if (lifecycleStore.lifecycle === "running") {
-          return lifecycleStore.activity ? `  ${lifecycleStore.activity}` : null;
-        }
-        const r = resolveEffective(loadReasoningState());
-        return `${r.source === "execution" ? "Execution" : "Default"} · ${r.profile}`;
-      }, null),
     };
   };
 }
 
-/** Widget factory (stable identity so hide/restore can re-register it). */
-function runtimeContextWidgetFactory(tui: TUI, theme: Theme): RuntimeContextBar {
-  activeRuntimeBar?.dispose();
-  const bar = new RuntimeContextBar(tui, theme, () => runtimeBarContext?.() ?? EMPTY_BAR_CONTEXT);
-  activeRuntimeBar = bar;
-  return bar;
+/** Widget factories (stable identity so hide/restore can re-register them). */
+function runtimeActivityWidgetFactory(tui: TUI, theme: Theme): ActivityWidget {
+  activeActivityWidget?.dispose();
+  const w = new ActivityWidget(tui, theme);
+  activeActivityWidget = w;
+  return w;
 }
 
-const RUNTIME_CONTEXT_WIDGET_KEY = "runtime-context";
+function runtimeContextWidgetFactory(_tui: TUI, theme: Theme): RuntimeContextBar {
+  return new RuntimeContextBar(theme, () => runtimeBarContext?.() ?? EMPTY_BAR_CONTEXT);
+}
 
+const RUNTIME_ACTIVITY_WIDGET_KEY = "runtime-activity";
+const RUNTIME_CONTEXT_WIDGET_KEY = "runtime-context";
 /**
  * Grouped selection list for the /mcc overview. Headers and disabled rows are
  * rendered but skipped by navigation; arrow keys wrap across selectable items
@@ -3150,19 +3280,47 @@ export default function (pi: ExtensionAPI) {
     try {
       const topo = detectProjectTopology(ctx.cwd);
       resetLifecycleStore();
-      // D62 Runtime Context Bar + reduced footer (interactive TUI only; the
-      // bar replaces the built-in pwd/context/status surface, diagnostics
-      // stay in /doctor). Factory closures re-read the live theme each call.
+      // D64 Runtime Context + Input Surface (interactive TUI only): the
+      // activity widget is registered FIRST so it renders ABOVE the context
+      // bar; the reduced footer stays; the native "Working..." spinner is
+      // suppressed via the public setWorkingIndicator/setWorkingMessage APIs
+      // (single lifecycle signal lives in the activity line); the π input
+      // editor is installed through the public setEditorComponent factory.
       if (ctx.hasUI && ctx.mode === "tui") {
         try {
           runtimeBarContext = makeBarContext(ctx);
           ctx.ui.setWidget(
-            RUNTIME_CONTEXT_WIDGET_KEY,
-            (tui, theme) => runtimeContextWidgetFactory(tui, theme),
+            RUNTIME_ACTIVITY_WIDGET_KEY,
+            (tui, theme) => runtimeActivityWidgetFactory(tui, theme),
             { placement: "aboveEditor" },
           );
-          ctx.ui.setFooter((tui, _theme, footerData) => {
-            void tui;
+          ctx.ui.setWidget(
+            RUNTIME_CONTEXT_WIDGET_KEY,
+            (_tui, theme) => runtimeContextWidgetFactory(_tui, theme),
+            { placement: "aboveEditor" },
+          );
+          ctx.ui.setWorkingMessage("");
+          ctx.ui.setWorkingIndicator({ frames: [] });
+          // D64 primary-surface discipline: third-party extensions may mount
+          // their own status widgets below the editor (pi-lens). These are
+          // diagnostics, not runtime identity — suppress the known noise
+          // widget keys so the primary surface stays clean (they re-mount
+          // only on their own session_start, which ran before ours).
+          for (const noiseKey of ["pi-lens"]) {
+            try {
+              ctx.ui.setWidget(noiseKey, undefined);
+            } catch {}
+          }
+          const liveTheme = ctx.ui.theme;
+          setPiEditorThemeFns(
+            (t) => liveTheme.fg("accent", t),
+            (t) => liveTheme.fg("dim", t),
+          );
+          await loadPiInputEditorClass();
+          ctx.ui.setEditorComponent((tui, editorTheme, keybindings) =>
+            piInputEditorFactory(tui, editorTheme, keybindings),
+          );
+          ctx.ui.setFooter((_tui, _theme, footerData) => {
             return new ReducedFooter(footerData, () => ctx.sessionManager.getEntries());
           });
         } catch {}
@@ -3216,13 +3374,13 @@ export default function (pi: ExtensionAPI) {
         .catch(() => {});
     } catch {}
   });
-  // ---- D62 runtime surface events (event-driven; zero polling) ----
+
   pi.on("agent_start", (_event, ctx) => {
     applyAgentStart(lifecycleStore);
     try {
       if (ctx.hasUI && ctx.mode === "tui") {
-        activeRuntimeBar?.startAnimation();
-        activeRuntimeBar?.repaint();
+        activeActivityWidget?.startAnimation();
+        activeActivityWidget?.repaint();
       }
     } catch {}
   });
@@ -3233,29 +3391,31 @@ export default function (pi: ExtensionAPI) {
     applyAgentSettled(lifecycleStore);
     try {
       if (ctx.hasUI && ctx.mode === "tui") {
-        activeRuntimeBar?.stopAnimation();
-        activeRuntimeBar?.repaint();
+        activeActivityWidget?.stopAnimation();
+        activeActivityWidget?.repaint();
       }
     } catch {}
   });
   pi.on("tool_execution_start", (event, ctx) => {
     applyToolStart(lifecycleStore, event.toolName, event.args);
     try {
-      if (ctx.hasUI && ctx.mode === "tui") activeRuntimeBar?.repaint();
+      if (ctx.hasUI && ctx.mode === "tui") activeActivityWidget?.repaint();
     } catch {}
   });
   pi.on("tool_execution_end", (_event, ctx) => {
     applyToolEnd(lifecycleStore);
     try {
-      if (ctx.hasUI && ctx.mode === "tui") activeRuntimeBar?.repaint();
+      if (ctx.hasUI && ctx.mode === "tui") activeActivityWidget?.repaint();
     } catch {}
   });
   pi.on("session_shutdown", (_event, ctx) => {
     resetLifecycleStore();
     try {
-      if (ctx.hasUI && ctx.mode === "tui") activeRuntimeBar?.dispose();
+      if (ctx.hasUI && ctx.mode === "tui") {
+        activeActivityWidget?.dispose();
+      }
     } catch {}
-    activeRuntimeBar = null;
+    activeActivityWidget = null;
   });
 
   pi.on("model_select", async (event, ctx) => {
@@ -3610,11 +3770,11 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
   } catch {
     // D59: best-effort theme identity; graceful fallback to the active theme.
   }
-  // D62: while the Model Control Center owns the editor area, the Runtime
-  // Context Bar hides; the finally below restores it with the same factory
-  // on every close path (Esc, model pick, profile editor, error).
+  // D64: while the Model Control Center owns the editor area, BOTH runtime
+  // layers hide (activity + context bar); the finally below restores them.
   if (ctx.mode === "tui") {
     try {
+      ctx.ui.setWidget(RUNTIME_ACTIVITY_WIDGET_KEY, undefined);
       ctx.ui.setWidget(RUNTIME_CONTEXT_WIDGET_KEY, undefined);
     } catch {}
   }
@@ -3625,6 +3785,7 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
     modelSurfaceLoops--;
     if (ctx.mode === "tui") {
       try {
+        ctx.ui.setWidget(RUNTIME_ACTIVITY_WIDGET_KEY, runtimeActivityWidgetFactory, { placement: "aboveEditor" });
         ctx.ui.setWidget(RUNTIME_CONTEXT_WIDGET_KEY, runtimeContextWidgetFactory, { placement: "aboveEditor" });
       } catch {}
     }

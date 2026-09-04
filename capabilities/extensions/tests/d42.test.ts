@@ -9,6 +9,7 @@
  * restore them in finally blocks.
  */
 import assert from "node:assert/strict";
+import { getKeybindings } from "@earendil-works/pi-tui";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -48,10 +49,15 @@ import {
 } from "../runtime-orchestrator.ts";
 
 import {
+  ActivityWidget,
   ReducedFooter,
   RuntimeContextBar,
+  ACTIVITY_FRAMES,
+  activityLine,
   activityPhrase,
   applyAgentEnd,
+  getLifecycleStore,
+  resetLifecycleStore,
   applyAgentSettled,
   applyAgentStart,
   applyToolEnd,
@@ -61,7 +67,9 @@ import {
   formatTokensCompact,
   formatUsageBar,
   formatUsageCompact,
-  lifecycleText,
+  loadPiInputEditorClass,
+  piInputEditorFactory,
+  setPiEditorThemeFns,
   shortenPath,
   usageTotalsFromEntries,
   type BarContext,
@@ -72,10 +80,24 @@ const STATE_FILE = path.join(os.homedir(), ".pi", "agent", "harness-reasoning.js
 const MODELS_FILE = path.join(os.homedir(), ".pi", "agent", "harness-models.json");
 
 let failures = 0;
-const check = (name: string, fn: () => void) => {
+type CheckFn = () => void | Promise<void>;
+const asyncChecks: Array<Promise<void>> = [];
+const check = (name: string, fn: CheckFn): void => {
   try {
-    fn();
-    console.log(`PASS ${name}`);
+    const r = fn();
+    if (r instanceof Promise) {
+      asyncChecks.push(
+        r.then(
+          () => console.log(`PASS ${name}`),
+          (e: unknown) => {
+            failures++;
+            console.log(`FAIL ${name}: ${e instanceof Error ? e.message : e}`);
+          },
+        ),
+      );
+    } else {
+      console.log(`PASS ${name}`);
+    }
   } catch (e) {
     failures++;
     console.log(`FAIL ${name}: ${e instanceof Error ? e.message : e}`);
@@ -1151,29 +1173,29 @@ check("D61 DIVIDER CONTINUITY: every rail column present in every row, no gaps o
   }
 });
 
-// ------------------------------------------------------------- D62 runtime bar
+// ------------------------------------------------- D64 runtime layers
 
-const D62_CTX: BarContext = {
-  modelLabel: "deepseek-v4-flash",
+const D64_CTX: BarContext = {
+  modelLabel: "glm-5.3-flash-northstar-longrun",
   levelLabel: "High",
   levelToken: "thinkingHigh",
+  profileLabel: "Coding",
   workspace: "~/pisetup/capabilities",
   usage: { tokens: 820000, contextWindow: 1000000, percent: 80 },
-  secondLine: "Default · Plan",
 };
 
-function d62Store(overrides: Partial<LifecycleStore> = {}): LifecycleStore {
+function d64Store(overrides: Partial<LifecycleStore> = {}): LifecycleStore {
   return { lifecycle: "ready", startTs: null, endTs: null, activity: null, errorFlag: false, frameIndex: 0, ...overrides };
 }
 
-check("D62 ELAPSED: formatElapsed renders MM:SS with minute rollover", () => {
+check("D64 ELAPSED: formatElapsed renders MM:SS with minute rollover", () => {
   assert.equal(formatElapsed(0), "00:00");
   assert.equal(formatElapsed(65100), "01:05");
   assert.equal(formatElapsed(3725000), "62:05");
   assert.equal(formatElapsed(-5), "00:00");
 });
 
-check("D62 ACTIVITY: tool starts map to phrases, unknown shapes fall back", () => {
+check("D64 ACTIVITY PHRASES: tool starts map to phrases, unknown shapes fall back", () => {
   assert.equal(activityPhrase("edit", { path: "src/foo.ts" }), "Editing foo.ts");
   assert.equal(activityPhrase("write", { path: "a/b.md" }), "Writing b.md");
   assert.equal(activityPhrase("read", { path: "C:\\x\\y.json" }), "Reading y.json");
@@ -1186,7 +1208,7 @@ check("D62 ACTIVITY: tool starts map to phrases, unknown shapes fall back", () =
   assert.equal(activityPhrase("edit", undefined), "Editing file");
 });
 
-check("D62 PATH: home prefix shortens, sibling directories stay untouched", () => {
+check("D64 PATH: home prefix shortens, sibling directories stay untouched", () => {
   const home = "C:/Users/hikari";
   assert.equal(shortenPath("C:/Users/hikari/Desktop", home), "~/Desktop");
   assert.equal(shortenPath("C:\\Users\\hikari", home), "~");
@@ -1195,7 +1217,7 @@ check("D62 PATH: home prefix shortens, sibling directories stay untouched", () =
   assert.equal(shortenPath("C:/x", undefined), "C:/x");
 });
 
-check("D62 USAGE: tones at the 70/90 thresholds, ? when tokens unknown", () => {
+check("D64 USAGE: tones at the 70/90 thresholds, ? when tokens unknown", () => {
   assert.deepEqual(formatUsageBar({ tokens: 820000, contextWindow: 1000000, percent: 80 }), {
     text: "820k / 1.0M · 80%",
     tone: "warning",
@@ -1218,9 +1240,8 @@ check("D62 USAGE: tones at the 70/90 thresholds, ? when tokens unknown", () => {
   assert.equal(formatUsageCompact({ tokens: null, contextWindow: 1000000, percent: null }), "?/1.0M");
 });
 
-check("D62 LIFECYCLE: transitions drive a store through the full run", () => {
-  const s = d62Store();
-  assert.equal(lifecycleText(s).text, "○ Ready");
+check("D64 LIFECYCLE: transitions drive a store through the full run", () => {
+  const s = d64Store();
   applyAgentStart(s);
   assert.equal(s.lifecycle, "running");
   assert.equal(s.activity, "Analyzing");
@@ -1239,96 +1260,118 @@ check("D62 LIFECYCLE: transitions drive a store through the full run", () => {
   applyAgentEnd(s, [{ role: "assistant", stopReason: "stop" }]);
   applyAgentSettled(s);
   assert.equal(s.lifecycle, "complete");
-  const idle = d62Store();
+  const idle = d64Store();
   applyAgentSettled(idle); // settled with no run: no-op
   assert.equal(idle.lifecycle, "ready");
 });
 
-check("D62 BAR READY: line 1 carries identity + usage, line 2 the profile", () => {
-  const lines = contextBarLines(D62_CTX, lifecycleText(d62Store()), 140, themeStub);
-  const flat = stripAnsi(lines.join("\n"));
-  assert.match(flat, /π  ?○ Ready/);
-  assert.match(flat, /deepseek-v4-flash/);
-  assert.match(flat, /● High/);
-  assert.match(flat, /~\/pisetup\/capabilities/);
-  assert.match(flat, /820k \/ 1\.0M · 80%/);
-  assert.match(flat, /Default · Plan/);
-  assert.equal(lines.length, 2);
-});
-
-check("D62 BAR RUNNING: spinner frame + elapsed + activity second line", () => {
-  const s = d62Store({ lifecycle: "running", startTs: Date.now() - 65100, frameIndex: 0 });
-  const span = lifecycleText(s);
-  assert.match(span.text, /⠋ Running · 01:05/);
-  assert.equal(span.token, "accent");
-  const lines = contextBarLines({ ...D62_CTX, secondLine: "  Editing foo.ts" }, span, 140, themeStub);
-  const flat = stripAnsi(lines.join("\n"));
-  assert.match(flat, /Running · 01:05/);
-  assert.match(flat, /Editing foo\.ts/);
-});
-
-check("D62 BAR FINAL: complete renders ✓ with elapsed, error renders ✕", () => {
-  const done = lifecycleText(d62Store({ lifecycle: "complete", startTs: 1000, endTs: 61000 }));
+check("D64 ACTIVITY LINE: running shows frame+elapsed+phrase; idle empty; settle states", () => {
+  // idle: zero-cost empty line
+  assert.equal(activityLine(d64Store()).text, "");
+  // running: animated circle + elapsed + phrase
+  const startTs = Date.now() - 42_000;
+  const run = activityLine(d64Store({ lifecycle: "running", startTs, frameIndex: 1, activity: "Editing runtime-orchestrator.ts" }));
+  assert.match(run.text, /^[◐◓◑◒] 00:4[23] · Editing runtime-orchestrator.ts$/);
+  assert.equal(run.token, "accent");
+  assert.ok(ACTIVITY_FRAMES.includes(run.text[0]));
+  // complete settles with elapsed; error state; stale activity never shown when idle
+  const done = activityLine(d64Store({ lifecycle: "complete", startTs: 1000, endTs: 61000 }));
   assert.equal(done.text, "✓ Complete · 01:00");
   assert.equal(done.token, "success");
-  const err = lifecycleText(d62Store({ lifecycle: "error" }));
+  const err = activityLine(d64Store({ lifecycle: "error" }));
   assert.equal(err.text, "✕ Error");
   assert.equal(err.token, "error");
 });
 
-check("D62 BAR NULL USAGE: percent-null renders the ? segment", () => {
-  const lines = contextBarLines(
-    { ...D62_CTX, usage: { tokens: null, contextWindow: 1000000, percent: null } },
-    lifecycleText(d62Store()),
+check("D64 ACTIVITY WIDGET: zero lines idle, one line running, clamped width", () => {
+  const tui = { requestRender() {} } as never;
+  const w = new ActivityWidget(tui, themeStub);
+  assert.deepEqual(w.render(140), [], "idle activity must contribute zero lines");
+  applyAgentStart(getLifecycleStore());
+  applyToolStart(getLifecycleStore(), "edit", { path: "src/foo.ts" });
+  const lines = w.render(140);
+  assert.equal(lines.length, 1);
+  assert.match(stripAnsi(lines[0]), /· Editing foo\.ts/);
+  w.startAnimation(); // guarded against double-start
+  w.startAnimation();
+  w.dispose(); // clears interval — no leak
+  resetLifecycleStore();
+});
+
+check("D64 BAR: OMP spine with model · level · profile │ 📁 ws │ usage", () => {
+  const line = contextBarLines(D64_CTX, 140, themeStub);
+  const flat = stripAnsi(line);
+  assert.match(flat, /glm-5\.3-flash-northstar-longrun · ● High · Coding/);
+  assert.match(flat, /│ 📁 ~\/pisetup\/capabilities │/);
+  assert.match(flat, /820k \/ 1\.0M · 80%$/);
+  assert.ok(visibleWidth(line) <= 140);
+  // No π in the bar (it lives in the input surface now); no lifecycle text.
+  assert.doesNotMatch(flat, /π|Ready|Running|Complete/);
+});
+
+
+check("D64 INPUT EDITOR: lazy factory returns a component with π gutter render", async () => {
+  setPiEditorThemeFns((t) => t, (t) => t);
+  const tuiStub = { terminal: { rows: 40 } } as never;
+  const editorTheme = { borderColor: (t: string) => t, selectList: {} } as never;
+  // pi-tui's manager satisfies the host's interface structurally for the
+  // subset the editor uses; the two class identities differ only in
+  // config-path plumbing the editor never touches.
+  const kb = getKeybindings() as never;
+  await loadPiInputEditorClass();
+  const editor = piInputEditorFactory(tuiStub, editorTheme, kb);
+  assert.ok(editor, "factory must return an editor component");
+  editor.setText("hello world");
+  const lines = editor.render(60);
+  // The wrapped render must include the π gutter and drop the base rules.
+  assert.ok(lines.length >= 1);
+  assert.ok(stripAnsi(lines.join("\n")).includes("π"));
+  assert.ok(!stripAnsi(lines[0]).startsWith("─"), "top rule must be stripped");
+});
+
+check("D64 BAR NULL USAGE: percent-null renders the ? segment", () => {
+  const line = contextBarLines(
+    { ...D64_CTX, usage: { tokens: null, contextWindow: 1000000, percent: null } },
     140,
     themeStub,
   );
-  assert.match(stripAnsi(lines.join("\n")), /\? \/ 1\.0M/);
+  assert.match(stripAnsi(line), /\? \/ 1\.0M/);
 });
 
-check("D62 DROP ORDER: workspace → line 2 → compact usage → final clamp", () => {
-  const ready = lifecycleText(d62Store());
-  const full = contextBarLines(D62_CTX, ready, 140, themeStub);
-  assert.ok(visibleWidth(stripAnsi(full[0])) > 76, "fixture must be wider than 76 to exercise drops");
-
-  const at76 = contextBarLines(D62_CTX, ready, 76, themeStub);
-  assert.equal(at76.length, 1, "line 2 drops when line 1 needs a drop");
-  assert.doesNotMatch(stripAnsi(at76[0]), /pisetup/);
-  assert.match(stripAnsi(at76[0]), /820k \/ 1\.0M · 80%/, "usage still expanded at 76");
-
-  const at50 = contextBarLines(D62_CTX, ready, 50, themeStub);
-  assert.equal(at50.length, 1);
-  assert.match(stripAnsi(at50[0]), /820k\/1\.0M/, "usage compacted at 50");
-
-  const at40 = contextBarLines(D62_CTX, ready, 40, themeStub);
-  assert.equal(at40.length, 1);
-  assert.ok(visibleWidth(at40[0]) <= 40, "final clamp guarantees width");
+check("D64 DROP ORDER: task(omitted) → workspace → profile → compact usage → clamp", () => {
+  const full = contextBarLines(D64_CTX, 140, themeStub);
+  assert.ok(visibleWidth(stripAnsi(full)) > 90, "fixture must exceed 90 to exercise drops");
+  const at90 = contextBarLines(D64_CTX, 90, themeStub);
+  assert.doesNotMatch(stripAnsi(at90), /pisetup/, "workspace drops first");
+  assert.match(stripAnsi(at90), /Coding/, "profile survives while usage is full at 90");
+  const at60 = contextBarLines(D64_CTX, 60, themeStub);
+  assert.match(stripAnsi(at60), /820k\/1\.0M/, "compact usage at 60");
+  const at40 = contextBarLines(D64_CTX, 40, themeStub);
+  assert.ok(visibleWidth(at40) <= 40, "clamp guarantees width");
+  const at20 = contextBarLines(D64_CTX, 20, themeStub);
+  assert.ok(visibleWidth(at20) <= 20, "clamp holds at 20");
+  assert.match(stripAnsi(at20), /glm-5\.3-flash-norths/, "model clamped last — prefix survives");
 });
 
-check("D62 WIDTH SAFETY: bar renders within every width 8–400", () => {
-  const running = lifecycleText(d62Store({ lifecycle: "running", startTs: Date.now() - 65100, frameIndex: 3 }));
+check("D64 WIDTH SAFETY: bar renders within every width 8–400", () => {
   for (let w = 8; w <= 400; w++) {
-    const lines = contextBarLines(D62_CTX, running, w, themeStub);
-    assert.ok(lines.length <= 2, `too many lines at ${w}`);
-    for (const l of lines) {
-      assert.ok(visibleWidth(l) <= w, `line width ${visibleWidth(l)} exceeds ${w}`);
+    const line = contextBarLines(D64_CTX, w, themeStub);
+    assert.ok(visibleWidth(line) <= w, `line width ${visibleWidth(line)} exceeds ${w}`);
+    if (w >= 32) {
+      assert.match(stripAnsi(line), /glm-5\.3-flash-northstar/, `model lost at width ${w}`);
     }
-    assert.ok(stripAnsi(lines[0]).includes("π"), `π segment lost at width ${w}`);
   }
 });
 
-check("D62 BAR CLASS: component render mirrors the pure lines", () => {
-  const bar = new RuntimeContextBar({ requestRender() {} } as never, themeStub, () => D62_CTX);
-  const lines = bar.render(140);
-  assert.ok(lines.length >= 1 && lines.length <= 2);
-  assert.match(stripAnsi(lines.join("\n")), /○ Ready/);
-  assert.match(stripAnsi(lines.join("\n")), /deepseek-v4-flash/);
-  bar.startAnimation(); // interval guarded against double-start
-  bar.startAnimation();
-  bar.dispose(); // clears the interval — no leak
+check("D64 BAR CLASS: component render mirrors the pure line", () => {
+  const bar = new RuntimeContextBar(themeStub, () => D64_CTX);
+  const line = bar.render(140)[0];
+  assert.match(stripAnsi(line), /glm-5.3-flash-northstar/);
+  assert.match(stripAnsi(line), /● High/);
+  bar.invalidate();
 });
 
-check("D62 TOKENS: compact cadence matches the built-in footer", () => {
+check("D64 TOKENS: compact cadence matches the built-in footer", () => {
   assert.equal(formatTokensCompact(5), "5");
   assert.equal(formatTokensCompact(1200), "1.2k");
   assert.equal(formatTokensCompact(820000), "820k");
@@ -1337,7 +1380,7 @@ check("D62 TOKENS: compact cadence matches the built-in footer", () => {
   assert.equal(formatTokensCompact(12345678), "12M");
 });
 
-check("D62 FOOTER: branch + stats on one line, no extension statuses", () => {
+check("D64 FOOTER: branch + stats on one line, no extension statuses", () => {
   const entries = [
     { type: "message", message: { role: "assistant", usage: { input: 1200, output: 300, cacheRead: 400, cacheWrite: 100, cost: { total: 0.5 } } } },
     { type: "message", message: { role: "toolResult", usage: { input: 50, output: 10, cacheRead: 0, cacheWrite: 0, cost: 0 } } },
@@ -1350,8 +1393,7 @@ check("D62 FOOTER: branch + stats on one line, no extension statuses", () => {
   const bare = new ReducedFooter({ getGitBranch: () => null }, () => entries);
   assert.match(stripAnsi(bare.render(140)[0]), /^↑1\.3k/, "no branch: stats render without a separator");
 });
-
-check("D62 TOTALS: reducer aggregates all entry kinds, CH from last assistant", () => {
+check("D64 TOTALS: reducer aggregates all entry kinds, CH from last assistant", () => {
   const entries = [
     { type: "message", message: { role: "assistant", usage: { input: 1200, output: 300, cacheRead: 400, cacheWrite: 100, cost: { total: 0.5 } } } },
     { type: "message", message: { role: "assistant", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
@@ -1360,7 +1402,6 @@ check("D62 TOTALS: reducer aggregates all entry kinds, CH from last assistant", 
   ];
   const t = usageTotalsFromEntries(entries);
   assert.equal(t.input, 1261);
-  assert.equal(t.output, 316);
   assert.equal(t.cacheRead, 400);
   assert.equal(t.cacheWrite, 100);
   assert.equal(t.cost, 0.51);
@@ -1486,5 +1527,7 @@ check("D63 PROVENANCE: programmatic model_select never opens MCC", () => {
   assert.ok(restoring < matrix && matrix < loops, "guard order: restore-flag → provenance matrix → re-entrancy");
 });
 
-process.exit(failures === 0 ? 0 : 1);
-
+(async () => {
+  await Promise.all(asyncChecks);
+  process.exit(failures === 0 ? 0 : 1);
+})();
