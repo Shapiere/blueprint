@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { ContextUsage, ExtensionAPI, ExtensionContext, ExtensionCommandContext, ReadonlyFooterDataProvider, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import {
   fuzzyFilter,
   getKeybindings,
@@ -2403,6 +2403,473 @@ export function profileDetailLines(
   lines.push(isDefault ? theme.fg("success", "★ Default") : theme.fg("muted", "○ Not default"));
   return lines.map((l) => (l ? `  ${l}` : l)).slice(0, maxLines);
 }
+// ---------------------------------------------------------------------------
+// D62 Runtime Context Bar + reduced footer. The owner-facing "runtime surface"
+// is rebuilt here: one compact bar directly above the editor (lifecycle ·
+// model · reasoning · profile · workspace · context usage) and a one-line
+// custom footer (branch · token totals · cost). Token-only rendering (theme
+// tokens, never raw colors) and event-driven state: the lifecycle store below
+// is mutated only by event handlers; the 80 ms animation interval (same
+// braille cadence as the built-in Loader) merely repaints.
+// ---------------------------------------------------------------------------
+
+/** One styled segment of the bar (text + the theme token that renders it). */
+export interface LifecycleSpan {
+  text: string;
+  token: "muted" | "accent" | "success" | "error";
+}
+
+/**
+ * Lifecycle store for the Runtime Context Bar. Module-level singleton —
+ * mutated only by event handlers, read by the bar's render().
+ */
+export interface LifecycleStore {
+  lifecycle: "ready" | "running" | "complete" | "error";
+  startTs: number | null;
+  endTs: number | null;
+  activity: string | null;
+  errorFlag: boolean;
+  frameIndex: number;
+}
+
+const lifecycleStore: LifecycleStore = {
+  lifecycle: "ready",
+  startTs: null,
+  endTs: null,
+  activity: null,
+  errorFlag: false,
+  frameIndex: 0,
+};
+
+/** Resets the store to the ready state (session_start / session_shutdown). */
+export function resetLifecycleStore(): void {
+  lifecycleStore.lifecycle = "ready";
+  lifecycleStore.startTs = null;
+  lifecycleStore.endTs = null;
+  lifecycleStore.activity = null;
+  lifecycleStore.errorFlag = false;
+  lifecycleStore.frameIndex = 0;
+}
+
+/** Braille spinner frames — identical to the pi-tui Loader defaults. */
+const BAR_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+/** Animation cadence for the running lifecycle (same as the built-in Loader). */
+const BAR_INTERVAL_MS = 80;
+/** Context-usage tone thresholds — adopted from the built-in footer. */
+const USAGE_WARNING_PCT = 70;
+const USAGE_ERROR_PCT = 90;
+
+/** Formats a duration as MM:SS (minutes roll over: 75:00 is 1 h 15 m). */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/**
+ * Human-readable phrase for a tool execution start. Reuses the D37 guard's
+ * arg-shape knowledge (path on file tools, command on bash, pattern on
+ * grep/find); any unexpected shape falls back without crashing.
+ */
+export function activityPhrase(toolName: string, args: unknown): string {
+  const argStr = (key: "path" | "command" | "pattern"): string | undefined => {
+    if (typeof args !== "object" || args === null || !(key in args)) return undefined;
+    // Host tool args arrive as an open record from the host; only key
+    // presence plus typeof are trusted here, so the record view is safe.
+    const rec = args as Record<string, unknown>;
+    const v = rec[key];
+    return typeof v === "string" ? v : undefined;
+  };
+  const base = (v: string | undefined): string | undefined => {
+    if (!v) return undefined;
+    const b = path.basename(v.replace(/[\\/]+$/, ""));
+    return b.length > 0 ? b : undefined;
+  };
+  switch (toolName) {
+    case "edit":
+      return `Editing ${base(argStr("path")) ?? "file"}`;
+    case "write":
+      return `Writing ${base(argStr("path")) ?? "file"}`;
+    case "read":
+      return `Reading ${base(argStr("path")) ?? "file"}`;
+    case "bash": {
+      const command = (argStr("command") ?? "").trim();
+      if (command.length > 0) {
+        return `Running ${command.split(/\s+/)[0]}`;
+      }
+      return "Running bash";
+    }
+    case "grep":
+    case "find":
+      const pattern = (argStr("pattern") ?? "").trim();
+      if (pattern.length > 0) {
+        return `Searching ${pattern}`;
+      }
+      return "Searching workspace";
+    default:
+      return `Running ${toolName}`;
+  }
+}
+
+/** Replaces the user home prefix with ~ (rendering tone is the caller's job). */
+export function shortenPath(cwd: string, home: string | undefined): string {
+  if (!home) return cwd;
+  const norm = (p: string): string => p.replace(/[\\/]+$/, "").replace(/\\/g, "/");
+  const c = norm(cwd);
+  const h = norm(home);
+  if (c === h) return "~";
+  if (h.length > 0 && c.toLowerCase().startsWith(`${h.toLowerCase()}/`)) {
+    return `~${c.slice(h.length)}`;
+  }
+  return cwd;
+}
+
+/** Usage rendering: "<used> / <limit> · <P>%" (footer-style token cadence:
+ * 131072 → "131k", 1048576 → "1.0M"; identical to outputLimitText except at
+ * whole-M boundaries, where the plan's D62 example fixes "1.0M"). */
+export function formatUsageBar(
+  usage: ContextUsage,
+): { text: string; tone: "normal" | "warning" | "error" } {
+  const limit = formatTokensCompact(usage.contextWindow);
+  if (usage.tokens === null || usage.percent === null) {
+    return { text: `? / ${limit}`, tone: "normal" };
+  }
+  const tone = usage.percent > USAGE_ERROR_PCT ? "error" : usage.percent > USAGE_WARNING_PCT ? "warning" : "normal";
+  return { text: `${formatTokensCompact(usage.tokens)} / ${limit} · ${Math.round(usage.percent)}%`, tone };
+}
+
+/** Narrow-width compact usage: "<used>/<limit>" (separators dropped first). */
+export function formatUsageCompact(usage: ContextUsage): string {
+  const limit = formatTokensCompact(usage.contextWindow);
+  if (usage.tokens === null) return `?/${limit}`;
+  return `${formatTokensCompact(usage.tokens)}/${limit}`;
+}
+
+/** Lifecycle word + elapsed suffix for the bar's second segment. */
+export function lifecycleText(store: LifecycleStore): LifecycleSpan {
+  switch (store.lifecycle) {
+    case "running": {
+      const elapsed = store.startTs !== null ? Date.now() - store.startTs : 0;
+      return {
+        text: `${BAR_FRAMES[store.frameIndex % BAR_FRAMES.length]} Running · ${formatElapsed(elapsed)}`,
+        token: "accent",
+      };
+    }
+    case "complete": {
+      const elapsed = store.startTs !== null && store.endTs !== null ? store.endTs - store.startTs : 0;
+      return { text: `✓ Complete · ${formatElapsed(elapsed)}`, token: "success" };
+    }
+    case "error":
+      return { text: "✕ Error", token: "error" };
+    default:
+      return { text: "○ Ready", token: "muted" };
+  }
+}
+
+/** Pure lifecycle transitions (applied by the pi event handlers). */
+export function applyAgentStart(store: LifecycleStore): void {
+  store.lifecycle = "running";
+  store.startTs = Date.now();
+  store.endTs = null;
+  store.activity = "Analyzing";
+  store.errorFlag = false;
+}
+
+/** Error state from the last assistant message's stopReason. */
+export function applyAgentEnd(store: LifecycleStore, messages: ReadonlyArray<unknown>): void {
+  let stop: unknown;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m: unknown = messages[i];
+    if (typeof m === "object" && m !== null && "role" in m && m.role === "assistant") {
+      stop = "stopReason" in m ? m.stopReason : undefined;
+      break;
+    }
+  }
+  store.errorFlag = stop === "error" || stop === "aborted";
+}
+
+/** Fully settled: complete, or error when the run ended abnormally. */
+export function applyAgentSettled(store: LifecycleStore): void {
+  if (store.lifecycle === "running") {
+    store.lifecycle = store.errorFlag ? "error" : "complete";
+    store.endTs = Date.now();
+  }
+}
+
+/** One activity at a time; only meaningful while running. */
+export function applyToolStart(store: LifecycleStore, toolName: string, args: unknown): void {
+  if (store.lifecycle === "running") store.activity = activityPhrase(toolName, args);
+}
+
+/** Tool finished — revert to the neutral in-progress phrase. */
+export function applyToolEnd(store: LifecycleStore): void {
+  if (store.lifecycle === "running") store.activity = "Analyzing";
+}
+
+/** Everything line 1 + line 2 need from the live session, pre-styled later. */
+export interface BarContext {
+  modelLabel: string;
+  levelLabel: string | undefined;
+  levelToken: ThemeColor;
+  workspace: string;
+  usage: ContextUsage | undefined;
+  secondLine: string | null;
+}
+
+const EMPTY_BAR_CONTEXT: BarContext = {
+  modelLabel: "no-model",
+  levelLabel: undefined,
+  levelToken: "muted",
+  workspace: "",
+  usage: undefined,
+  secondLine: null,
+};
+
+/**
+ * Line 1 (+ optional line 2) for the Runtime Context Bar. Narrow-width drop
+ * order (before any final clamp): workspace segment → line 2 → usage
+ * compacted to "<used>/<limit>" → truncateToWidth. The first three segments
+ * (π, lifecycle, model·level) are never dropped by design — only the final
+ * clamp may shorten them.
+ */
+export function contextBarLines(parts: BarContext, lifecycle: LifecycleSpan, width: number, theme: Theme): string[] {
+  const sep = "  ";
+  const head = [
+    theme.fg("accent", theme.bold("π")),
+    theme.fg(lifecycle.token, lifecycle.text),
+    theme.fg("text", theme.bold(parts.modelLabel)),
+  ];
+  if (parts.levelLabel) head.push(theme.fg(parts.levelToken, `● ${parts.levelLabel}`));
+  const usage = parts.usage ? formatUsageBar(parts.usage) : null;
+  const usageFull = usage
+    ? theme.fg(usage.tone === "error" ? "error" : usage.tone === "warning" ? "warning" : "muted", usage.text)
+    : null;
+  const usageCompact = parts.usage ? theme.fg("muted", formatUsageCompact(parts.usage)) : null;
+  const join = (segs: string[]): string => segs.join(sep);
+  const segsFull = [...head];
+  if (parts.workspace) segsFull.push(theme.fg("dim", parts.workspace));
+  if (usageFull) segsFull.push(usageFull);
+  const segsNoWs = [...head];
+  if (usageFull) segsNoWs.push(usageFull);
+  const segsCompact = [...head];
+  if (usageCompact) segsCompact.push(usageCompact);
+  const full = join(segsFull);
+  const noWs = join(segsNoWs);
+  const compact = join(segsCompact);
+  const fits = (s: string): boolean => visibleWidth(s) <= width;
+  let line1: string;
+  let showSecond: boolean;
+  if (fits(full)) {
+    line1 = full;
+    showSecond = true;
+  } else if (fits(noWs)) {
+    line1 = noWs;
+    showSecond = false;
+  } else if (fits(compact)) {
+    line1 = compact;
+    showSecond = false;
+  } else {
+    line1 = truncateToWidth(noWs, width, "");
+    showSecond = false;
+  }
+  const lines = [line1];
+  if (showSecond && parts.secondLine) {
+    const l2 = theme.fg("muted", parts.secondLine);
+    lines.push(fits(l2) ? l2 : truncateToWidth(l2, width, ""));
+  }
+  return lines;
+}
+
+/**
+ * The Runtime Context Bar: a 1–2 line component hosted above the editor.
+ * Recomputes everything from live state on every render (the host repaints on
+ * every session event), so no polling is needed. While the lifecycle is
+ * running the bar owns a braille animation interval that only calls
+ * requestRender — identical mechanism to the built-in Loader.
+ */
+export class RuntimeContextBar implements Component {
+  private interval: NodeJS.Timeout | null = null;
+  constructor(
+    private readonly tui: TUI,
+    private readonly theme: Theme,
+    private readonly getContext: () => BarContext,
+  ) {}
+  startAnimation(): void {
+    if (this.interval) return;
+    this.interval = setInterval(() => {
+      lifecycleStore.frameIndex = (lifecycleStore.frameIndex + 1) % BAR_FRAMES.length;
+      this.tui.requestRender();
+    }, BAR_INTERVAL_MS);
+  }
+  stopAnimation(): void {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+  }
+  repaint(): void {
+    this.tui.requestRender();
+  }
+  dispose(): void {
+    this.stopAnimation();
+  }
+  render(width: number): string[] {
+    return contextBarLines(this.getContext(), lifecycleText(lifecycleStore), width, this.theme);
+  }
+  invalidate(): void {}
+}
+
+/** Token counts for compact footer display (mirrors the built-in formatTokens). */
+export function formatTokensCompact(count: number): string {
+  if (count < 1000) return count.toString();
+  if (count < 10_000) return `${(count / 1000).toFixed(1)}k`;
+  if (count < 1_000_000) return `${Math.round(count / 1000)}k`;
+  if (count < 10_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  return `${Math.round(count / 1_000_000)}M`;
+}
+
+/** Aggregated session usage — same reducer shape as the built-in footer. */
+export interface UsageTotalsResult {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number;
+  cacheHitRate: number | undefined;
+}
+/** Minimal usage shape carried by message/compaction/branch entries. */
+export interface UsageLike {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  cost?: { total?: number } | number;
+}
+
+/** Minimal boundary shape for usage-bearing session entries (test-facing). */
+export interface UsageEntryLike {
+  type?: string;
+  message?: { role?: string; usage?: UsageLike };
+  usage?: UsageLike;
+}
+
+/** Aggregates assistant/toolResult/compaction usage from session entries. */
+export function usageTotalsFromEntries(entries: ReadonlyArray<UsageEntryLike>): UsageTotalsResult {
+  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+  let cacheHitRate: number | undefined;
+  for (const e of entries) {
+    const usage =
+      e.type === "message" && e.message?.role === "assistant"
+        ? e.message.usage
+        : e.type === "message" && e.message?.role === "toolResult"
+          ? e.message.usage
+          : (e.type === "branch_summary" || e.type === "compaction") && e.usage
+            ? e.usage
+            : undefined;
+    if (!usage) continue;
+    totals.input += usage.input ?? 0;
+    totals.output += usage.output ?? 0;
+    totals.cacheRead += usage.cacheRead ?? 0;
+    totals.cacheWrite += usage.cacheWrite ?? 0;
+    totals.cost += typeof usage.cost === "number" ? usage.cost : usage.cost?.total ?? 0;
+    if (e.message?.role === "assistant") {
+      const prompt = (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+      cacheHitRate = prompt > 0 ? ((usage.cacheRead ?? 0) / prompt) * 100 : undefined;
+    }
+  }
+  return { ...totals, cacheHitRate };
+}
+
+/**
+ * Custom footer: one line — `<branch> · ↑in ↓out R<r> W<w> CH<h>% $<cost>`.
+ * Extension statuses are intentionally NOT rendered (D62 decision: the
+ * primary surface carries runtime identity, not infrastructure diagnostics).
+ */
+export class ReducedFooter implements Component {
+  constructor(
+    private readonly footerData: { getGitBranch(): string | null },
+    private readonly getEntries: () => ReadonlyArray<UsageEntryLike>,
+  ) {}
+  render(width: number): string[] {
+    const branch = this.footerData.getGitBranch();
+    const t = usageTotalsFromEntries(this.getEntries());
+    const stats: string[] = [];
+    if (t.input) stats.push(`↑${formatTokensCompact(t.input)}`);
+    if (t.output) stats.push(`↓${formatTokensCompact(t.output)}`);
+    if (t.cacheRead) stats.push(`R${formatTokensCompact(t.cacheRead)}`);
+    if (t.cacheWrite) stats.push(`W${formatTokensCompact(t.cacheWrite)}`);
+    if ((t.cacheRead > 0 || t.cacheWrite > 0) && t.cacheHitRate !== undefined) {
+      stats.push(`CH${t.cacheHitRate.toFixed(1)}%`);
+    }
+    if (t.cost) stats.push(`$${t.cost.toFixed(3)}`);
+    const body = stats.join(" ");
+    const line = branch && body ? `${branch} · ${body}` : branch || body;
+    return [visibleWidth(line) <= width ? line : truncateToWidth(line, width, "")];
+  }
+  invalidate(): void {}
+  dispose(): void {}
+}
+
+/** Module-level singletons for the live bar + its context provider. The
+ * widget factory may be re-invoked by the host (theme switches, hide/restore
+ * around the Model Control Center); replacing the component must not leak the
+ * previous animation interval, and event handlers reach the TUI only through
+ * these refs (no ctx captured at registration time). */
+let activeRuntimeBar: RuntimeContextBar | null = null;
+let runtimeBarContext: (() => BarContext) | null = null;
+
+/** Live session data for the bar. Every ctx accessor is try/caught: async
+ * continuations can outlive the runner in headless modes, where ctx accessors
+ * throw assertActive — the bar must never crash a render. */
+function makeBarContext(ctx: ExtensionContext): () => BarContext {
+  const safe = <T,>(fn: () => T, fallback: T): T => {
+    try {
+      return fn();
+    } catch {
+      return fallback;
+    }
+  };
+  return (): BarContext => {
+    const levelLabel = safe(() => levelLabelForRuntime(resolveEffective(loadReasoningState()).level), undefined);
+    const levelToken: ThemeColor = levelLabel && LEVEL_COLOR[levelLabel] ? LEVEL_COLOR[levelLabel] : "muted";
+    const modelLabel = safe(() => {
+      const m = ctx.model;
+      if (!m || (m.provider === "unknown" && m.id === "unknown")) return "no-model";
+      const names = loadModelsVisibility().names;
+      return names[`${m.provider}/${m.id}`] ?? m.id;
+    }, "no-model");
+    const usage = safe(() => {
+      const u = ctx.getContextUsage();
+      if (u) return u;
+      const cw = ctx.model?.contextWindow;
+      return typeof cw === "number" && cw > 0 ? { tokens: null, contextWindow: cw, percent: null } : undefined;
+    }, undefined);
+    return {
+      modelLabel,
+      levelLabel,
+      levelToken,
+      workspace: safe(() => shortenPath(ctx.cwd, os.homedir()), ""),
+      usage,
+      secondLine: safe(() => {
+        if (lifecycleStore.lifecycle === "running") {
+          return lifecycleStore.activity ? `  ${lifecycleStore.activity}` : null;
+        }
+        const r = resolveEffective(loadReasoningState());
+        return `${r.source === "execution" ? "Execution" : "Default"} · ${r.profile}`;
+      }, null),
+    };
+  };
+}
+
+/** Widget factory (stable identity so hide/restore can re-register it). */
+function runtimeContextWidgetFactory(tui: TUI, theme: Theme): RuntimeContextBar {
+  activeRuntimeBar?.dispose();
+  const bar = new RuntimeContextBar(tui, theme, () => runtimeBarContext?.() ?? EMPTY_BAR_CONTEXT);
+  activeRuntimeBar = bar;
+  return bar;
+}
+
+const RUNTIME_CONTEXT_WIDGET_KEY = "runtime-context";
+
 /**
  * Grouped selection list for the /mcc overview. Headers and disabled rows are
  * rendered but skipped by navigation; arrow keys wrap across selectable items
@@ -2682,15 +3149,35 @@ export default function (pi: ExtensionAPI) {
     // inactive (headless runs), where every ctx accessor throws assertActive.
     try {
       const topo = detectProjectTopology(ctx.cwd);
-      try {
-        if (ctx.hasUI) ctx.ui.setStatus("topology", `${topo.name} [${topo.type}${topo.framework ? `/${topo.framework}` : ""}]`);
-      } catch {}
+      resetLifecycleStore();
+      // D62 Runtime Context Bar + reduced footer (interactive TUI only; the
+      // bar replaces the built-in pwd/context/status surface, diagnostics
+      // stay in /doctor). Factory closures re-read the live theme each call.
+      if (ctx.hasUI && ctx.mode === "tui") {
+        try {
+          runtimeBarContext = makeBarContext(ctx);
+          ctx.ui.setWidget(
+            RUNTIME_CONTEXT_WIDGET_KEY,
+            (tui, theme) => runtimeContextWidgetFactory(tui, theme),
+            { placement: "aboveEditor" },
+          );
+          ctx.ui.setFooter((tui, _theme, footerData) => {
+            void tui;
+            return new ReducedFooter(footerData, () => ctx.sessionManager.getEntries());
+          });
+        } catch {}
+      }
+
+      // D62 clean cutover: the topology fragment lived only in the extension
+      // status line; the bar now carries workspace identity (shortenPath).
+      void topo;
 
       check9routerHealth()
         .then(async (health) => {
           try {
             if (health.ok) {
-              if (ctx.hasUI) ctx.ui.setStatus("9router", "online");
+              // D62: "9router online" status fragment removed — router health
+              // stays visible via /model offline wording, /doctor, notify().
               // D57 manual-start policy: never spawn the router. Refresh the
               // catalog exactly once when it is already healthy at boot; a
               // failing refresh simply leaves the provider unavailable.
@@ -2720,7 +3207,7 @@ export default function (pi: ExtensionAPI) {
               // (e.g. /model open) picks the catalog up once the user has
               // started the router manually.
               if (ctx.hasUI) {
-                ctx.ui.setStatus("9router", "offline");
+                // D62: offline status fragment removed (same rationale).
                 ctx.ui.notify("9router is offline (:20128). Start it manually, then open /model to load its catalog.", "warning");
               }
             }
@@ -2729,6 +3216,48 @@ export default function (pi: ExtensionAPI) {
         .catch(() => {});
     } catch {}
   });
+  // ---- D62 runtime surface events (event-driven; zero polling) ----
+  pi.on("agent_start", (_event, ctx) => {
+    applyAgentStart(lifecycleStore);
+    try {
+      if (ctx.hasUI && ctx.mode === "tui") {
+        activeRuntimeBar?.startAnimation();
+        activeRuntimeBar?.repaint();
+      }
+    } catch {}
+  });
+  pi.on("agent_end", (event) => {
+    applyAgentEnd(lifecycleStore, event.messages);
+  });
+  pi.on("agent_settled", (_event, ctx) => {
+    applyAgentSettled(lifecycleStore);
+    try {
+      if (ctx.hasUI && ctx.mode === "tui") {
+        activeRuntimeBar?.stopAnimation();
+        activeRuntimeBar?.repaint();
+      }
+    } catch {}
+  });
+  pi.on("tool_execution_start", (event, ctx) => {
+    applyToolStart(lifecycleStore, event.toolName, event.args);
+    try {
+      if (ctx.hasUI && ctx.mode === "tui") activeRuntimeBar?.repaint();
+    } catch {}
+  });
+  pi.on("tool_execution_end", (_event, ctx) => {
+    applyToolEnd(lifecycleStore);
+    try {
+      if (ctx.hasUI && ctx.mode === "tui") activeRuntimeBar?.repaint();
+    } catch {}
+  });
+  pi.on("session_shutdown", (_event, ctx) => {
+    resetLifecycleStore();
+    try {
+      if (ctx.hasUI && ctx.mode === "tui") activeRuntimeBar?.dispose();
+    } catch {}
+    activeRuntimeBar = null;
+  });
+
   pi.on("model_select", async (event, ctx) => {
     if (!ctx.hasUI) return;
     if (restoringBootDefault) {
@@ -2786,15 +3315,9 @@ export default function (pi: ExtensionAPI) {
     const basePrompt = scopedPrompt ?? event.systemPrompt;
     const state = loadReasoningState();
     const resolved = resolveEffective(state);
-    try {
-      if (ctx.hasUI)
-        ctx.ui.setStatus(
-          "reasoning",
-          resolved.source === "execution"
-            ? `Execution: ${resolved.profile} · ${resolved.level}`
-            : `${resolved.profile} · ${resolved.level}`,
-        );
-    } catch {}
+    // D62: the "reasoning" status fragment moved into the Runtime Context
+    // Bar (level dot + Default/Execution profile line); the system prompt
+    // reasoning line below is unchanged.
     const reasoningLine =
       resolved.source === "execution"
         ? `Execution Profile: ${resolved.profile} @ level ${resolved.level} (workflow-scoped; your stored configuration is unchanged). Honor this depth now; use ":${resolved.level}" thinking suffixes on agent() calls.`
@@ -3087,15 +3610,27 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
   } catch {
     // D59: best-effort theme identity; graceful fallback to the active theme.
   }
+  // D62: while the Model Control Center owns the editor area, the Runtime
+  // Context Bar hides; the finally below restores it with the same factory
+  // on every close path (Esc, model pick, profile editor, error).
+  if (ctx.mode === "tui") {
+    try {
+      ctx.ui.setWidget(RUNTIME_CONTEXT_WIDGET_KEY, undefined);
+    } catch {}
+  }
   modelSurfaceLoops++;
   try {
     return await runModelControlSurfaceLoop(pi, ctx);
   } finally {
     modelSurfaceLoops--;
+    if (ctx.mode === "tui") {
+      try {
+        ctx.ui.setWidget(RUNTIME_CONTEXT_WIDGET_KEY, runtimeContextWidgetFactory, { placement: "aboveEditor" });
+      } catch {}
+    }
     try {
       if (previousTheme) ctx.ui.setTheme?.(previousTheme);
     } catch {
-      // Restore is best-effort too — never mask a surface error with a theme error.
     }
   }
 }

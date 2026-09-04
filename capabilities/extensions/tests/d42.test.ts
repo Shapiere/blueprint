@@ -47,6 +47,27 @@ import {
   type ReasoningStateV3,
 } from "../runtime-orchestrator.ts";
 
+import {
+  ReducedFooter,
+  RuntimeContextBar,
+  activityPhrase,
+  applyAgentEnd,
+  applyAgentSettled,
+  applyAgentStart,
+  applyToolEnd,
+  applyToolStart,
+  contextBarLines,
+  formatElapsed,
+  formatTokensCompact,
+  formatUsageBar,
+  formatUsageCompact,
+  lifecycleText,
+  shortenPath,
+  usageTotalsFromEntries,
+  type BarContext,
+  type LifecycleStore,
+} from "../runtime-orchestrator.ts";
+
 const STATE_FILE = path.join(os.homedir(), ".pi", "agent", "harness-reasoning.json");
 const MODELS_FILE = path.join(os.homedir(), ".pi", "agent", "harness-models.json");
 
@@ -1128,6 +1149,226 @@ check("D61 DIVIDER CONTINUITY: every rail column present in every row, no gaps o
       assert.deepEqual(got, expected, `rail columns mismatch at width ${width}, row ${i}`);
     }
   }
+});
+
+// ------------------------------------------------------------- D62 runtime bar
+
+const D62_CTX: BarContext = {
+  modelLabel: "deepseek-v4-flash",
+  levelLabel: "High",
+  levelToken: "thinkingHigh",
+  workspace: "~/pisetup/capabilities",
+  usage: { tokens: 820000, contextWindow: 1000000, percent: 80 },
+  secondLine: "Default · Plan",
+};
+
+function d62Store(overrides: Partial<LifecycleStore> = {}): LifecycleStore {
+  return { lifecycle: "ready", startTs: null, endTs: null, activity: null, errorFlag: false, frameIndex: 0, ...overrides };
+}
+
+check("D62 ELAPSED: formatElapsed renders MM:SS with minute rollover", () => {
+  assert.equal(formatElapsed(0), "00:00");
+  assert.equal(formatElapsed(65100), "01:05");
+  assert.equal(formatElapsed(3725000), "62:05");
+  assert.equal(formatElapsed(-5), "00:00");
+});
+
+check("D62 ACTIVITY: tool starts map to phrases, unknown shapes fall back", () => {
+  assert.equal(activityPhrase("edit", { path: "src/foo.ts" }), "Editing foo.ts");
+  assert.equal(activityPhrase("write", { path: "a/b.md" }), "Writing b.md");
+  assert.equal(activityPhrase("read", { path: "C:\\x\\y.json" }), "Reading y.json");
+  assert.equal(activityPhrase("bash", { command: "npm install foo" }), "Running npm");
+  assert.equal(activityPhrase("grep", { pattern: "TODO" }), "Searching TODO");
+  assert.equal(activityPhrase("find", {}), "Searching workspace");
+  assert.equal(activityPhrase("browser", { url: "x" }), "Running browser");
+  assert.equal(activityPhrase("edit", {}), "Editing file");
+  assert.equal(activityPhrase("bash", {}), "Running bash");
+  assert.equal(activityPhrase("edit", undefined), "Editing file");
+});
+
+check("D62 PATH: home prefix shortens, sibling directories stay untouched", () => {
+  const home = "C:/Users/hikari";
+  assert.equal(shortenPath("C:/Users/hikari/Desktop", home), "~/Desktop");
+  assert.equal(shortenPath("C:\\Users\\hikari", home), "~");
+  assert.equal(shortenPath("G:/pisetup", home), "G:/pisetup");
+  assert.equal(shortenPath("C:/Users/hikari2/x", home), "C:/Users/hikari2/x");
+  assert.equal(shortenPath("C:/x", undefined), "C:/x");
+});
+
+check("D62 USAGE: tones at the 70/90 thresholds, ? when tokens unknown", () => {
+  assert.deepEqual(formatUsageBar({ tokens: 820000, contextWindow: 1000000, percent: 80 }), {
+    text: "820k / 1.0M · 80%",
+    tone: "warning",
+  });
+  assert.equal(formatUsageBar({ tokens: 960000, contextWindow: 1000000, percent: 96 }).tone, "error");
+  assert.deepEqual(formatUsageBar({ tokens: 500000, contextWindow: 1000000, percent: 50 }), {
+    text: "500k / 1.0M · 50%",
+    tone: "normal",
+  });
+  assert.deepEqual(formatUsageBar({ tokens: null, contextWindow: 1000000, percent: null }), {
+    text: "? / 1.0M",
+    tone: "normal",
+  });
+  assert.equal(formatUsageBar({ tokens: 70, contextWindow: 100, percent: 70 }).tone, "normal");
+  assert.equal(formatUsageBar({ tokens: 71, contextWindow: 100, percent: 71 }).tone, "warning");
+  assert.equal(formatUsageBar({ tokens: 90, contextWindow: 100, percent: 90 }).tone, "warning");
+  assert.equal(formatUsageBar({ tokens: 91, contextWindow: 100, percent: 91 }).tone, "error");
+  assert.equal(formatUsageBar({ tokens: 1048576, contextWindow: 1048576, percent: 100 }).text, "1.0M / 1.0M · 100%");
+  assert.equal(formatUsageCompact({ tokens: 820000, contextWindow: 1000000, percent: 82 }), "820k/1.0M");
+  assert.equal(formatUsageCompact({ tokens: null, contextWindow: 1000000, percent: null }), "?/1.0M");
+});
+
+check("D62 LIFECYCLE: transitions drive a store through the full run", () => {
+  const s = d62Store();
+  assert.equal(lifecycleText(s).text, "○ Ready");
+  applyAgentStart(s);
+  assert.equal(s.lifecycle, "running");
+  assert.equal(s.activity, "Analyzing");
+  assert.ok(s.startTs !== null);
+  assert.equal(s.errorFlag, false);
+  applyToolStart(s, "edit", { path: "src/a.ts" });
+  assert.equal(s.activity, "Editing a.ts");
+  applyToolEnd(s);
+  assert.equal(s.activity, "Analyzing");
+  applyAgentEnd(s, [{ role: "user" }, { role: "assistant", stopReason: "aborted" }]);
+  assert.equal(s.errorFlag, true);
+  applyAgentSettled(s);
+  assert.equal(s.lifecycle, "error");
+  applyAgentStart(s); // retry clears the flag
+  assert.equal(s.errorFlag, false);
+  applyAgentEnd(s, [{ role: "assistant", stopReason: "stop" }]);
+  applyAgentSettled(s);
+  assert.equal(s.lifecycle, "complete");
+  const idle = d62Store();
+  applyAgentSettled(idle); // settled with no run: no-op
+  assert.equal(idle.lifecycle, "ready");
+});
+
+check("D62 BAR READY: line 1 carries identity + usage, line 2 the profile", () => {
+  const lines = contextBarLines(D62_CTX, lifecycleText(d62Store()), 140, themeStub);
+  const flat = stripAnsi(lines.join("\n"));
+  assert.match(flat, /π  ?○ Ready/);
+  assert.match(flat, /deepseek-v4-flash/);
+  assert.match(flat, /● High/);
+  assert.match(flat, /~\/pisetup\/capabilities/);
+  assert.match(flat, /820k \/ 1\.0M · 80%/);
+  assert.match(flat, /Default · Plan/);
+  assert.equal(lines.length, 2);
+});
+
+check("D62 BAR RUNNING: spinner frame + elapsed + activity second line", () => {
+  const s = d62Store({ lifecycle: "running", startTs: Date.now() - 65100, frameIndex: 0 });
+  const span = lifecycleText(s);
+  assert.match(span.text, /⠋ Running · 01:05/);
+  assert.equal(span.token, "accent");
+  const lines = contextBarLines({ ...D62_CTX, secondLine: "  Editing foo.ts" }, span, 140, themeStub);
+  const flat = stripAnsi(lines.join("\n"));
+  assert.match(flat, /Running · 01:05/);
+  assert.match(flat, /Editing foo\.ts/);
+});
+
+check("D62 BAR FINAL: complete renders ✓ with elapsed, error renders ✕", () => {
+  const done = lifecycleText(d62Store({ lifecycle: "complete", startTs: 1000, endTs: 61000 }));
+  assert.equal(done.text, "✓ Complete · 01:00");
+  assert.equal(done.token, "success");
+  const err = lifecycleText(d62Store({ lifecycle: "error" }));
+  assert.equal(err.text, "✕ Error");
+  assert.equal(err.token, "error");
+});
+
+check("D62 BAR NULL USAGE: percent-null renders the ? segment", () => {
+  const lines = contextBarLines(
+    { ...D62_CTX, usage: { tokens: null, contextWindow: 1000000, percent: null } },
+    lifecycleText(d62Store()),
+    140,
+    themeStub,
+  );
+  assert.match(stripAnsi(lines.join("\n")), /\? \/ 1\.0M/);
+});
+
+check("D62 DROP ORDER: workspace → line 2 → compact usage → final clamp", () => {
+  const ready = lifecycleText(d62Store());
+  const full = contextBarLines(D62_CTX, ready, 140, themeStub);
+  assert.ok(visibleWidth(stripAnsi(full[0])) > 76, "fixture must be wider than 76 to exercise drops");
+
+  const at76 = contextBarLines(D62_CTX, ready, 76, themeStub);
+  assert.equal(at76.length, 1, "line 2 drops when line 1 needs a drop");
+  assert.doesNotMatch(stripAnsi(at76[0]), /pisetup/);
+  assert.match(stripAnsi(at76[0]), /820k \/ 1\.0M · 80%/, "usage still expanded at 76");
+
+  const at50 = contextBarLines(D62_CTX, ready, 50, themeStub);
+  assert.equal(at50.length, 1);
+  assert.match(stripAnsi(at50[0]), /820k\/1\.0M/, "usage compacted at 50");
+
+  const at40 = contextBarLines(D62_CTX, ready, 40, themeStub);
+  assert.equal(at40.length, 1);
+  assert.ok(visibleWidth(at40[0]) <= 40, "final clamp guarantees width");
+});
+
+check("D62 WIDTH SAFETY: bar renders within every width 8–400", () => {
+  const running = lifecycleText(d62Store({ lifecycle: "running", startTs: Date.now() - 65100, frameIndex: 3 }));
+  for (let w = 8; w <= 400; w++) {
+    const lines = contextBarLines(D62_CTX, running, w, themeStub);
+    assert.ok(lines.length <= 2, `too many lines at ${w}`);
+    for (const l of lines) {
+      assert.ok(visibleWidth(l) <= w, `line width ${visibleWidth(l)} exceeds ${w}`);
+    }
+    assert.ok(stripAnsi(lines[0]).includes("π"), `π segment lost at width ${w}`);
+  }
+});
+
+check("D62 BAR CLASS: component render mirrors the pure lines", () => {
+  const bar = new RuntimeContextBar({ requestRender() {} } as never, themeStub, () => D62_CTX);
+  const lines = bar.render(140);
+  assert.ok(lines.length >= 1 && lines.length <= 2);
+  assert.match(stripAnsi(lines.join("\n")), /○ Ready/);
+  assert.match(stripAnsi(lines.join("\n")), /deepseek-v4-flash/);
+  bar.startAnimation(); // interval guarded against double-start
+  bar.startAnimation();
+  bar.dispose(); // clears the interval — no leak
+});
+
+check("D62 TOKENS: compact cadence matches the built-in footer", () => {
+  assert.equal(formatTokensCompact(5), "5");
+  assert.equal(formatTokensCompact(1200), "1.2k");
+  assert.equal(formatTokensCompact(820000), "820k");
+  assert.equal(formatTokensCompact(1000000), "1.0M");
+  assert.equal(formatTokensCompact(1048576), "1.0M");
+  assert.equal(formatTokensCompact(12345678), "12M");
+});
+
+check("D62 FOOTER: branch + stats on one line, no extension statuses", () => {
+  const entries = [
+    { type: "message", message: { role: "assistant", usage: { input: 1200, output: 300, cacheRead: 400, cacheWrite: 100, cost: { total: 0.5 } } } },
+    { type: "message", message: { role: "toolResult", usage: { input: 50, output: 10, cacheRead: 0, cacheWrite: 0, cost: 0 } } },
+    { type: "compaction", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.01 } },
+  ];
+  const footer = new ReducedFooter({ getGitBranch: () => "main" }, () => entries);
+  const line = stripAnsi(footer.render(140)[0]);
+  assert.match(line, /^main · ↑1\.3k ↓315 R400 W100 CH23\.5% \$0\.510$/);
+  assert.doesNotMatch(line, /MCP|LSP|online|topology|reasoning/);
+  const bare = new ReducedFooter({ getGitBranch: () => null }, () => entries);
+  assert.match(stripAnsi(bare.render(140)[0]), /^↑1\.3k/, "no branch: stats render without a separator");
+});
+
+check("D62 TOTALS: reducer aggregates all entry kinds, CH from last assistant", () => {
+  const entries = [
+    { type: "message", message: { role: "assistant", usage: { input: 1200, output: 300, cacheRead: 400, cacheWrite: 100, cost: { total: 0.5 } } } },
+    { type: "message", message: { role: "assistant", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
+    { type: "message", message: { role: "toolResult", usage: { input: 50, output: 10, cacheRead: 0, cacheWrite: 0, cost: 0 } } },
+    { type: "branch_summary", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.01 } },
+  ];
+  const t = usageTotalsFromEntries(entries);
+  assert.equal(t.input, 1261);
+  assert.equal(t.output, 316);
+  assert.equal(t.cacheRead, 400);
+  assert.equal(t.cacheWrite, 100);
+  assert.equal(t.cost, 0.51);
+  // CH comes from the LAST assistant message (1+0+0 prompt): 0%.
+  assert.equal(t.cacheHitRate, 0);
+  const empty = usageTotalsFromEntries([]);
+  assert.deepEqual([empty.input, empty.output, empty.cacheRead, empty.cacheWrite, empty.cost], [0, 0, 0, 0, 0]);
+  assert.equal(empty.cacheHitRate, undefined);
 });
 
 process.exit(failures === 0 ? 0 : 1);
