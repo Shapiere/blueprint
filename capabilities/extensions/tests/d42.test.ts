@@ -1023,4 +1023,112 @@ check("D60 LEVEL COLORS: Medium and Ultra resolve to DISTINCT theme tokens", () 
   assert.notEqual(theme.colors.thinkingMedium, theme.colors.thinkingXhigh);
 });
 
+// --------------------------------------------------- D61 divider integration
+check("D61 DIVIDER COLOR: browser rails styled with the purple-family border token", () => {
+  // Render with a theme stub that RECORDS the token used for each span, so
+  // the test asserts the token name (not raw hex) on the divider glyph.
+  // The OUTER MCC frame rails use `dim` (D58 contract) — only browser rails
+  // must move to the purple-family `border` token, so the recorder scopes to
+  // browserRow by asserting the set of tokens is exactly {border, dim} and
+  // every BROWSER rail span (the ones assembled with cell content around
+  // them) is `border`. Simplest sound check: browserRow is the only path
+  // that emits `│` inside the surface besides frameLines, so render a
+  // three-column surface, drop the first/last frame rails, and assert every
+  // remaining rail span uses `border`.
+  const usedTokens: string[] = [];
+  const recordingTheme = {
+    fg: (c: string, t: string) => {
+      if (t === "│") usedTokens.push(c);
+      return t;
+    },
+    bg: (_c: string, t: string) => t,
+    bold: (t: string) => t,
+  } as never;
+  const persistent: ModelSurfaceState = { focus: "models", provider: null, filter: "", profileFocus: 0 };
+  const s = new ModelControlSurface(
+    D53_PROVIDER_SECTIONS,
+    recordingTheme,
+    D53_SPECS,
+    {},
+    "9router/bai/deepseek-v4-flash",
+    () => D53_AVAILABLE,
+    D53_STATE,
+    D53_RESOLVED,
+    D53_CHIPS,
+    persistent,
+  );
+  s.onSelectModel = () => {};
+  s.onEditProfile = () => {};
+  s.onClose = () => {};
+  s.render(140);
+  // Rows 0..n: outer frame top, then interior rows. The browser box interior
+  // sits between the outer frame rails; frameLines emits exactly 2 `dim` rail
+  // spans per interior line. Assert: at least one `border` span exists AND
+  // no rail token other than the frame's `dim`/browser's `border` appears.
+  const borderSpans = usedTokens.filter((t) => t === "border");
+  assert.ok(borderSpans.length >= 2, `browser rails not purple: tokens ${JSON.stringify(usedTokens.slice(0, 8))}…`);
+  for (const token of usedTokens) {
+    assert.ok(token === "border" || token === "dim", `unexpected rail token ${token}`);
+  }
+  // The mcc-purple theme resolves border to the deep muted purple of the
+  // frame system (#4a4262) — darker than the dim outline (#5c5570), never white.
+  const raw = fs.readFileSync(path.join(__dirname, "..", "mcc-purple.json"), "utf8");
+  const theme = JSON.parse(raw);
+  assert.equal(theme.colors.border, "#4a4262");
+  assert.notEqual(theme.colors.border, "#ffffff");
+  assert.notEqual(theme.colors.border, theme.vars.dimGray);
+});
+
+check("D61 DIVIDER GEOMETRY: divider x equals top and bottom junction x", () => {
+  for (const width of [80, 100, 120, 140, 160, 200, 300, 400]) {
+    const out = makeSurface().render(width).map(stripAnsi);
+    // innerWidth = width - 4: two-column box below 82, three-column above.
+    const wantJ = width - 4 >= 78 ? 2 : 1;
+    const top = out.find((l) => l.includes("┌") && (l.match(/┬/g) ?? []).length === wantJ && l.includes("┐"));
+    const bot = out.find((l) => l.includes("└") && (l.match(/┴/g) ?? []).length === wantJ && l.includes("┘"));
+    assert.ok(top && bot, `browser borders (${wantJ} junctions) missing at width ${width}`);
+    const j1 = top.indexOf("┬");
+    const j2 = top.lastIndexOf("┬");
+    // Bottom junctions must mirror the top exactly (same geometry source).
+    assert.equal(bot.indexOf("┴"), j1, `bottom junction 1 misaligned at width ${width}`);
+    assert.equal(bot.lastIndexOf("┴"), j2, `bottom junction 2 misaligned at width ${width}`);
+    const topIdx = out.indexOf(top);
+    const botIdx = out.indexOf(bot);
+    for (let i = topIdx + 1; i < botIdx; i++) {
+      assert.equal(out[i][j1], "│", `divider 1 not at junction x at width ${width}, row ${i}`);
+      assert.equal(out[i][j2], "│", `divider 2 not at junction x at width ${width}, row ${i}`);
+    }
+  }
+});
+
+check("D61 DIVIDER CONTINUITY: every rail column present in every row, no gaps or drift", () => {
+  // For each width, derive the EXACT expected rail columns from the top
+  // border (┬ junctions, ┐ corner, outer frame rails) and require every
+  // interior browser row to have rails at exactly those columns — a gap,
+  // an extra, or a one-column shift anywhere fails.
+  for (const width of [80, 100, 120, 140, 160, 200]) {
+    const out = makeSurface().render(width).map(stripAnsi);
+    const top = out.find((l) => l.includes("┌") && l.includes("┬") && l.includes("┐"));
+    const bot = out.find((l) => l.includes("└") && l.includes("┴") && l.includes("┘"));
+    assert.ok(top && bot, `borders missing at width ${width}`);
+    const expected: number[] = [0, 1]; // outer rail + box leading rail
+    for (let x = 0; x < top.length; x++) {
+      if (top[x] === "┬") expected.push(x);
+    }
+    expected.push(top.indexOf("┐"), top.length - 1);
+    const topIdx = out.indexOf(top);
+    const botIdx = out.indexOf(bot);
+    assert.ok(botIdx > topIdx + 1, `no interior rows at width ${width}`);
+    for (let i = topIdx + 1; i < botIdx; i++) {
+      assert.equal(out[i].length, top.length, `row width drift at width ${width}, row ${i}`);
+      const got: number[] = [];
+      for (let x = 0; x < out[i].length; x++) {
+        if (out[i][x] === "│") got.push(x);
+      }
+      assert.deepEqual(got, expected, `rail columns mismatch at width ${width}, row ${i}`);
+    }
+  }
+});
+
 process.exit(failures === 0 ? 0 : 1);
+

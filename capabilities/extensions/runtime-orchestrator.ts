@@ -2089,12 +2089,9 @@ export class ModelControlSurface implements Component {
       for (let i = 0; i < rows; i++) {
         const l = provLines[i] ?? "";
         const m = modelLines[i] ?? "";
-        const lp = " ".repeat(Math.max(0, provW - visibleWidth(l)));
-        const mp = " ".repeat(Math.max(0, modelW - visibleWidth(m)));
-        // D60: same contract as the three-column box — rows carry the
-        // leading rail, close with the trailing rail, and match the border
-        // width exactly (1 + provW + 1 + modelW + 1 = innerWidth).
-        browser.push(`│${l}${lp}│${m}${mp}│`);
+        // D61: rows built by the ONE browser row builder — purple-family
+        // rails/dividers from shared geometry (see browserRow).
+        browser.push(this.browserRow([l, m], [provW, modelW]));
       }
       browser.push(bottom);
       return this.frame(
@@ -2140,14 +2137,10 @@ export class ModelControlSurface implements Component {
       const l = provLines[i] ?? "";
       const m = modelLines[i] ?? "";
       const s = selLines[i] ?? "";
-      const lp = " ".repeat(Math.max(0, provW - visibleWidth(l)));
-      const mp = " ".repeat(Math.max(0, modelW - visibleWidth(m)));
-      const sp = " ".repeat(Math.max(0, selW - visibleWidth(s)));
-      // ONE continuous box row: leading │ + cells + trailing │. Each divider
-      // is a single │ on one display column, on EVERY row, including blank
-      // rows — no floating, no drift, no gaps.
-      const line = `│${l}${lp}│${m}${mp}│${s}${sp}│`;
-      browser.push(line);
+      // ONE continuous box row from the ONE builder: leading rail + cells +
+      // trailing rail, each divider a single purple │ on one display column,
+      // on EVERY row, including blank rows — no floating, no drift, no gaps.
+      browser.push(this.browserRow([l, m, s], [provW, modelW, selW]));
     }
     browser.push(bottom);
     // Row 2 band: REASONING PROFILES label + aligned grid + footer.
@@ -2173,6 +2166,26 @@ export class ModelControlSurface implements Component {
 
   private fitLine(line: string, width: number): string {
     return visibleWidth(line) > width ? truncateToWidth(line, width, "") : line;
+  }
+
+  /**
+   * D61: the ONE browser row builder — the single source of truth for the
+   * vertical rails and internal dividers. Geometry derives from the widths
+   * array (the same numbers that size the top/bottom dash runs), so every
+   * divider occupies exactly one display column — the column of its ┬ above
+   * and ┴ below — on EVERY row. Color: one token, `border` — the muted
+   * purple of the frame system, never brighter than the `dim` outline and
+   * never white. Cells must already be clamped to their column budgets.
+   */
+  private browserRow(cells: readonly string[], widths: readonly number[]): string {
+    const divider = this.theme.fg("border", "│");
+    let line = divider;
+    for (let i = 0; i < widths.length; i++) {
+      const cell = cells[i] ?? "";
+      const w = widths[i];
+      line += cell + " ".repeat(Math.max(0, w - visibleWidth(cell))) + divider;
+    }
+    return line;
   }
 }
 
