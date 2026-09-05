@@ -2660,26 +2660,34 @@ const EMPTY_BAR_CONTEXT: BarContext = {
  * clamp. The lifecycle dot, model and ● level never drop on ordinary widths.
  */
 export function contextFieldLines(parts: BarContext, width: number, theme: Theme): string[] {
+  // D65: one coherent border token for ALL frame segments (consistent
+  // brightness — no mixed dim/bright rules).
+  const border = (t: string): string => theme.fg("border", t);
   const dim = (t: string): string => theme.fg("dim", t);
+  // D65 lifecycle glyph: static state dot (the animated spinner lives in the
+  // activity line above).
   const life = parts.running ? theme.fg("accent", "◉") : dim("○");
+  // D65 hierarchy: model = primary (bold text), reasoning = D60 semantic
+  // token, profile = lavender secondary (customMessageLabel), workspace =
+  // readable cool accent (borderAccent), branch = subtle green (success),
+  // usage = dynamic tone with a readable normal state.
   const model = theme.fg("text", theme.bold(parts.modelLabel));
   const level = parts.levelLabel ? theme.fg(parts.levelToken, `● ${parts.levelLabel}`) : null;
-  const profile = parts.profileLabel ? theme.fg("accent", "★") + dim(` ${parts.profileLabel}`) : null;
+  const profile = parts.profileLabel ? theme.fg("accent", "★") + theme.fg("customMessageLabel", ` ${parts.profileLabel}`) : null;
   const identity = [`${life} ${model}`, level, profile].filter((s): s is string => s !== null);
-  const place = parts.workspace ? dim(`📁 ${parts.workspace}`) : null;
-  const branch = parts.branch ? dim(`⑂ ${parts.branch}`) : null;
+  const place = parts.workspace ? theme.fg("borderAccent", `📁 ${parts.workspace}`) : null;
+  const branch = parts.branch ? theme.fg("success", `⑂ ${parts.branch}`) : null;
 
-  // Locked usage format: `<used>/<limit> (<pct>%)` with the tone carried by
-  // the whole usage value.
+  // Locked usage format: `<used>/<limit> (<pct>)`; normal state readable.
   const usage = parts.usage ?? null;
   const pctText = usage ? (usage.percent !== null ? `${Math.round(usage.percent)}%` : "?") : null;
   const pctTone = !usage
-    ? "muted"
+    ? "text"
     : usage.percent !== null && usage.percent > USAGE_ERROR_PCT
       ? "error"
       : usage.percent !== null && usage.percent > USAGE_WARNING_PCT
         ? "warning"
-        : "muted";
+        : "text";
   const usageText = usage
     ? theme.fg(pctTone as ThemeColor, `${formatTokensCompact(usage.tokens ?? 0)}/${formatTokensCompact(usage.contextWindow)} (${pctText})`)
     : null;
@@ -2688,22 +2696,27 @@ export function contextFieldLines(parts: BarContext, width: number, theme: Theme
   const identityLine = identity.join(dim(" · "));
   const withPlace = place ? `${identityLine}${gt}${place}` : identityLine;
 
+  // D65 surface treatment: the spine run gets the dark purple-tinted
+  // customMessageBg background so the field reads as one intentional surface
+  // (one field = one background; the rule dashes stay untinted).
+  const tint = (s: string): string => theme.bg("customMessageBg", ` ${s} `);
+
   const compose = (left: string): string | null => {
-    // "──╮" tail: dashes run flush to the corner; the spine already ends
-    // with its own trailing space so nothing collides.
     const tail = "──╮";
-    const fill = width - visibleWidth(left) - visibleWidth(tail) - 1;
-    return fill >= 1 ? `${left} ${dim("─".repeat(fill))}${tail}` : null;
+    // Wide glyphs (📁) can be undercounted by width meters; keep a 4-col
+    // buffer so a compose match always truly fits (D45).
+    const fill = width - visibleWidth(left) - visibleWidth(tail) - 5;
+    return fill >= 1 ? `${left} ${border("─".repeat(fill))}${border(tail)}` : null;
   };
   const fits = (s: string): boolean => visibleWidth(s) <= width;
 
   // Drop order: branch → workspace → profile → usage → clamp.
   const attempts: string[] = [];
   for (const left of [
-    `╭── ${branch ? `${withPlace}${gt}${branch}${gt}${usageText ?? ""}` : `${withPlace}${usageText ? `${gt}${usageText}` : ""}`}`,
-    `╭── ${withPlace}${usageText ? `${gt}${usageText}` : ""}`,
-    `╭── ${identityLine}${usageText ? `${gt}${usageText}` : ""}`,
-    `╭── ${identityLine}`,
+    `╭── ${tint(branch ? `${withPlace}${gt}${branch}${gt}${usageText ?? ""}` : `${withPlace}${usageText ? `${gt}${usageText}` : ""}`)}`,
+    `╭── ${tint(`${withPlace}${usageText ? `${gt}${usageText}` : ""}`)}`,
+    `╭── ${tint(`${identityLine}${usageText ? `${gt}${usageText}` : ""}`)}`,
+    `╭── ${tint(identityLine)}`,
   ]) {
     const line = compose(left.trimEnd());
     if (line) {
@@ -2712,9 +2725,9 @@ export function contextFieldLines(parts: BarContext, width: number, theme: Theme
     }
   }
   if (attempts.length === 0) {
-    const bare = `╭── ${identityLine} `;
-    attempts.push(fits(bare) ? bare + dim("─".repeat(Math.max(1, width - visibleWidth(bare) - 3))) + "──╮"
-      : truncateToWidth(bare, Math.max(1, width - 3), "") + dim("──╮"));
+    const bare = `╭── ${tint(identityLine)} `;
+    attempts.push(fits(bare) ? bare + border("─".repeat(Math.max(1, width - visibleWidth(bare) - 3))) + border("──╮")
+      : border(truncateToWidth(bare, Math.max(1, width - 3), "")) + border("──╮"));
   }
   // Authoritative D45 clamp — wide glyphs (📁) can defeat the width meters,
   // so the composed row is clamped one final time before leaving the function.
@@ -2840,30 +2853,14 @@ export function usageTotalsFromEntries(entries: ReadonlyArray<UsageEntryLike>): 
 }
 
 /**
- * Custom footer: one line — `<branch> · ↑in ↓out R<r> W<w> CH<h>% $<cost>`.
- * Extension statuses are intentionally NOT rendered (D62 decision: the
- * primary surface carries runtime identity, not infrastructure diagnostics).
+ * D65: the footer is visual noise. The primary surface ends at the input
+ * frame; this footer renders NOTHING and exists only so the extension can
+ * hold the FooterDataProvider (the branch source for the context field)
+ * through the public setFooter API.
  */
-export class ReducedFooter implements Component {
-  constructor(
-    private readonly footerData: { getGitBranch(): string | null },
-    private readonly getEntries: () => ReadonlyArray<UsageEntryLike>,
-  ) {}
-  render(width: number): string[] {
-    const branch = this.footerData.getGitBranch();
-    const t = usageTotalsFromEntries(this.getEntries());
-    const stats: string[] = [];
-    if (t.input) stats.push(`↑${formatTokensCompact(t.input)}`);
-    if (t.output) stats.push(`↓${formatTokensCompact(t.output)}`);
-    if (t.cacheRead) stats.push(`R${formatTokensCompact(t.cacheRead)}`);
-    if (t.cacheWrite) stats.push(`W${formatTokensCompact(t.cacheWrite)}`);
-    if ((t.cacheRead > 0 || t.cacheWrite > 0) && t.cacheHitRate !== undefined) {
-      stats.push(`CH${t.cacheHitRate.toFixed(1)}%`);
-    }
-    if (t.cost) stats.push(`$${t.cost.toFixed(3)}`);
-    const body = stats.join(" ");
-    const line = branch && body ? `${branch} · ${body}` : branch || body;
-    return [visibleWidth(line) <= width ? line : truncateToWidth(line, width, "")];
+export class MinimalFooter implements Component {
+  render(_width: number): string[] {
+    return [];
   }
   invalidate(): void {}
   dispose(): void {}
@@ -2913,19 +2910,25 @@ function piFrameRender(lines: string[], width: number, border: (t: string) => st
   return out;
 }
 
-/** Live theme stylers for the gutter (captured from ctx.ui.theme at session start). */
+/** Live theme stylers for the input frame (captured from ctx.ui.theme at
+ * session start). One coherent border token drives both fields. */
 let accentFgFn: ((t: string) => string) | null = null;
 let dimFgFn: ((t: string) => string) | null = null;
+let borderFgFn: ((t: string) => string) | null = null;
 function getAccentFg(): (t: string) => string {
   return accentFgFn ?? ((t) => t);
 }
 function getDimFg(): (t: string) => string {
   return dimFgFn ?? ((t) => t);
 }
-/** Captures the live theme's accent/dim stylers (called at session_start). */
-export function setPiEditorThemeFns(accent: (t: string) => string, dim: (t: string) => string): void {
+function getBorderFg(): (t: string) => string {
+  return borderFgFn ?? ((t) => t);
+}
+/** Captures the live theme's stylers (called at session_start). */
+export function setPiEditorThemeFns(accent: (t: string) => string, dim: (t: string) => string, border: (t: string) => string): void {
   accentFgFn = accent;
   dimFgFn = dim;
+  borderFgFn = border;
 }
 
 /** Read-only access for tests and diagnostics. */
@@ -3375,14 +3378,19 @@ export default function (pi: ExtensionAPI) {
           setPiEditorThemeFns(
             (t) => liveTheme.fg("accent", t),
             (t) => liveTheme.fg("dim", t),
+            (t) => liveTheme.fg("border", t),
           );
           await loadPiInputEditorClass();
           ctx.ui.setEditorComponent((tui, editorTheme, keybindings) =>
             piInputEditorFactory(tui, editorTheme, keybindings),
           );
+          // D65: the footer is visual noise — the primary surface ends at
+          // the input frame. Register a zero-height footer purely to capture
+          // the FooterDataProvider (the branch source for the context field);
+          // it renders nothing.
           ctx.ui.setFooter((_tui, _theme, footerData) => {
             runtimeFooterData = footerData;
-            return new ReducedFooter(footerData, () => ctx.sessionManager.getEntries());
+            return new MinimalFooter();
           });
         } catch {}
       }

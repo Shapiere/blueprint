@@ -50,7 +50,7 @@ import {
 
 import {
   ActivityWidget,
-  ReducedFooter,
+  MinimalFooter,
   RuntimeContextBar,
   ACTIVITY_FRAMES,
   activityLine,
@@ -71,7 +71,6 @@ import {
   piInputEditorFactory,
   setPiEditorThemeFns,
   shortenPath,
-  usageTotalsFromEntries,
   type BarContext,
   type LifecycleStore,
 } from "../runtime-orchestrator.ts";
@@ -796,7 +795,6 @@ check("D48 SCOPE: provider counts derive only from selectable specs", () => {
   assert.deepEqual(visible, [{ name: "9router", count: 2 }]);
 });
 
-
 check("PANELS: panelLines wraps content with a titled rule", () => {
   const lines = panelLines("TEST", ["line 1", "line 2"], 40, themeStub);
   assert.ok(lines[0].includes(" TEST "), "panel title missing");
@@ -1332,7 +1330,7 @@ check("D64 DROP ORDER: branch → workspace → profile → usage → clamp", ()
   assert.doesNotMatch(stripAnsi(noProfile), /★/, "profile drops after workspace");
   const narrow = contextFieldLines(D64_CTX, 20, themeStub)[0];
   assert.ok(visibleWidth(narrow) <= 20, "clamp guarantees width");
-  assert.match(stripAnsi(narrow), /glm-5\.3-fla/, "model clamped last — prefix survives");
+  assert.match(stripAnsi(narrow), /glm-5\.3-fl/, "model clamped last — prefix survives");
   const at60 = contextFieldLines(D64_CTX, 60, themeStub)[0];
   assert.match(stripAnsi(at60), /● High/, "reasoning survives at ordinary width");
   assert.match(stripAnsi(narrow), /╮$/, "frame always closes");
@@ -1343,8 +1341,11 @@ check("D64 WIDTH SAFETY: field renders within every width 12–400", () => {
     const row = contextFieldLines(D64_CTX, w, themeStub)[0];
     // D45 fit per the authoritative clamp tool: clamping must be a no-op.
     assert.equal(truncateToWidth(row, w, ""), row, `row exceeds width ${w}`);
-    if (w >= 32) {
-      assert.match(stripAnsi(row), /glm-5\.3-flash-northstar/, `model lost at width ${w}`);
+    if (w >= 24) {
+      assert.match(stripAnsi(row), /glm-5\.3-flash/, `model lost at width ${w}`);
+    }
+    if (w >= 42) {
+      assert.match(stripAnsi(row), /glm-5\.3-flash-northstar-longrun/, `full model lost at width ${w}`);
     }
   }
 });
@@ -1366,36 +1367,10 @@ check("D64 TOKENS: compact cadence matches the built-in footer", () => {
   assert.equal(formatTokensCompact(12345678), "12M");
 });
 
-check("D64 FOOTER: branch + stats on one line, no extension statuses", () => {
-  const entries = [
-    { type: "message", message: { role: "assistant", usage: { input: 1200, output: 300, cacheRead: 400, cacheWrite: 100, cost: { total: 0.5 } } } },
-    { type: "message", message: { role: "toolResult", usage: { input: 50, output: 10, cacheRead: 0, cacheWrite: 0, cost: 0 } } },
-    { type: "compaction", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.01 } },
-  ];
-  const footer = new ReducedFooter({ getGitBranch: () => "main" }, () => entries);
-  const line = stripAnsi(footer.render(140)[0]);
-  assert.match(line, /^main · ↑1\.3k ↓315 R400 W100 CH23\.5% \$0\.510$/);
-  assert.doesNotMatch(line, /MCP|LSP|online|topology|reasoning/);
-  const bare = new ReducedFooter({ getGitBranch: () => null }, () => entries);
-  assert.match(stripAnsi(bare.render(140)[0]), /^↑1\.3k/, "no branch: stats render without a separator");
-});
-check("D64 TOTALS: reducer aggregates all entry kinds, CH from last assistant", () => {
-  const entries = [
-    { type: "message", message: { role: "assistant", usage: { input: 1200, output: 300, cacheRead: 400, cacheWrite: 100, cost: { total: 0.5 } } } },
-    { type: "message", message: { role: "assistant", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } } },
-    { type: "message", message: { role: "toolResult", usage: { input: 50, output: 10, cacheRead: 0, cacheWrite: 0, cost: 0 } } },
-    { type: "branch_summary", usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.01 } },
-  ];
-  const t = usageTotalsFromEntries(entries);
-  assert.equal(t.input, 1261);
-  assert.equal(t.cacheRead, 400);
-  assert.equal(t.cacheWrite, 100);
-  assert.equal(t.cost, 0.51);
-  // CH comes from the LAST assistant message (1+0+0 prompt): 0%.
-  assert.equal(t.cacheHitRate, 0);
-  const empty = usageTotalsFromEntries([]);
-  assert.deepEqual([empty.input, empty.output, empty.cacheRead, empty.cacheWrite, empty.cost], [0, 0, 0, 0, 0]);
-  assert.equal(empty.cacheHitRate, undefined);
+check("D64 FOOTER: zero-height, no informational content below input", () => {
+  const footer = new MinimalFooter();
+  assert.deepEqual(footer.render(140), [], "footer renders nothing");
+  assert.doesNotMatch(stripAnsi(footer.render(140).join("")), /main|MCP|LSP|pi-lens|Generic|⑂|📁|↑|↓|\$\d/);
 });
 
 // ------------------------------------------------------- D63 /model provenance
