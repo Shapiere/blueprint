@@ -1394,9 +1394,8 @@ check("D65 BORDER: all primary frame segments use single bright border token", (
   } as unknown as typeof themeStub;
   const row = contextFieldLines(D64_CTX, 140, recTheme)[0];
   void row;
-  const frameTokens = used.filter((c) => c !== "dim");
-  assert.ok(frameTokens.length > 0, "frame segments recorded");
-  for (const tok of frameTokens) assert.equal(tok, "border", `frame segment uses border token, got ${tok}`);
+  assert.ok(used.length > 0, "frame segments recorded");
+  for (const tok of used) assert.equal(tok, "text", `frame segment must use bright text token, got ${tok}`);
 });
 
 check("D65 CONTEXT BG: field carries subtle purple-tinted surface", () => {

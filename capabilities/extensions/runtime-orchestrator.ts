@@ -2658,13 +2658,13 @@ const EMPTY_BAR_CONTEXT: BarContext = {
  *   the editor wrapper — see piFrameRender below; this function returns the
  *   context row only).
  * Padding: `╭── ` keeps information off the border; ` ──╮` closes.
- * Width-aware drop order: branch → workspace → profile suffix → usage →
  * clamp. The lifecycle dot, model and ● level never drop on ordinary widths.
  */
 export function contextFieldLines(parts: BarContext, width: number, theme: Theme): string[] {
-  // D65: one coherent border token for ALL frame segments (consistent
-  // brightness — no mixed dim/bright rules).
-  const border = (t: string): string => theme.fg("border", t);
+  // D65: one coherent bright border for ALL frame geometry — bright
+  // light-neutral "text" token (lavender-white #d4d4d4 in dark theme), no
+  // mixed dim/bright/thinking-level segments.
+  const frame = (t: string): string => theme.fg("text", t);
   const dim = (t: string): string => theme.fg("dim", t);
   // D65 lifecycle glyph: static state dot (the animated spinner lives in the
   // activity line above).
@@ -2702,7 +2702,11 @@ export function contextFieldLines(parts: BarContext, width: number, theme: Theme
 
   const gt = dim(" > ");
   const identityLine = identity.join(dim(" · "));
+  const identityNoProfile = [life + " " + model, level].filter((s): s is string => s !== null).join(dim(" · "));
   const withPlace = place ? `${identityLine}${gt}${place}` : identityLine;
+  const withPlaceNoProfile = place ? `${identityNoProfile}${gt}${place}` : identityNoProfile;
+  const withBranch = branch ? `${withPlace}${gt}${branch}` : withPlace;
+  const withBranchNoProfile = branch ? `${withPlaceNoProfile}${gt}${branch}` : withPlaceNoProfile;
 
   // D65 surface treatment: the spine run gets the dark purple-tinted
   // customMessageBg background so the field reads as one intentional surface
@@ -2711,22 +2715,25 @@ export function contextFieldLines(parts: BarContext, width: number, theme: Theme
 
   const compose = (left: string): string | null => {
     const tail = "──╮";
-    // Wide glyphs (📁) can be undercounted by width meters; keep a 4-col
-    // buffer so a compose match always truly fits (D45).
     const fill = width - visibleWidth(left) - visibleWidth(tail) - 5;
-    return fill >= 1 ? `${left} ${border("─".repeat(fill))}${border(tail)}` : null;
+    return fill >= 1 ? `${left} ${frame("─".repeat(fill))}${frame(tail)}` : null;
   };
   const fits = (s: string): boolean => visibleWidth(s) <= width;
 
   // Drop order: goal → branch → workspace → profile → usage → clamp.
+  const withUsage = (base: string): string => (usageText ? `${base}${gt}${usageText}` : base);
+  const withGoal = (base: string): string => (goalText ? `${base}${gt}${goalText}` : base);
   const attempts: string[] = [];
   for (const left of [
-    `╭── ${tint(branch ? `${withPlace}${gt}${branch}${gt}${usageText ?? ""}${goalText ? `${gt}${goalText}` : ""}` : `${withPlace}${usageText ? `${gt}${usageText}` : ""}${goalText ? `${gt}${goalText}` : ""}`)}`,
-    `╭── ${tint(`${withPlace}${usageText ? `${gt}${usageText}` : ""}`)}`,
-    `╭── ${tint(`${identityLine}${usageText ? `${gt}${usageText}` : ""}`)}`,
+    `╭── ${tint(withGoal(withUsage(withBranch)))}`,
+    `╭── ${tint(withUsage(withBranch))}`,
+    `╭── ${tint(withUsage(withPlace))}`,
+    `╭── ${tint(withUsage(identityLine))}`,
+    `╭── ${tint(withUsage(identityNoProfile))}`,
     `╭── ${tint(identityLine)}`,
+    `╭── ${tint(identityNoProfile)}`,
   ]) {
-    const line = compose(left.trimEnd());
+    const line = compose(left);
     if (line) {
       attempts.push(line);
       break;
@@ -2734,8 +2741,8 @@ export function contextFieldLines(parts: BarContext, width: number, theme: Theme
   }
   if (attempts.length === 0) {
     const bare = `╭── ${tint(identityLine)} `;
-    attempts.push(fits(bare) ? bare + border("─".repeat(Math.max(1, width - visibleWidth(bare) - 3))) + border("──╮")
-      : border(truncateToWidth(bare, Math.max(1, width - 3), "")) + border("──╮"));
+    attempts.push(fits(bare) ? bare + frame("─".repeat(Math.max(1, width - visibleWidth(bare) - 3))) + frame("──╮")
+      : frame(truncateToWidth(bare, Math.max(1, width - 3), "")) + frame("──╮"));
   }
   // Authoritative D45 clamp — wide glyphs (📁) can defeat the width meters,
   // so the composed row is clamped one final time before leaving the function.
@@ -3394,7 +3401,7 @@ export default function (pi: ExtensionAPI) {
           setPiEditorThemeFns(
             (t) => liveTheme.fg("accent", t),
             (t) => liveTheme.fg("dim", t),
-            (t) => liveTheme.fg("border", t),
+            (t) => liveTheme.fg("text", t),
           );
           await loadPiInputEditorClass();
           ctx.ui.setEditorComponent((tui, editorTheme, keybindings) =>
