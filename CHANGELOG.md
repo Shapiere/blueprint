@@ -1,4 +1,5 @@
 # Changelog
+- `polish`: D65 — runtime surface visual treatment: (1) ONE coherent `border` token for all frame segments of the context field and the input box (no mixed dim/bright rules — borders read as continuous, clearly visible strokes); (2) the context spine run carries a dark purple-tinted `customMessageBg` background so the field reads as one intentional surface (rule dashes untinted); (3) semantic content hierarchy — model bold `text` primary, `● reasoning` in D60 tokens, `★ profile` lavender (`customMessageLabel`), `📁 workspace` cool accent (`borderAccent`), `⑂ branch` subtle green (`success`), usage dynamic with readable `text` normal state; (4) footer reduced to a zero-height `MinimalFooter` (renders nothing — the surface ends at the input frame; the FooterDataProvider is retained solely as the branch source for the context field); the usage reducer machinery was removed with it. 76-check suite PASS (footer zero-render, hierarchy tokens, bg tint, width safety re-tuned for the tint padding); strict tsc PASS; verify.py OK; live READY/RUNNING/COMPLETE captures ([docs/DECISIONS.md](docs/DECISIONS.md) D65)
 
 ## Purpose
 
