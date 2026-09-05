@@ -2649,15 +2649,15 @@ const EMPTY_BAR_CONTEXT: BarContext = {
 };
 
 /**
- * LAYER 2 — the persistent runtime-context FIELD: a rounded frame whose top
- * rule carries the information spine inline and the context usage embedded
- * at the right (`── 23% ┃ 1M ──╮`); the bottom rule closes the field. The
- * `╭── ` / ` ──╮` padding keeps information away from the border.
- *
- * Spine: `◉|○ <model> · ● <level> · ★ <profile> > 📁 <workspace> > ⑂ <branch>`
- * Width-aware drop order: branch → workspace → profile suffix → usage limit
- * → usage → clamp. The lifecycle dot, model and ● level never drop on
- * ordinary widths.
+ * LAYER 2 — the persistent runtime-context FIELD: ONE single horizontal
+ * field, locked composition:
+ *   `╭── ○ <model> · ● <level> · ★ <profile> > 📁 <ws> > ⑂ <branch> > <used>/<limit> (<p>%) ──╮`
+ *   `╰─ π │ <input> … ╯`   ← (the input row is merged into the same frame by
+ *   the editor wrapper — see piFrameRender below; this function returns the
+ *   context row only).
+ * Padding: `╭── ` keeps information off the border; ` ──╮` closes.
+ * Width-aware drop order: branch → workspace → profile suffix → usage →
+ * clamp. The lifecycle dot, model and ● level never drop on ordinary widths.
  */
 export function contextFieldLines(parts: BarContext, width: number, theme: Theme): string[] {
   const dim = (t: string): string => theme.fg("dim", t);
@@ -2669,9 +2669,10 @@ export function contextFieldLines(parts: BarContext, width: number, theme: Theme
   const place = parts.workspace ? dim(`📁 ${parts.workspace}`) : null;
   const branch = parts.branch ? dim(`⑂ ${parts.branch}`) : null;
 
+  // Locked usage format: `<used>/<limit> (<pct>%)` with the tone carried by
+  // the whole usage value.
   const usage = parts.usage ?? null;
   const pctText = usage ? (usage.percent !== null ? `${Math.round(usage.percent)}%` : "?") : null;
-  const limitText = usage ? formatTokensCompact(usage.contextWindow) : null;
   const pctTone = !usage
     ? "muted"
     : usage.percent !== null && usage.percent > USAGE_ERROR_PCT
@@ -2679,50 +2680,45 @@ export function contextFieldLines(parts: BarContext, width: number, theme: Theme
       : usage.percent !== null && usage.percent > USAGE_WARNING_PCT
         ? "warning"
         : "muted";
+  const usageText = usage
+    ? theme.fg(pctTone as ThemeColor, `${formatTokensCompact(usage.tokens ?? 0)}/${formatTokensCompact(usage.contextWindow)} (${pctText})`)
+    : null;
 
-  const mid = dim(" · ");
   const gt = dim(" > ");
-  const identityLine = identity.join(mid);
+  const identityLine = identity.join(dim(" · "));
   const withPlace = place ? `${identityLine}${gt}${place}` : identityLine;
-  const withBranch = branch ? `${withPlace}${gt}${branch}` : withPlace;
-  const leftBase = `╭── ${withBranch}`;
 
-  const usageRight = (withLimit: boolean): string => {
-    const pct = theme.fg(pctTone as ThemeColor, pctText ?? "?");
-    const tail = withLimit ? ` ${dim("┃")} ${dim(limitText ?? "?")}` : "";
-    return ` ── ${pct}${tail} ──╮`;
-  };
-  const compose = (left: string, right: string): string | null => {
-    const fill = width - visibleWidth(left) - visibleWidth(right);
-    return fill >= 1 ? left + dim("─".repeat(fill)) + right : null;
+  const compose = (left: string): string | null => {
+    // "──╮" tail: dashes run flush to the corner; the spine already ends
+    // with its own trailing space so nothing collides.
+    const tail = "──╮";
+    const fill = width - visibleWidth(left) - visibleWidth(tail) - 1;
+    return fill >= 1 ? `${left} ${dim("─".repeat(fill))}${tail}` : null;
   };
   const fits = (s: string): boolean => visibleWidth(s) <= width;
 
-  // Drop order: branch → workspace → profile → usage limit → usage → clamp.
+  // Drop order: branch → workspace → profile → usage → clamp.
   const attempts: string[] = [];
-  const right2 = usageRight(true);
-  const right1 = usageRight(false);
-  const closeRight = ` ──╮`;
-  for (const [left, right] of [
-    [leftBase, right2],
-    [`╭── ${withPlace}`, right2],
-    [`╭── ${identityLine}`, right2],
-    [`╭── ${identityLine}`, right1],
-  ] as Array<[string, string]>) {
-    const line = compose(left, right);
+  for (const left of [
+    `╭── ${branch ? `${withPlace}${gt}${branch}${gt}${usageText ?? ""}` : `${withPlace}${usageText ? `${gt}${usageText}` : ""}`}`,
+    `╭── ${withPlace}${usageText ? `${gt}${usageText}` : ""}`,
+    `╭── ${identityLine}${usageText ? `${gt}${usageText}` : ""}`,
+    `╭── ${identityLine}`,
+  ]) {
+    const line = compose(left.trimEnd());
     if (line) {
       attempts.push(line);
       break;
     }
   }
   if (attempts.length === 0) {
-    // Usage dropped entirely; keep the field closed around the identity spine.
-    const closed = `╭── ${identityLine} ` + dim("─".repeat(Math.max(1, width - visibleWidth(`╭── ${identityLine} `) - 3))) + `──╮`;
-    attempts.push(fits(closed) ? closed : truncateToWidth(`╭── ${identityLine}`, Math.max(1, width - 3), "") + dim("──╮"));
+    const bare = `╭── ${identityLine} `;
+    attempts.push(fits(bare) ? bare + dim("─".repeat(Math.max(1, width - visibleWidth(bare) - 3))) + "──╮"
+      : truncateToWidth(bare, Math.max(1, width - 3), "") + dim("──╮"));
   }
-  const top = attempts[0];
-  const bottom = `╰` + dim("─".repeat(Math.max(0, width - 2))) + `╯`;
-  return [fits(top) ? top : truncateToWidth(top, width, ""), bottom];
+  // Authoritative D45 clamp — wide glyphs (📁) can defeat the width meters,
+  // so the composed row is clamped one final time before leaving the function.
+  return [truncateToWidth(attempts[0], width, "")];
 }
 
 /**
@@ -2875,31 +2871,45 @@ export class ReducedFooter implements Component {
 
 /**
  * LAYER 3 — the input surface. A CustomEditor subclass registered through the
- * PUBLIC setEditorComponent API (no host patch): render() strips the generic
- * top/bottom rules and prefixes every content line with an accent `π │`
- * gutter — open, frameless, OMP-style. All editor behavior (multiline, cursor,
- * autocomplete, keybindings, paste) is inherited unchanged; the D63 dispatch
- * path is unaffected because the host wires onSubmit/handlers onto whichever
- * editor the factory returns.
-/**
- * The render wrapper shared by the lazy PiInputEditor class below: rebuilds
- * the base editor output as a rounded, padded input surface. The π identity
- * sits on the frame's top rule at the far left (`╭─ π │ ───╮`), content
- * lines are bordered with one column of interior padding, and the frame
- * closes with `╰ ───╯`. The base editor is laid out at `width - 4` so the
- * side chrome never pushes any line past `renderedWidth <= width` (D45).
+ * PUBLIC setEditorComponent API (no host patch). Its render() is recomposed
+ * by piFrameRender into the LOCKED composition: the context field's bottom
+ * rule IS the input row — `╰─ π │ <text> ─╯` — with the π identity at the
+ * far left inside the frame, one column of padding between border and π, and
+ * the pipe separating identity from input. Empty input stays compact (one
+ * row); multiline text grows additional bordered rows. All editor behavior
+ * (multiline, cursor, autocomplete, keybindings, paste) is inherited
+ * unchanged; the D63 dispatch path is unaffected because the host wires
+ * onSubmit/handlers onto whichever editor the factory returns.
  */
-function piGutterRender(lines: string[], width: number, border: (t: string) => string): string[] {
-  const topRule = `${border("╭─ ")}${getAccentFg()("π")} ${border("│ ")}${border("─".repeat(Math.max(0, width - visibleWidth(`╭─ π │ `) - 1)))}${border("╮")}`;
-  const bottomRule = border(`╰${"─".repeat(Math.max(0, width - 2))}╯`);
-  const interior = Math.max(1, width - 4); // "│ " + " │" side chrome
-  const out: string[] = [topRule];
-  for (let i = 1; i < lines.length - 1; i++) {
-    const fitted = visibleWidth(lines[i]) <= interior ? lines[i] : truncateToWidth(lines[i], interior, "");
+function piFrameRender(lines: string[], width: number, border: (t: string) => string): string[] {
+  // Base structure from the host editor: [topRule, ...content, bottomRule].
+  const content = lines.slice(1, -1);
+  // Row assembly: "╰─ "(3) + "π "(2) + "│ "(2) + interior + " ╯"(2) = width,
+  // so interior = width - 9 exactly (π+space+pipe+space = 4 of the left 7).
+  const interior = Math.max(1, width - 9);
+  const out: string[] = [];
+  // The editor content lines already carry the π gutter styling from the
+  // base CustomEditor contract; strip the base's own borders and reframe.
+  const pi = `${getAccentFg()("π")} ${getDimFg()("│")}`;
+  content.forEach((text, i) => {
+    const fitted = visibleWidth(text) <= interior ? text : truncateToWidth(text, interior, "");
     const pad = " ".repeat(Math.max(0, interior - visibleWidth(fitted)));
-    out.push(`│ ${fitted}${pad} │`);
+    const isLast = i === content.length - 1;
+    if (i === 0) {
+      // First content row: the context field's bottom rule closes here —
+      // rendered by RuntimeContextBar; this row IS the input row.
+      out.push(`${border("╰─ ")}${pi} ${fitted}${pad}${border(" ╯")}`);
+    } else {
+      out.push(`${border("│ ")}${fitted}${pad}${border(" │")}`);
+    }
+    if (isLast && content.length === 1) {
+      // single-row input: nothing further.
+    }
+  });
+  if (content.length === 0) {
+    const pad = " ".repeat(interior);
+    out.push(`${border("╰─ ")}${pi} ${pad}${border(" ╯")}`);
   }
-  out.push(bottomRule);
   return out;
 }
 
@@ -2956,7 +2966,7 @@ async function ensurePiInputEditorClass(): Promise<void> {
           // editor lays out inside, then the wrapper adds the frame.
           const base = super.render(Math.max(8, width - 4));
           const borderFn = this.borderColor ?? ((t: string) => t);
-          return piGutterRender(base, width, borderFn);
+          return piFrameRender(base, width, borderFn);
         }
         invalidate(): void {}
       };
