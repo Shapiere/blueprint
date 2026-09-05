@@ -1182,6 +1182,7 @@ const D64_CTX: BarContext = {
   workspace: "~/pisetup/capabilities",
   branch: "main",
   usage: { tokens: 820000, contextWindow: 1000000, percent: 80 },
+  goal: null,
 };
 
 function d64Store(overrides: Partial<LifecycleStore> = {}): LifecycleStore {
@@ -1371,6 +1372,61 @@ check("D64 FOOTER: zero-height, no informational content below input", () => {
   const footer = new MinimalFooter();
   assert.deepEqual(footer.render(140), [], "footer renders nothing");
   assert.doesNotMatch(stripAnsi(footer.render(140).join("")), /main|MCP|LSP|pi-lens|Generic|⑂|📁|↑|↓|\$\d/);
+});
+
+check("D65 GOAL: far-right secondary tail, disappears first under width pressure", () => {
+  const withGoal: BarContext = { ...D64_CTX, goal: "Verify context input row redesign" };
+  const wide = contextFieldLines(withGoal, 200, themeStub)[0];
+  assert.match(stripAnsi(wide), /◀ Verify context input row redesign/, "goal visible when wide");
+  const narrow = contextFieldLines(withGoal, 60, themeStub)[0];
+  assert.doesNotMatch(stripAnsi(narrow), /Verify context/, "goal disappears first when narrow");
+  assert.match(stripAnsi(narrow), /glm-5\.3-flash/, "model survives after goal dropped");
+  const noGoal = contextFieldLines(D64_CTX, 200, themeStub)[0];
+  assert.doesNotMatch(stripAnsi(noGoal), /◀/, "no goal segment when no authoritative source");
+});
+
+check("D65 BORDER: all primary frame segments use single bright border token", () => {
+  const used: string[] = [];
+  const recTheme = {
+    fg: (c: string, t: string) => { if (/[╭╰─╮╯│]/.test(t)) used.push(c); return t; },
+    bg: (_c: string, t: string) => t,
+    bold: (t: string) => t,
+  } as unknown as typeof themeStub;
+  const row = contextFieldLines(D64_CTX, 140, recTheme)[0];
+  void row;
+  const frameTokens = used.filter((c) => c !== "dim");
+  assert.ok(frameTokens.length > 0, "frame segments recorded");
+  for (const tok of frameTokens) assert.equal(tok, "border", `frame segment uses border token, got ${tok}`);
+});
+
+check("D65 CONTEXT BG: field carries subtle purple-tinted surface", () => {
+  const usedBg: string[] = [];
+  const recTheme = {
+    fg: (_c: string, t: string) => t,
+    bg: (c: string, t: string) => { usedBg.push(c); return t; },
+    bold: (t: string) => t,
+  } as unknown as typeof themeStub;
+  const row = contextFieldLines(D64_CTX, 140, recTheme)[0];
+  void row;
+  assert.ok(usedBg.includes("customMessageBg"), "context spine must be tinted with customMessageBg");
+  assert.ok(usedBg.every((c) => c === "customMessageBg"), "all backgrounds are customMessageBg");
+});
+
+check("D65 HIERARCHY: model primary, reasoning semantic, profile lavender, workspace cyan, branch green", () => {
+  const fgCalls: Array<[string, string]> = [];
+  const recTheme = {
+    fg: (c: string, t: string) => { fgCalls.push([c, t]); return t; },
+    bg: (_c: string, t: string) => t,
+    bold: (t: string) => t,
+  } as unknown as typeof themeStub;
+  const row = contextFieldLines(D64_CTX, 140, recTheme)[0];
+  void row;
+  const has = (token: string, substr: string) => fgCalls.some(([c, t]) => c === token && t.includes(substr));
+  assert.ok(has("text", "glm-5.3-flash"), "model uses primary text token");
+  assert.ok(has("thinkingHigh", "● High"), "reasoning uses D60 semantic token");
+  assert.ok(has("customMessageLabel", "Coding"), "profile uses lavender secondary");
+  assert.ok(has("borderAccent", "📁"), "workspace uses cool accent");
+  assert.ok(has("success", "⑂"), "branch uses subtle green");
 });
 
 // ------------------------------------------------------- D63 /model provenance

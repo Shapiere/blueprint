@@ -2625,7 +2625,7 @@ export function applyToolEnd(store: LifecycleStore): void {
 }
 
 
-/** Segment tokens for the D64 runtime-context field (OMP-style spine). */
+/** Segment tokens for the D65 runtime-context field (OMP-style spine). */
 export interface BarContext {
   running: boolean;
   modelLabel: string;
@@ -2635,6 +2635,7 @@ export interface BarContext {
   workspace: string;
   branch: string | null;
   usage: ContextUsage | undefined;
+  goal: string | null;
 }
 
 const EMPTY_BAR_CONTEXT: BarContext = {
@@ -2646,6 +2647,7 @@ const EMPTY_BAR_CONTEXT: BarContext = {
   workspace: "",
   branch: null,
   usage: undefined,
+  goal: null,
 };
 
 /**
@@ -2691,6 +2693,12 @@ export function contextFieldLines(parts: BarContext, width: number, theme: Theme
   const usageText = usage
     ? theme.fg(pctTone as ThemeColor, `${formatTokensCompact(usage.tokens ?? 0)}/${formatTokensCompact(usage.contextWindow)} (${pctText})`)
     : null;
+  // No authoritative runtime goal source exists today (inspected
+  // ExtensionContext, sessionManager, model runtime, task APIs, OMP context);
+  // the segment is wired but remains null by design until a trustworthy
+  // source is introduced. It is the lowest-priority segment and disappears
+  // first under width pressure.
+  const goalText = parts.goal ? theme.fg("dim", `◀ ${parts.goal}`) : null;
 
   const gt = dim(" > ");
   const identityLine = identity.join(dim(" · "));
@@ -2710,10 +2718,10 @@ export function contextFieldLines(parts: BarContext, width: number, theme: Theme
   };
   const fits = (s: string): boolean => visibleWidth(s) <= width;
 
-  // Drop order: branch → workspace → profile → usage → clamp.
+  // Drop order: goal → branch → workspace → profile → usage → clamp.
   const attempts: string[] = [];
   for (const left of [
-    `╭── ${tint(branch ? `${withPlace}${gt}${branch}${gt}${usageText ?? ""}` : `${withPlace}${usageText ? `${gt}${usageText}` : ""}`)}`,
+    `╭── ${tint(branch ? `${withPlace}${gt}${branch}${gt}${usageText ?? ""}${goalText ? `${gt}${goalText}` : ""}` : `${withPlace}${usageText ? `${gt}${usageText}` : ""}${goalText ? `${gt}${goalText}` : ""}`)}`,
     `╭── ${tint(`${withPlace}${usageText ? `${gt}${usageText}` : ""}`)}`,
     `╭── ${tint(`${identityLine}${usageText ? `${gt}${usageText}` : ""}`)}`,
     `╭── ${tint(identityLine)}`,
@@ -3036,6 +3044,13 @@ function makeBarContext(ctx: ExtensionContext): () => BarContext {
       return typeof cw === "number" && cw > 0 ? { tokens: null, contextWindow: cw, percent: null } : undefined;
     }, undefined);
     const profileLabel = safe(() => loadReasoningState().defaultProfile as string | undefined, undefined);
+    // No authoritative runtime goal/objective source exists today — inspected
+    // ExtensionContext (sessionManager, model, getContextUsage, cwd, ui),
+    // sessionManager (getLabel/getBranch/getSessionName/getTree), model
+    // runtime, and codebase grep for "goal"/"objective". The segment stays
+    // null by design until a trustworthy source is introduced. Future
+    // integration point: e.g. `safe(() => (ctx as unknown as { getCurrentGoal?: () => string }).getCurrentGoal?.(), null)` or a dedicated
+    // session label used as goal when explicitly set by the user.
     return {
       running: lifecycleStore.lifecycle === "running",
       modelLabel,
@@ -3045,6 +3060,7 @@ function makeBarContext(ctx: ExtensionContext): () => BarContext {
       workspace: safe(() => shortenPath(ctx.cwd, os.homedir()), ""),
       branch: runtimeFooterData?.getGitBranch() ?? null,
       usage,
+      goal: null,
     };
   };
 }
