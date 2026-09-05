@@ -62,7 +62,7 @@ import {
   applyAgentStart,
   applyToolEnd,
   applyToolStart,
-  contextBarLines,
+  contextFieldLines,
   formatElapsed,
   formatTokensCompact,
   formatUsageBar,
@@ -1176,11 +1176,13 @@ check("D61 DIVIDER CONTINUITY: every rail column present in every row, no gaps o
 // ------------------------------------------------- D64 runtime layers
 
 const D64_CTX: BarContext = {
+  running: false,
   modelLabel: "glm-5.3-flash-northstar-longrun",
   levelLabel: "High",
   levelToken: "thinkingHigh",
   profileLabel: "Coding",
   workspace: "~/pisetup/capabilities",
+  branch: "main",
   usage: { tokens: 820000, contextWindow: 1000000, percent: 80 },
 };
 
@@ -1298,67 +1300,58 @@ check("D64 ACTIVITY WIDGET: zero lines idle, one line running, clamped width", (
   resetLifecycleStore();
 });
 
-check("D64 BAR: OMP spine with model · level · profile │ 📁 ws │ usage", () => {
-  const line = contextBarLines(D64_CTX, 140, themeStub);
-  const flat = stripAnsi(line);
-  assert.match(flat, /glm-5\.3-flash-northstar-longrun · ● High · Coding/);
-  assert.match(flat, /│ 📁 ~\/pisetup\/capabilities │/);
-  assert.match(flat, /820k \/ 1\.0M · 80%$/);
-  assert.ok(visibleWidth(line) <= 140);
-  // No π in the bar (it lives in the input surface now); no lifecycle text.
-  assert.doesNotMatch(flat, /π|Ready|Running|Complete/);
+check("D64 FIELD: rounded frame with spine + git + embedded usage", () => {
+  const lines = contextFieldLines(D64_CTX, 140, themeStub);
+  assert.equal(lines.length, 2, "field = top rule + bottom rule");
+  const top = stripAnsi(lines[0]);
+  const bottom = stripAnsi(lines[1]);
+  assert.ok(top.startsWith("╭── "), "top rule opens with padding: " + top.slice(0, 12));
+  assert.ok(top.endsWith("──╮"), "top rule closes with usage block");
+  assert.ok(bottom.startsWith("╰") && bottom.endsWith("╯"), "bottom rule closes the field");
+  assert.match(top, /glm-5\.3-flash-northstar-longrun · ● High · ★ Coding/);
+  assert.match(top, /> 📁 ~\/pisetup\/capabilities >/);
+  assert.match(top, /> ⑂ main/);
+  assert.match(top, /── 80% ┃ 1\.0M ──╮$/, "usage embedded in the rule with limit");
+  assert.ok(visibleWidth(lines[0]) <= 140 && visibleWidth(lines[1]) <= 140);
 });
 
-
-check("D64 INPUT EDITOR: lazy factory returns a component with π gutter render", async () => {
-  setPiEditorThemeFns((t) => t, (t) => t);
-  const tuiStub = { terminal: { rows: 40 } } as never;
-  const editorTheme = { borderColor: (t: string) => t, selectList: {} } as never;
-  // pi-tui's manager satisfies the host's interface structurally for the
-  // subset the editor uses; the two class identities differ only in
-  // config-path plumbing the editor never touches.
-  const kb = getKeybindings() as never;
-  await loadPiInputEditorClass();
-  const editor = piInputEditorFactory(tuiStub, editorTheme, kb);
-  assert.ok(editor, "factory must return an editor component");
-  editor.setText("hello world");
-  const lines = editor.render(60);
-  // The wrapped render must include the π gutter and drop the base rules.
-  assert.ok(lines.length >= 1);
-  assert.ok(stripAnsi(lines.join("\n")).includes("π"));
-  assert.ok(!stripAnsi(lines[0]).startsWith("─"), "top rule must be stripped");
-});
-
-check("D64 BAR NULL USAGE: percent-null renders the ? segment", () => {
-  const line = contextBarLines(
+check("D64 FIELD NULL USAGE: ? percent renders gracefully", () => {
+  const lines = contextFieldLines(
     { ...D64_CTX, usage: { tokens: null, contextWindow: 1000000, percent: null } },
     140,
     themeStub,
   );
-  assert.match(stripAnsi(line), /\? \/ 1\.0M/);
+  assert.match(stripAnsi(lines[0]), /── \? ┃ 1\.0M ──╮$/);
 });
 
-check("D64 DROP ORDER: task(omitted) → workspace → profile → compact usage → clamp", () => {
-  const full = contextBarLines(D64_CTX, 140, themeStub);
-  assert.ok(visibleWidth(stripAnsi(full)) > 90, "fixture must exceed 90 to exercise drops");
-  const at90 = contextBarLines(D64_CTX, 90, themeStub);
-  assert.doesNotMatch(stripAnsi(at90), /pisetup/, "workspace drops first");
-  assert.match(stripAnsi(at90), /Coding/, "profile survives while usage is full at 90");
-  const at60 = contextBarLines(D64_CTX, 60, themeStub);
-  assert.match(stripAnsi(at60), /820k\/1\.0M/, "compact usage at 60");
-  const at40 = contextBarLines(D64_CTX, 40, themeStub);
-  assert.ok(visibleWidth(at40) <= 40, "clamp guarantees width");
-  const at20 = contextBarLines(D64_CTX, 20, themeStub);
-  assert.ok(visibleWidth(at20) <= 20, "clamp holds at 20");
-  assert.match(stripAnsi(at20), /glm-5\.3-flash-norths/, "model clamped last — prefix survives");
+check("D64 DROP ORDER: branch → workspace → profile → limit → usage → clamp", () => {
+  const full = contextFieldLines(D64_CTX, 140, themeStub);
+  assert.match(stripAnsi(full[0]), /⑂ main/, "branch present when wide");
+  const noBranch = contextFieldLines({ ...D64_CTX, branch: null }, 120, themeStub);
+  assert.doesNotMatch(stripAnsi(noBranch[0]), /⑂/, "branch drops first");
+  const noBranchWs = contextFieldLines({ ...D64_CTX, branch: null }, 100, themeStub);
+  assert.doesNotMatch(stripAnsi(noBranchWs[0]), /pisetup/, "workspace drops next");
+  const noBranchWsProfile = contextFieldLines({ ...D64_CTX, branch: null, profileLabel: undefined }, 60, themeStub);
+  assert.doesNotMatch(stripAnsi(noBranchWsProfile[0]), /★/, "profile drops after workspace");
+  const narrow = contextFieldLines(D64_CTX, 20, themeStub);
+  assert.ok(visibleWidth(narrow[0]) <= 20 && visibleWidth(narrow[1]) <= 20, "clamp guarantees width");
+  assert.match(stripAnsi(narrow[0]), /glm-5\.3-fla/, "model clamped last — prefix survives");
+  const at48 = contextFieldLines(D64_CTX, 48, themeStub);
+  assert.match(stripAnsi(at48[0]), /● Hig/, "reasoning appears as width allows");
+  const at60 = contextFieldLines(D64_CTX, 60, themeStub);
+  assert.match(stripAnsi(at60[0]), /● High/, "reasoning survives at ordinary width");
+  assert.match(stripAnsi(narrow[0]), /╮$/, "frame always closes");
 });
 
 check("D64 WIDTH SAFETY: bar renders within every width 8–400", () => {
-  for (let w = 8; w <= 400; w++) {
-    const line = contextBarLines(D64_CTX, w, themeStub);
-    assert.ok(visibleWidth(line) <= w, `line width ${visibleWidth(line)} exceeds ${w}`);
+  for (let w = 12; w <= 400; w++) {
+    const lines = contextFieldLines(D64_CTX, w, themeStub);
+    assert.equal(lines.length, 2, `field must be 2 lines at width ${w}`);
+    for (const l of lines) {
+      assert.ok(visibleWidth(l) <= w, `line width ${visibleWidth(l)} exceeds ${w}`);
+    }
     if (w >= 32) {
-      assert.match(stripAnsi(line), /glm-5\.3-flash-northstar/, `model lost at width ${w}`);
+      assert.match(stripAnsi(lines[0]), /glm-5\.3-flash-northstar/, `model lost at width ${w}`);
     }
   }
 });

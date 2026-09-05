@@ -2625,68 +2625,104 @@ export function applyToolEnd(store: LifecycleStore): void {
 }
 
 
-/** Segment tokens for the OMP-style information spine. */
+/** Segment tokens for the D64 runtime-context field (OMP-style spine). */
 export interface BarContext {
+  running: boolean;
   modelLabel: string;
   levelLabel: string | undefined;
   levelToken: ThemeColor;
   profileLabel: string | undefined;
   workspace: string;
+  branch: string | null;
   usage: ContextUsage | undefined;
 }
 
 const EMPTY_BAR_CONTEXT: BarContext = {
+  running: false,
   modelLabel: "no-model",
   levelLabel: undefined,
   levelToken: "muted",
   profileLabel: undefined,
   workspace: "",
+  branch: null,
   usage: undefined,
 };
 
 /**
- * LAYER 2 — the persistent context spine, one line:
- *   `<model> · ● <level> · <profile> │ 📁 <workspace> │ <used>/<limit> · <p>%`
- * separated by a dim `│` rail. Width-aware drop order (before the final
- * clamp): workspace segment → profile suffix → usage compacted → usage
- * dropped → clamp. Model and `● level` never drop below the clamp.
+ * LAYER 2 — the persistent runtime-context FIELD: a rounded frame whose top
+ * rule carries the information spine inline and the context usage embedded
+ * at the right (`── 23% ┃ 1M ──╮`); the bottom rule closes the field. The
+ * `╭── ` / ` ──╮` padding keeps information away from the border.
+ *
+ * Spine: `◉|○ <model> · ● <level> · ★ <profile> > 📁 <workspace> > ⑂ <branch>`
+ * Width-aware drop order: branch → workspace → profile suffix → usage limit
+ * → usage → clamp. The lifecycle dot, model and ● level never drop on
+ * ordinary widths.
  */
-export function contextBarLines(parts: BarContext, width: number, theme: Theme): string {
-  const rail = theme.fg("dim", "│");
+export function contextFieldLines(parts: BarContext, width: number, theme: Theme): string[] {
+  const dim = (t: string): string => theme.fg("dim", t);
+  const life = parts.running ? theme.fg("accent", "◉") : dim("○");
   const model = theme.fg("text", theme.bold(parts.modelLabel));
   const level = parts.levelLabel ? theme.fg(parts.levelToken, `● ${parts.levelLabel}`) : null;
-  const profile = parts.profileLabel ? theme.fg("muted", parts.profileLabel) : null;
-  const head = [model, level, profile].filter((s): s is string => s !== null);
-  const usage = parts.usage ? formatUsageBar(parts.usage) : null;
-  const usageFull = usage
-    ? theme.fg(usage.tone === "error" ? "error" : usage.tone === "warning" ? "warning" : "muted", usage.text)
-    : null;
-  const usageCompact = parts.usage
-    ? theme.fg(usage && usage.tone !== "normal" ? (usage.tone === "error" ? "error" : "warning") : "muted", formatUsageCompact(parts.usage))
-    : null;
-  const workspace = parts.workspace ? theme.fg("dim", `📁 ${parts.workspace}`) : null;
-  const joinHead = (segs: string[]): string => segs.join(theme.fg("dim", " · "));
-  const join = (segs: string[]): string => segs.join(` ${rail} `);
+  const profile = parts.profileLabel ? theme.fg("accent", "★") + dim(` ${parts.profileLabel}`) : null;
+  const identity = [`${life} ${model}`, level, profile].filter((s): s is string => s !== null);
+  const place = parts.workspace ? dim(`📁 ${parts.workspace}`) : null;
+  const branch = parts.branch ? dim(`⑂ ${parts.branch}`) : null;
+
+  const usage = parts.usage ?? null;
+  const pctText = usage ? (usage.percent !== null ? `${Math.round(usage.percent)}%` : "?") : null;
+  const limitText = usage ? formatTokensCompact(usage.contextWindow) : null;
+  const pctTone = !usage
+    ? "muted"
+    : usage.percent !== null && usage.percent > USAGE_ERROR_PCT
+      ? "error"
+      : usage.percent !== null && usage.percent > USAGE_WARNING_PCT
+        ? "warning"
+        : "muted";
+
+  const mid = dim(" · ");
+  const gt = dim(" > ");
+  const identityLine = identity.join(mid);
+  const withPlace = place ? `${identityLine}${gt}${place}` : identityLine;
+  const withBranch = branch ? `${withPlace}${gt}${branch}` : withPlace;
+  const leftBase = `╭── ${withBranch}`;
+
+  const usageRight = (withLimit: boolean): string => {
+    const pct = theme.fg(pctTone as ThemeColor, pctText ?? "?");
+    const tail = withLimit ? ` ${dim("┃")} ${dim(limitText ?? "?")}` : "";
+    return ` ── ${pct}${tail} ──╮`;
+  };
+  const compose = (left: string, right: string): string | null => {
+    const fill = width - visibleWidth(left) - visibleWidth(right);
+    return fill >= 1 ? left + dim("─".repeat(fill)) + right : null;
+  };
   const fits = (s: string): boolean => visibleWidth(s) <= width;
-  const headLine = joinHead(head);
-  const headNoProfileLine = joinHead([model, level].filter((s): s is string => s !== null));
-  // Full spine.
-  const full = [headLine, ...(workspace ? [workspace] : []), ...(usageFull ? [usageFull] : [])].join(` ${rail} `);
-  if (fits(full)) return full;
-  // 1. drop workspace.
-  const noWs = [headLine, ...(usageFull ? [usageFull] : [])].join(` ${rail} `);
-  if (fits(noWs)) return noWs;
-  // 2. drop profile suffix.
-  const noProfile = [headNoProfileLine, ...(workspace ? [workspace] : []), ...(usageFull ? [usageFull] : [])].join(` ${rail} `);
-  if (fits(noProfile)) return noProfile;
-  // 3. compact usage, no workspace.
-  const compactUsage = [headNoProfileLine, ...(usageCompact ? [usageCompact] : [])].join(` ${rail} `);
-  if (fits(compactUsage)) return compactUsage;
-  // 4. drop usage entirely.
-  const headOnly = headNoProfileLine;
-  if (fits(headOnly)) return headOnly;
-  // 5. final clamp (never drops model/level by design).
-  return truncateToWidth(headOnly, width, "");
+
+  // Drop order: branch → workspace → profile → usage limit → usage → clamp.
+  const attempts: string[] = [];
+  const right2 = usageRight(true);
+  const right1 = usageRight(false);
+  const closeRight = ` ──╮`;
+  for (const [left, right] of [
+    [leftBase, right2],
+    [`╭── ${withPlace}`, right2],
+    [`╭── ${identityLine}`, right2],
+    [`╭── ${identityLine}`, right1],
+  ] as Array<[string, string]>) {
+    const line = compose(left, right);
+    if (line) {
+      attempts.push(line);
+      break;
+    }
+  }
+  if (attempts.length === 0) {
+    // Usage dropped entirely; keep the field closed around the identity spine.
+    const closed = `╭── ${identityLine} ` + dim("─".repeat(Math.max(1, width - visibleWidth(`╭── ${identityLine} `) - 3))) + `──╮`;
+    attempts.push(fits(closed) ? closed : truncateToWidth(`╭── ${identityLine}`, Math.max(1, width - 3), "") + dim("──╮"));
+  }
+  const top = attempts[0];
+  const bottom = `╰` + dim("─".repeat(Math.max(0, width - 2))) + `╯`;
+  return [fits(top) ? top : truncateToWidth(top, width, ""), bottom];
 }
 
 /**
@@ -2729,9 +2765,10 @@ export class ActivityWidget implements Component {
 }
 
 /**
- * LAYER 2 — RuntimeContextBar: the persistent OMP-style information spine,
- * one line, recomputed from live state on every render (the host repaints on
- * every session event; no polling).
+ * LAYER 2 — RuntimeContextBar: the persistent runtime-context field (rounded
+ * frame with the inline spine and embedded usage), recomputed from live
+ * state on every render (the host repaints on every session event; no
+ * polling).
  */
 export class RuntimeContextBar implements Component {
   constructor(
@@ -2739,11 +2776,11 @@ export class RuntimeContextBar implements Component {
     private readonly getContext: () => BarContext,
   ) {}
   render(width: number): string[] {
-    const line = contextBarLines(this.getContext(), width, this.theme);
-    return [line];
+    return contextFieldLines(this.getContext(), width, this.theme);
   }
   invalidate(): void {}
 }
+
 
 /** Token counts for compact footer display (mirrors the built-in formatTokens). */
 export function formatTokensCompact(count: number): string {
@@ -2844,21 +2881,26 @@ export class ReducedFooter implements Component {
  * autocomplete, keybindings, paste) is inherited unchanged; the D63 dispatch
  * path is unaffected because the host wires onSubmit/handlers onto whichever
  * editor the factory returns.
- */
 /**
- * The render wrapper shared by the lazy PiInputEditor class below: strips the
- * generic top/bottom rules and prefixes every content line with the accent
- * `π │` gutter (width-safe).
+ * The render wrapper shared by the lazy PiInputEditor class below: rebuilds
+ * the base editor output as a rounded, padded input surface. The π identity
+ * sits on the frame's top rule at the far left (`╭─ π │ ───╮`), content
+ * lines are bordered with one column of interior padding, and the frame
+ * closes with `╰ ───╯`. The base editor is laid out at `width - 4` so the
+ * side chrome never pushes any line past `renderedWidth <= width` (D45).
  */
-function piGutterRender(lines: string[], width: number): string[] {
-  if (lines.length < 2) return lines; // degenerate: keep as-is
-  const content = lines.slice(1, -1); // drop top/bottom horizontal rules
-  const available = Math.max(1, width - 4); // "π │ " gutter width
-  return content.map((l) => {
-    const fitted = visibleWidth(l) <= available ? l : truncateToWidth(l, available, "");
-    const pad = " ".repeat(Math.max(0, available - visibleWidth(fitted)));
-    return `${getAccentFg()("π")} ${getDimFg()("│")} ${fitted}${pad}`;
-  });
+function piGutterRender(lines: string[], width: number, border: (t: string) => string): string[] {
+  const topRule = `${border("╭─ ")}${getAccentFg()("π")} ${border("│ ")}${border("─".repeat(Math.max(0, width - visibleWidth(`╭─ π │ `) - 1)))}${border("╮")}`;
+  const bottomRule = border(`╰${"─".repeat(Math.max(0, width - 2))}╯`);
+  const interior = Math.max(1, width - 4); // "│ " + " │" side chrome
+  const out: string[] = [topRule];
+  for (let i = 1; i < lines.length - 1; i++) {
+    const fitted = visibleWidth(lines[i]) <= interior ? lines[i] : truncateToWidth(lines[i], interior, "");
+    const pad = " ".repeat(Math.max(0, interior - visibleWidth(fitted)));
+    out.push(`│ ${fitted}${pad} │`);
+  }
+  out.push(bottomRule);
+  return out;
 }
 
 /** Live theme stylers for the gutter (captured from ctx.ui.theme at session start). */
@@ -2883,9 +2925,9 @@ export function getLifecycleStore(): LifecycleStore {
 
 /**
  * LAYER 3 — the input surface. Built through the PUBLIC setEditorComponent
- * API (no host patch): a CustomEditor subclass whose render() strips the
- * generic top/bottom rules and prefixes every content line with an accent
- * `π │` gutter — open, frameless, OMP-style. All editor behavior (multiline,
+ * API (no host patch): a CustomEditor subclass whose render() recomposes the
+ * base output into a rounded, padded box with the accent `π │` identity on
+ * the frame and interior rail. All editor behavior (multiline,
  * cursor, autocomplete, keybindings, paste) is inherited unchanged; the D63
  * dispatch path is unaffected because the host wires onSubmit/handlers onto
  * whichever editor the factory returns. The class value is imported
@@ -2910,8 +2952,11 @@ async function ensurePiInputEditorClass(): Promise<void> {
       const Base = mod.CustomEditor;
       PiInputEditorClass = class extends (Base as new (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options?: EditorOptions) => EditorComponent) {
         render(width: number): string[] {
-          const base = super.render(width);
-          return piGutterRender(base, width);
+          // Reserve 4 columns for the frame chrome ("│ " + " │"); the base
+          // editor lays out inside, then the wrapper adds the frame.
+          const base = super.render(Math.max(8, width - 4));
+          const borderFn = this.borderColor ?? ((t: string) => t);
+          return piGutterRender(base, width, borderFn);
         }
         invalidate(): void {}
       };
@@ -2946,6 +2991,9 @@ export function piInputEditorFactory(
  * these refs (no ctx captured at registration time). */
 let activeActivityWidget: ActivityWidget | null = null;
 let activeRuntimeBar: RuntimeContextBar | null = null;
+/** Authoritative git-branch source, captured from the footer factory's
+ * FooterDataProvider (the only public path to git state). */
+let runtimeFooterData: { getGitBranch(): string | null } | null = null;
 let runtimeBarContext: (() => BarContext) | null = null;
 
 /** Live session data for the bar. Every ctx accessor is try/caught: async
@@ -2976,11 +3024,13 @@ function makeBarContext(ctx: ExtensionContext): () => BarContext {
     }, undefined);
     const profileLabel = safe(() => loadReasoningState().defaultProfile as string | undefined, undefined);
     return {
+      running: lifecycleStore.lifecycle === "running",
       modelLabel,
       levelLabel,
       levelToken,
       profileLabel,
       workspace: safe(() => shortenPath(ctx.cwd, os.homedir()), ""),
+      branch: runtimeFooterData?.getGitBranch() ?? null,
       usage,
     };
   };
@@ -3321,6 +3371,7 @@ export default function (pi: ExtensionAPI) {
             piInputEditorFactory(tui, editorTheme, keybindings),
           );
           ctx.ui.setFooter((_tui, _theme, footerData) => {
+            runtimeFooterData = footerData;
             return new ReducedFooter(footerData, () => ctx.sessionManager.getEntries());
           });
         } catch {}
