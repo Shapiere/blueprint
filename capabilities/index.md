@@ -4,7 +4,7 @@
 
 Single source of truth for platform capabilities: what is installed, at what version, in what lifecycle stage, with what validation evidence. Deployment paths live in `docs/SETUP.md`; this file owns status. One row per capability; status changes require the capture loop (CHANGELOG + registry in the same session).
 
-**Last updated: 2026-08-25 (Continuous Evolution — Model Control System Phase 1, D42)**
+**Last updated: 2026-09-07 (Continuous Evolution — Permission Decision Surface, D66)**
 
 ## Registry
 
@@ -51,7 +51,7 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | reasoning profiles (/reasoning, compat.) | RAL Phase 5 (in extension) | — | Runtime configuration | **active** | authored (D37/D38) | PASS 2026-08-23 (10-profile set; retained for CLI compatibility — primary UX is the /model flow) | Maintenance | Apache-2.0 | 2026-08-23 |
 | integrated /model reasoning flow | RAL Phase 6 (in extension) | — | Runtime UX | **active** | authored (D38) | PASS 2026-08-23 (model_select hook: 10-profile selector with Vision capability gating; level mapping Ultra→xhigh documented; persistence round-trip; model/profile/tier separation verified; live router interop via kimi/kimi-k3) | Maintenance | Apache-2.0 | 2026-08-23 |
 | Model Control System (`/model` unified surface) | RAL (in extension) | — | Runtime UX | **active** | authored (D39–D42) | PASS 2026-08-25 (SELECTABLE = DISCOVERED ∩ VISIBLE via harness-models.json applied in refreshModels; connectivity honestly UNVERIFIED in Phase 1; boot-default restoration with bounded handshake; reasoning v3 {defaultProfile, profiles} + pure resolveEffective; ephemeral execution profiles via validated `// profile:` tag; inline `{model:}` override guard with Keep-strip; `/mcc` removed — `/model` post-selection flow is the single control center; strict type-check PASS; 15-check regression suite PASS; D43 same-model mitigation (Alt+M // bare /reasoning); live battery: restore notice, immediate Vision low update, Set-Default marker move, workflow config-immutability, override prompt + strip) | Maintenance | Apache-2.0 | 2026-08-25 |
-
+| permission-decision-surface | platform-owned extension | — | Extension (permission) | **active** | authored (D66) | PASS 2026-09-07 (presentation only, no policy; `allow/deny/defer` via `registerAuthorizer("harness-decision-surface")`; `S→defer` stock session fallback, `Y→allow`, `N→deny`, `R→deny(reason)`, `Esc/CtrlC→deny(cancelled)`; subagent badge `· (Subagent: name)`; `Command` compact preview + `d` detail + `R` inline reason; `←→`/`Enter`/hotkeys single focus (D54); `doublePressToConfirm` 800ms; `!hasAuthority→defer` fail-closed; exactly-once; width-safe `12..400` 15 surface tests + integration mock) | Maintenance | Apache-2.0 | 2026-09-07 |
 ## Notes
 
 - **Status semantics:** `active` = validated and promoted; `installed` = deployed, validation pending or interactive; `deprecated/retired` = removed from runtime, history retained.

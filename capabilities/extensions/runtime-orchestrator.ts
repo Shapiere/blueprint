@@ -1,4 +1,5 @@
 import type { ContextUsage, CustomEditor as CustomEditorType, ExtensionAPI, ExtensionContext, ExtensionCommandContext, KeybindingsManager, ReadonlyFooterDataProvider, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import { PermissionDecisionSurface, type PermissionSurfaceDetails } from "./permission-surface";
 import {
   fuzzyFilter,
   getKeybindings,
@@ -2715,7 +2716,7 @@ export function contextFieldLines(parts: BarContext, width: number, theme: Theme
 
   const compose = (left: string): string | null => {
     const tail = "──╮";
-    const fill = width - visibleWidth(left) - visibleWidth(tail) - 5;
+    const fill = width - visibleWidth(left) - visibleWidth(tail) - 1;
     return fill >= 1 ? `${left} ${frame("─".repeat(fill))}${frame(tail)}` : null;
   };
   const fits = (s: string): boolean => visibleWidth(s) <= width;
@@ -2725,13 +2726,13 @@ export function contextFieldLines(parts: BarContext, width: number, theme: Theme
   const withGoal = (base: string): string => (goalText ? `${base}${gt}${goalText}` : base);
   const attempts: string[] = [];
   for (const left of [
-    `╭── ${tint(withGoal(withUsage(withBranch)))}`,
-    `╭── ${tint(withUsage(withBranch))}`,
-    `╭── ${tint(withUsage(withPlace))}`,
-    `╭── ${tint(withUsage(identityLine))}`,
-    `╭── ${tint(withUsage(identityNoProfile))}`,
-    `╭── ${tint(identityLine)}`,
-    `╭── ${tint(identityNoProfile)}`,
+    `${frame("╭── ")}${tint(withGoal(withUsage(withBranch)))}`,
+    `${frame("╭── ")}${tint(withUsage(withBranch))}`,
+    `${frame("╭── ")}${tint(withUsage(withPlace))}`,
+    `${frame("╭── ")}${tint(withUsage(identityLine))}`,
+    `${frame("╭── ")}${tint(withUsage(identityNoProfile))}`,
+    `${frame("╭── ")}${tint(identityLine)}`,
+    `${frame("╭── ")}${tint(identityNoProfile)}`,
   ]) {
     const line = compose(left);
     if (line) {
@@ -2740,9 +2741,11 @@ export function contextFieldLines(parts: BarContext, width: number, theme: Theme
     }
   }
   if (attempts.length === 0) {
-    const bare = `╭── ${tint(identityLine)} `;
-    attempts.push(fits(bare) ? bare + frame("─".repeat(Math.max(1, width - visibleWidth(bare) - 3))) + frame("──╮")
-      : frame(truncateToWidth(bare, Math.max(1, width - 3), "")) + frame("──╮"));
+    const bare = `${frame("╭── ")}${tint(identityLine)} `;
+    const tailW = visibleWidth("──╮");
+    const bareFitsWithTail = visibleWidth(bare) + tailW <= width;
+    attempts.push(bareFitsWithTail ? bare + frame("─".repeat(Math.max(0, width - visibleWidth(bare) - tailW))) + frame("──╮")
+      : frame(truncateToWidth(bare, Math.max(1, width - tailW), "")) + frame("──╮"));
   }
   // Authoritative D45 clamp — wide glyphs (📁) can defeat the width meters,
   // so the composed row is clamped one final time before leaving the function.
@@ -2893,35 +2896,69 @@ export class MinimalFooter implements Component {
  * unchanged; the D63 dispatch path is unaffected because the host wires
  * onSubmit/handlers onto whichever editor the factory returns.
  */
-function piFrameRender(lines: string[], width: number, border: (t: string) => string): string[] {
-  // Base structure from the host editor: [topRule, ...content, bottomRule].
-  const content = lines.slice(1, -1);
-  // Row assembly: "╰─ "(3) + "π "(2) + "│ "(2) + interior + " ╯"(2) = width,
-  // so interior = width - 9 exactly (π+space+pipe+space = 4 of the left 7).
-  const interior = Math.max(1, width - 9);
-  const out: string[] = [];
-  // The editor content lines already carry the π gutter styling from the
-  // base CustomEditor contract; strip the base's own borders and reframe.
-  const pi = `${getAccentFg()("π")} ${getDimFg()("│")}`;
-  content.forEach((text, i) => {
-    const fitted = visibleWidth(text) <= interior ? text : truncateToWidth(text, interior, "");
-    const pad = " ".repeat(Math.max(0, interior - visibleWidth(fitted)));
-    const isLast = i === content.length - 1;
-    if (i === 0) {
-      // First content row: the context field's bottom rule closes here —
-      // rendered by RuntimeContextBar; this row IS the input row.
-      out.push(`${border("╰─ ")}${pi} ${fitted}${pad}${border(" ╯")}`);
-    } else {
-      out.push(`${border("│ ")}${fitted}${pad}${border(" │")}`);
+export function piFrameRender(lines: string[], width: number, border: (t: string) => string): string[] {
+  // Two visual states (spec 2026-09-06):
+  //   SINGLE (1 visible editor row):  [bottomInput]  where bottom is `╰─ π │ input   ╯` (compact, context top is separate)
+  //   MULTILINE (>1 rows):            [content1, content2, ..., contentN, bottomEmpty] where content1 is `│ π │ row1 │`
+  // The top context border `╭── context ──╮` is rendered by RuntimeContextBar, never by this function.
+  const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
+  const isBorderLine = (s: string): boolean => {
+    const stripped = stripAnsi(s).trim();
+    if (stripped.length === 0) return false;
+    if (/^─+$/.test(stripped)) return true;
+    if (stripped.includes("more") && stripped.includes("─")) return true;
+    return false;
+  };
+  let topIdx = -1;
+  let bottomIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (isBorderLine(lines[i])) {
+      if (topIdx === -1) topIdx = i;
+      bottomIdx = i;
     }
-    if (isLast && content.length === 1) {
-      // single-row input: nothing further.
-    }
-  });
-  if (content.length === 0) {
-    const pad = " ".repeat(interior);
-    out.push(`${border("╰─ ")}${pi} ${pad}${border(" ╯")}`);
   }
+  let content: string[];
+  let trailing: string[] = [];
+  if (topIdx !== -1 && bottomIdx !== -1 && topIdx < bottomIdx) {
+    content = lines.slice(topIdx + 1, bottomIdx);
+    trailing = lines.slice(bottomIdx + 1);
+  } else if (topIdx !== -1 && bottomIdx !== -1 && topIdx === bottomIdx) {
+    content = lines.slice(topIdx + 1);
+  } else if (lines.length >= 2 && isBorderLine(lines[0]) && isBorderLine(lines[lines.length - 1])) {
+    content = lines.slice(1, -1);
+  } else {
+    const hasAnyBorder = lines.some((l) => isBorderLine(l));
+    if (hasAnyBorder) content = lines.slice(1, -1);
+    else content = lines.slice();
+  }
+  // Visible rows determine the state. Empty synthetic [top,bottom] yields [] -> treat as single empty.
+  const visibleCount = content.length === 0 ? 1 : content.length;
+  const out: string[] = [];
+  if (visibleCount === 1) {
+    // SINGLE-LINE COMPACT: bottomInput contains the π gutter and the single row's text.
+    const raw = content[0] ?? "";
+    const interior = Math.max(0, width - 9); // "╰─ "(3) + "π "(2) + "│ "(2) + " ╯"(2) =9
+    const piGutter = `${getAccentFg()("π")} ${getDimFg()("│")} `;
+    const fitted = visibleWidth(raw) <= interior ? raw : truncateToWidth(raw, interior, "");
+    const pad = " ".repeat(Math.max(0, interior - visibleWidth(fitted)));
+    const row = `${border("╰─ ")}${piGutter}${fitted}${pad}${border(" ╯")}`;
+    out.push(visibleWidth(row) <= width ? row : truncateToWidth(row, width, ""));
+  } else {
+    // MULTILINE: N content rows (first with π) + empty bottom border.
+    const interiorWidth = Math.max(0, width - 8); // "│ "(2) + "π │ "(4) + " │"(2)=8
+    const piGutter = `${getAccentFg()("π")} ${getDimFg()("│")} `;
+    const placeholder = "    ";
+    content.forEach((raw, idx) => {
+      const gutter = idx === 0 ? piGutter : placeholder;
+      const fitted = visibleWidth(raw) <= interiorWidth ? raw : truncateToWidth(raw, interiorWidth, "");
+      const pad = " ".repeat(Math.max(0, interiorWidth - visibleWidth(fitted)));
+      const row = `${border("│ ")}${gutter}${fitted}${pad}${border(" │")}`;
+      out.push(visibleWidth(row) <= width ? row : truncateToWidth(row, width, ""));
+    });
+    const bottomBorder = border("╰" + "─".repeat(Math.max(0, width - 2)) + "╯");
+    out.push(visibleWidth(bottomBorder) <= width ? bottomBorder : truncateToWidth(bottomBorder, width, ""));
+  }
+  for (const t of trailing) out.push(visibleWidth(t) <= width ? t : truncateToWidth(t, width, ""));
   return out;
 }
 
@@ -2949,6 +2986,89 @@ export function setPiEditorThemeFns(accent: (t: string) => string, dim: (t: stri
 /** Read-only access for tests and diagnostics. */
 export function getLifecycleStore(): LifecycleStore {
   return lifecycleStore;
+}
+
+// ---------------------------------------------------------------------------
+// Permission Decision Surface — wiring (presentation only, no policy)
+// ---------------------------------------------------------------------------
+let currentPermissionUi: { ui: ExtensionContext["ui"]; mode: ExtensionContext["mode"] } | null = null;
+let harnessPermissionDisposer: (() => void) | null = null;
+
+function getPermissionsService(): unknown | undefined {
+  return (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("@gotgenes/pi-permission-system:service")] as unknown;
+}
+
+function mapDetailsToSurface(details: Record<string, unknown>): PermissionSurfaceDetails {
+  const d = details as unknown as Record<string, unknown>;
+  return {
+    requestId: String(d["requestId"] ?? ""),
+    toolName: typeof d["toolName"] === "string" ? (d["toolName"] as string) : undefined,
+    path: typeof d["path"] === "string" ? (d["path"] as string) : undefined,
+    command: typeof d["command"] === "string" ? (d["command"] as string) : undefined,
+    target: typeof d["target"] === "string" ? (d["target"] as string) : undefined,
+    surface: (d["surface"] as string | null) ?? null,
+    value: (d["value"] as string | null) ?? null,
+    toolInputPreview: typeof d["toolInputPreview"] === "string" ? (d["toolInputPreview"] as string) : undefined,
+    message: typeof d["message"] === "string" ? (d["message"] as string) : "",
+    sessionLabel: typeof d["sessionLabel"] === "string" ? (d["sessionLabel"] as string) : undefined,
+    agentName: (d["agentName"] as string | null) ?? null,
+    forwarding: (d["forwarding"] as { requesterAgentName: string | null; requesterSessionId: string | null } | null) ?? null,
+    sessionApproval: (d["sessionApproval"] as { patterns: string[]; surface: string } | null) ?? null,
+    accessIntent: (d["accessIntent"] as { surface: string; path?: string; value?: string } | null) ?? null,
+    cwd: typeof (d as Record<string, unknown>)["cwd"] === "string" ? ((d as Record<string, unknown>)["cwd"] as string) : undefined,
+    policyReason: typeof (d as Record<string, unknown>)["policyReason"] === "string" ? ((d as Record<string, unknown>)["policyReason"] as string) : undefined,
+  };
+}
+
+function tryRegisterHarnessAuthorizer(): void {
+  const svc = getPermissionsService() as { registerAuthorizer?: (name: string, fn: (details: unknown, query: unknown, log: unknown) => Promise<unknown>) => () => void } | undefined;
+  if (!svc || typeof svc.registerAuthorizer !== "function") return;
+  if (harnessPermissionDisposer) {
+    try { harnessPermissionDisposer(); } catch {}
+    harnessPermissionDisposer = null;
+  }
+  harnessPermissionDisposer = svc.registerAuthorizer("harness-decision-surface", async (details: unknown, query: unknown, _log: unknown) => {
+    const q = query as { hasAuthority?: boolean };
+    if (!q.hasAuthority) return { kind: "defer" as const };
+    const ctx = currentPermissionUi;
+    if (!ctx || ctx.mode !== "tui" || !(ctx.ui as unknown as { custom?: unknown }).custom) return { kind: "defer" as const };
+    const surfaceDetails = mapDetailsToSurface(details as Record<string, unknown>);
+    let doublePress = false;
+    try {
+      const cfgPath = path.join(os.homedir(), ".pi", "agent", "extensions", "pi-permission-system", "config.json");
+      if (fs.existsSync(cfgPath)) {
+        const raw = fs.readFileSync(cfgPath, "utf8");
+        const j = JSON.parse(raw) as Record<string, unknown>;
+        if (typeof j["doublePressToConfirm"] === "boolean") doublePress = j["doublePressToConfirm"] as boolean;
+        else if (j["permissions"] && typeof (j["permissions"] as Record<string, unknown>)["doublePressToConfirm"] === "boolean") doublePress = (j["permissions"] as Record<string, unknown>)["doublePressToConfirm"] as boolean;
+      }
+    } catch {}
+    return new Promise((resolve) => {
+      let settled = false;
+      const resolveOnce = (v: unknown) => {
+        if (settled) return;
+        settled = true;
+        resolve(v);
+      };
+      const ui = ctx.ui as unknown as { custom: (fn: (tui: TUI, theme: Theme, kb: KeybindingsManager, done: (v: unknown) => void) => { render: (w: number) => string[]; handleInput: (d: string) => void; invalidate: () => void }, opts: unknown) => void };
+      ui.custom((tui: TUI, theme: Theme, _kb: KeybindingsManager, done: (v: unknown) => void) => {
+        const surface = new PermissionDecisionSurface(surfaceDetails, theme, (verdict) => {
+          done(null);
+          if (verdict.kind === "allow") resolveOnce({ kind: "allow" as const });
+          else if (verdict.kind === "deny") resolveOnce({ kind: "deny" as const, reason: verdict.reason });
+          else resolveOnce({ kind: "defer" as const });
+        }, { doublePressToConfirm: doublePress });
+        return {
+          render: (w: number) => surface.render(w),
+          handleInput: (data: string) => {
+            surface.handleInput(data);
+            tui.requestRender();
+          },
+          invalidate: () => surface.invalidate(),
+        };
+      }, { overlay: false });
+    });
+  });
 }
 
 /**
@@ -2982,8 +3102,13 @@ async function ensurePiInputEditorClass(): Promise<void> {
         render(width: number): string[] {
           // Reserve 4 columns for the frame chrome ("│ " + " │"); the base
           // editor lays out inside, then the wrapper adds the frame.
+          // D65: primary outer frame must be ONE bright source — use the
+          // captured text-token border (liveTheme.fg("text")), never the
+          // host's thinking-level borderColor (which would tint left/right
+          // differently per level/bash mode). Fall back to host only when
+          // the capture hasn't run yet (headless/tests).
           const base = super.render(Math.max(8, width - 4));
-          const borderFn = this.borderColor ?? ((t: string) => t);
+          const borderFn = borderFgFn ?? this.borderColor ?? ((t: string) => t);
           return piFrameRender(base, width, borderFn);
         }
         invalidate(): void {}
@@ -3366,7 +3491,11 @@ export default function (pi: ExtensionAPI) {
     try {
       const topo = detectProjectTopology(ctx.cwd);
       resetLifecycleStore();
-      // D64 Runtime Context + Input Surface (interactive TUI only): the
+      // Permission surface: capture current session UI for authorizer (presentation only)
+      try {
+        currentPermissionUi = { ui: ctx.ui, mode: ctx.mode };
+        tryRegisterHarnessAuthorizer();
+      } catch {}
       // activity widget is registered FIRST so it renders ABOVE the context
       // bar; the reduced footer stays; the native "Working..." spinner is
       // suppressed via the public setWorkingIndicator/setWorkingMessage APIs
@@ -3838,6 +3967,18 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify(`Default Profile: ${state.defaultProfile} · ${state.profiles[state.defaultProfile]} (applies via :${state.profiles[state.defaultProfile]} script suffixes)`, "info");
     },
   });
+
+  // Permission Decision Surface — authorizer registration (presentation only)
+  // The permission policy is entirely owned by pi-permission-system; we only
+  // replace the prompt presentation. The service is published per session and
+  // emits `permissions:ready` when ready; we also try immediately for reload.
+  (pi as unknown as { on: (event: string, handler: () => void) => void }).on("permissions:ready", () => {
+    try { tryRegisterHarnessAuthorizer(); } catch {}
+  });
+  try { tryRegisterHarnessAuthorizer(); } catch {}
+  (pi as unknown as { on: (event: string, handler: () => void) => void }).on("session_shutdown", () => {
+    try { currentPermissionUi = null; } catch {}
+  });
 }
 
 
@@ -3994,8 +4135,18 @@ async function runModelControlSurfaceLoop(pi: ExtensionAPI, ctx: ExtensionContex
         ctx.ui.notify(`Could not resolve model "${result.spec}".`, "warning");
         continue;
       }
-      await pi.setModel(target as never);
-      ctx.ui.notify(`Model: ${result.spec}`, "info");
+      try {
+        await pi.setModel(target as never);
+        ctx.ui.notify(`Model: ${result.spec}`, "info");
+        // Owner friction fix: after a successful model selection the next
+        // interaction is almost always reasoning/profile adjustment. Move
+        // keyboard focus to REASONING PROFILES automatically so the user
+        // does not have to press ←/→. Only focus changes — profile/model
+        // state is untouched. Same-model (D44) also moves, failure does not.
+        surfaceState.focus = "profiles";
+      } catch (e) {
+        ctx.ui.notify(`Model switch failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+      }
       continue; // stay in the surface — header/detail refresh on the next pass
     }
     if (result.kind === "profile") {
