@@ -1,5 +1,5 @@
 import type { ContextUsage, CustomEditor as CustomEditorType, ExtensionAPI, ExtensionContext, ExtensionCommandContext, KeybindingsManager, ReadonlyFooterDataProvider, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
-import { PermissionDecisionSurface, type PermissionSurfaceDetails } from "./permission-surface";
+import { PermissionDecisionSurface, type PermissionSurfaceDetails } from "./components/permission-surface";
 import {
   fuzzyFilter,
   getKeybindings,

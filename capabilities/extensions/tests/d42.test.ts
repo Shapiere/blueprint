@@ -82,7 +82,7 @@ import {
   humanSummary,
   policyLine,
   scopeTarget,
-} from "../permission-surface.js";
+} from "../components/permission-surface.js";
 
 const STATE_FILE = path.join(os.homedir(), ".pi", "agent", "harness-reasoning.json");
 const MODELS_FILE = path.join(os.homedir(), ".pi", "agent", "harness-models.json");
@@ -1656,7 +1656,7 @@ check("FRAME GEOMETRY: top/content/bottom share ONE outer width and right edge a
 });
 
 // ------------------------------------------------------- Permission Decision Surface
-function permDetails(overrides: Partial<import("../permission-surface.js").PermissionSurfaceDetails> = {}): import("../permission-surface.js").PermissionSurfaceDetails {
+function permDetails(overrides: Partial<import("../components/permission-surface.js").PermissionSurfaceDetails> = {}): import("../components/permission-surface.js").PermissionSurfaceDetails {
   return {
     requestId: "req-1",
     toolName: "bash",
@@ -1847,11 +1847,11 @@ check("PERM SURFACE: subagent badge appears", () => {
 });
 
 check("PERM SURFACE: helpers humanSummary/scopeTarget/commandPreview/policyLine", () => {
-  assert.equal(humanSummary({ message: "hello", toolName: "bash", agentName: null, requestId: "1" } as unknown as import("../permission-surface.js").PermissionSurfaceDetails), "hello");
-  assert.equal(scopeTarget({ path: "G:\\a", message: "m", requestId: "1", agentName: null } as unknown as import("../permission-surface.js").PermissionSurfaceDetails), "G:\\a");
-  assert.equal(commandPreview({ command: "ls", message: "m", requestId: "1", agentName: null } as unknown as import("../permission-surface.js").PermissionSurfaceDetails), "ls");
-  assert.equal(policyLine({ message: "m", requestId: "1", agentName: null, accessIntent: { surface: "bash" } } as unknown as import("../permission-surface.js").PermissionSurfaceDetails), "bash");
-  assert.equal(policyLine({ message: "m", requestId: "1", agentName: null } as unknown as import("../permission-surface.js").PermissionSurfaceDetails), null);
+  assert.equal(humanSummary({ message: "hello", toolName: "bash", agentName: null, requestId: "1" } as unknown as import("../components/permission-surface.js").PermissionSurfaceDetails), "hello");
+  assert.equal(scopeTarget({ path: "G:\\a", message: "m", requestId: "1", agentName: null } as unknown as import("../components/permission-surface.js").PermissionSurfaceDetails), "G:\\a");
+  assert.equal(commandPreview({ command: "ls", message: "m", requestId: "1", agentName: null } as unknown as import("../components/permission-surface.js").PermissionSurfaceDetails), "ls");
+  assert.equal(policyLine({ message: "m", requestId: "1", agentName: null, accessIntent: { surface: "bash" } } as unknown as import("../components/permission-surface.js").PermissionSurfaceDetails), "bash");
+  assert.equal(policyLine({ message: "m", requestId: "1", agentName: null } as unknown as import("../components/permission-surface.js").PermissionSurfaceDetails), null);
 });
 
 check("PERM INTEGRATION: mock getPermissionsService registerAuthorizer and defer", async () => {

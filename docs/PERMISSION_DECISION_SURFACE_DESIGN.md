@@ -164,7 +164,7 @@ Narrow → policy line dropped first, then command truncated, then target trunca
 
 ## 14. Architectural Boundary (smallest clean)
 
-* **Location:** new `capabilities/extensions/permission-surface.ts` — pure `PermissionDecisionSurface implements Component { render(w), handleInput }` — not bloating `runtime-orchestrator.ts`.
+* **Location:** new `capabilities/extensions/components/permission-surface.ts` — pure `PermissionDecisionSurface implements Component { render(w), handleInput }` — not bloating `runtime-orchestrator.ts`.
 * **Wiring in `runtime-orchestrator.ts` (permissions:ready):**
   ```ts
   const svc = getPermissionsService();
@@ -248,7 +248,7 @@ Remove `harness-decision-surface` from `authorizerChain` or set env guard → st
 
 ## 17. Implementation Plan (next step after approval)
 
-1. Create `capabilities/extensions/permission-surface.ts` (pure component, no policy, `visibleWidth`/`truncateToWidth`, `Theme` `text`/`dim`/`warning`/`customMessageBg`).
+1. Create `capabilities/extensions/components/permission-surface.ts` (pure component, no policy, `visibleWidth`/`truncateToWidth`, `Theme` `text`/`dim`/`warning`/`customMessageBg`).
 2. Wire `getPermissionsService().registerAuthorizer` in `runtime-orchestrator.ts` behind `permissions:ready` + `hasUI` guard, with `PI_DISABLE_...` env.
 3. Add `settings.json` `authorizerChain` documentation (not committed) + `docs/SETUP.md` note.
 4. Add regression tests in `capabilities/extensions/tests/d42.test.ts`: render widths, `S→defer`, `headless→deny`, `Esc→deny`, single `›`, no `SessionRules` mutation.
