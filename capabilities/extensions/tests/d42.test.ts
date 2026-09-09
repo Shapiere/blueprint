@@ -80,6 +80,7 @@ import {
   PermissionDecisionSurface,
   commandPreview,
   humanSummary,
+  isExcludedSurface,
   policyLine,
   scopeTarget,
 } from "../components/permission-surface.js";
@@ -1986,8 +1987,8 @@ check("PERM REFINEMENT 1: normal command — concise summary, one preview, polic
   assert.match(flat, /ls -la/, "command preview present");
   // Policy compact
   assert.match(flat, /Policy/, "policy line");
-  // Controls
-  assert.match(flat, /\[Y\] Allow/, "Y");
+  // Controls for excluded: Y not actionable, only S/N/R
+  assert.doesNotMatch(flat, /\[Y\] Allow/, "Y not shown on excluded external_directory");
   assert.match(flat, /\[S\] Session/, "S");
   assert.match(flat, /\[N\] Deny/, "N");
   assert.match(flat, /\[R\] Reason/, "R");
@@ -2072,8 +2073,9 @@ check("PERM REFINEMENT 5: narrow-width priority decision>target>tool>command>pol
   for (const w of [40,60,80,120,160]) {
     const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => {});
     const flat = flatText(surf.render(w));
-    // Decision controls always
-    assert.match(flat, /\[Y\] Allow/, `controls at w=${w}`);
+    // For excluded, Y not shown, S/N/R always
+    assert.doesNotMatch(flat, /\[Y\] Allow/, `Y not shown excluded at w=${w}`);
+    assert.match(flat, /\[S\] Session/, `S at w=${w}`);
     // Target always (or truncated)
     assert.ok(flat.includes("G:\\pitesting") || flat.includes("…"), `target at w=${w}`);
     // Command preview exists but truncated
@@ -2143,6 +2145,160 @@ check("PERM REFINEMENT 8: decision regression Y/S/N/R/Esc still correct after re
   assert.equal((rv as any).kind, "deny");
   assert.equal((rv as any).reason, "hi");
 });
+
+// ------------------------------------------------------- D66.2 filesystem control refinement — excluded surfaces
+check("PERM D66.2-1: external_directory Y not actionable, S defer N deny R reason Esc deny", () => {
+  const details = permDetails({ accessIntent: { surface: "external_directory", path: "G:\\pitesting\\a.txt" } as any, surface: "external_directory", path: "G:\\pitesting\\a.txt", command: "mkdir -p G:\\pitesting\\a.txt", message: "External directory access" });
+  assert.equal(isExcludedSurface(details), true, "external_directory is excluded");
+  // Y must not allow
+  let v:any=null;
+  const sY = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
+  sY.handleInput("y");
+  assert.equal(v, null, "Y hotkey must not resolve on excluded");
+  assert.equal(sY.getFocusedKey(), "s", "initial focus is s, not y");
+  sY.handleInput("Y");
+  assert.equal(v, null, "Y uppercase also ignored");
+  // S defer
+  v=null;
+  const sS = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
+  sS.handleInput("s");
+  assert.equal((v as any).kind, "defer", "S→defer on excluded");
+  // N deny
+  v=null;
+  const sN = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
+  sN.handleInput("n");
+  assert.equal((v as any).kind, "deny", "N→deny");
+  // R enters reason, then deny(reason)
+  let rv:any=null;
+  const sR = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{rv=x;});
+  sR.handleInput("r");
+  assert.equal(sR.getStep(), "reason", "R enters reason");
+  sR.handleInput("h"); sR.handleInput("i"); sR.handleInput("\r");
+  assert.equal((rv as any).kind, "deny");
+  assert.equal((rv as any).reason, "hi");
+  // Esc deny
+  v=null;
+  const sEsc = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
+  sEsc.handleInput("\x1b");
+  assert.equal((v as any).kind, "deny");
+  assert.equal((v as any).reason, "cancelled");
+});
+
+check("PERM D66.2-2: path Y not actionable, same as external_directory", () => {
+  const details = permDetails({ accessIntent: { surface: "path", path: "G:\\repo\\.env" } as any, surface: "path", path: "G:\\repo\\.env", command: "read G:\\repo\\.env", message: "Path access" });
+  assert.equal(isExcludedSurface(details), true, "path is excluded");
+  let v:any=null;
+  const s = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
+  s.handleInput("y");
+  assert.equal(v, null, "Y ignored on path");
+  s.handleInput("s");
+  assert.equal((v as any).kind, "defer", "S defer on path");
+});
+
+check("PERM D66.2-3: ordinary allow-capable surface Y still allow", () => {
+  const details = permDetails({ accessIntent: { surface: "bash", value: "git push" } as any, surface: "bash", command: "git push --force", message: "Bash command" });
+  assert.equal(isExcludedSurface(details), false, "bash is allow-capable");
+  let v:any=null;
+  const sY = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
+  sY.handleInput("y");
+  assert.equal((v as any).kind, "allow", "Y→allow on bash");
+  v=null;
+  const sS = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
+  sS.handleInput("s");
+  assert.equal((v as any).kind, "defer", "S→defer on bash");
+  v=null;
+  const sN = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
+  sN.handleInput("n");
+  assert.equal((v as any).kind, "deny");
+  let rv:any=null;
+  const sR = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{rv=x;});
+  sR.handleInput("r"); sR.handleInput("x"); sR.handleInput("\r");
+  assert.equal((rv as any).kind, "deny");
+});
+
+check("PERM D66.2-4: excluded Y omitted — focus never on y, Enter does nothing, Y hotkey ignored", () => {
+  const details = permDetails({ accessIntent: { surface: "external_directory" } as any, surface: "external_directory", path: "G:\\pitesting\\x.txt" });
+  const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, ()=>{});
+  assert.equal(surf.getFocusedKey(), "s", "initial focus s");
+  surf.handleInput("\x1b[D"); // left from s should wrap to r
+  assert.equal(surf.getFocusedKey(), "r", "left wraps to r among 3");
+  surf.handleInput("\x1b[C"); // right back to s
+  assert.equal(surf.getFocusedKey(), "s");
+  surf.handleInput("\x1b[C"); // to n
+  assert.equal(surf.getFocusedKey(), "n");
+  // Y hotkey must not move focus nor resolve
+  let v:any=null;
+  const surf2 = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
+  surf2.handleInput("y");
+  assert.equal(v, null);
+  assert.equal(surf2.getFocusedKey(), "s", "Y hotkey ignored, focus stays s");
+  // Enter on s should defer, not allow
+  let v2:any=null;
+  const surf3 = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v2=x;});
+  surf3.handleInput("\r");
+  assert.equal((v2 as any).kind, "defer", "Enter on s → defer");
+  // If somehow focused on y (should never happen), Enter would not allow — verified by getActiveControls filtering
+  const flat = flatText(surf.render(80));
+  assert.doesNotMatch(flat, /\[Y\] Allow/, "Y not shown for excluded");
+  assert.match(flat, /\[S\] Session/, "S shown");
+  assert.match(flat, /\[N\] Deny/, "N shown");
+  assert.match(flat, /\[R\] Reason/, "R shown");
+});
+
+check("PERM D66.2-5: excluded focus count exactly one among actionable (3)", () => {
+  const details = permDetails({ accessIntent: { surface: "path" } as any, surface: "path", path: "G:\\x.txt" });
+  const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, ()=>{});
+  const flat = flatText(surf.render(80));
+  const cursorCount = (flat.match(/›/g) ?? []).length;
+  assert.equal(cursorCount, 1, `exactly one cursor among 3, got ${cursorCount}`);
+  // Non-excluded has 4
+  const normal = permDetails({ surface: "bash", command: "echo hi" });
+  const surf2 = new PermissionDecisionSurface(normal, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, ()=>{});
+  const flat2 = flatText(surf2.render(80));
+  const c2 = (flat2.match(/›/g) ?? []).length;
+  assert.equal(c2, 1, "non-excluded also one cursor among 4");
+});
+
+check("PERM D66.2-6: width 12-400 for excluded and non-excluded", () => {
+  const excluded = permDetails({ accessIntent: { surface: "external_directory", path: "G:\\pitesting\\very\\long\\path\\".repeat(5) } as any, command: "mkdir -p G:\\pitesting\\x && echo hello && ".repeat(20) });
+  const allowCap = permDetails({ accessIntent: { surface: "bash" } as any, command: "git push --force origin main" });
+  for (const w of [12,20,40,60,80,100,120,140,160,200,300,400]) {
+    for (const d of [excluded, allowCap]) {
+      const surf = new PermissionDecisionSurface(d, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, ()=>{});
+      for (const l of surf.render(w)) assert.ok(visibleWidth(l) <= w, `width ${w} excluded=${isExcludedSurface(d)} overflow ${visibleWidth(l)}>${w}`);
+      surf.handleInput("d");
+      for (const l of surf.render(w)) assert.ok(visibleWidth(l) <= w, `detail width ${w} overflow`);
+      surf.handleInput("\x1b");
+    }
+  }
+});
+
+check("PERM D66.2-7: excluded long-command remains compact after control change", () => {
+  const longCmd = "x".repeat(14000);
+  const details = permDetails({ accessIntent: { surface: "external_directory", path: "G:\\pitesting\\long.txt" } as any, command: longCmd, path: "G:\\pitesting\\long.txt", message: `Current agent requested bash command '${longCmd.slice(0,100)}...'` });
+  const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, ()=>{});
+  const flat = flatText(surf.render(80));
+  assert.doesNotMatch(flat, /Current agent requested/, "no verbose");
+  assert.doesNotMatch(flat, /\[Y\] Allow/, "no Y on excluded long");
+  const lines = surf.render(80);
+  assert.ok(lines.length < 20, `excluded long still compact ${lines.length}`);
+  surf.handleInput("d");
+  const dFlat = flatText(surf.render(80));
+  assert.ok(dFlat.includes("x".repeat(10)), "detail has long command");
+});
+
+check("PERM D66.2-8: S never mutates SessionRules and never returns allow (excluded)", () => {
+  const details = permDetails({ accessIntent: { surface: "external_directory" } as any, surface: "external_directory" });
+  let v:any=null;
+  const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
+  surf.handleInput("s");
+  assert.equal((v as any).kind, "defer", "S is defer");
+  assert.notEqual((v as any).kind, "allow");
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  const block = src.slice(src.indexOf('registerAuthorizer("harness-decision-surface"'), src.indexOf('registerAuthorizer("harness-decision-surface"')+3000);
+  assert.doesNotMatch(block, /SessionRules|approved_for_session/, "wiring never mutates SessionRules");
+});
+
 
 
 

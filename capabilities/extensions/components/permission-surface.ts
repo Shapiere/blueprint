@@ -123,6 +123,23 @@ export function policyLine(details: PermissionSurfaceDetails): string | null {
   return parts.join(" · ");
 }
 
+// Mirrors the current delegation-envelope capability boundary (ADR 0007 §5).
+// This helper intentionally does NOT classify paths as secret/non-secret; it only
+// reflects whether the gate surface is one that the permission system excludes
+// from custom-authorizer allow verdicts. Keep in sync with
+// @gotgenes/pi-permission-system/src/authority/delegation-envelope.ts
+// DELEGATION_EXCLUDED_SURFACES = {"external_directory","path"}.
+export const DELEGATION_EXCLUDED_SURFACES: ReadonlySet<string> = new Set([
+  "external_directory",
+  "path",
+]);
+
+export function isExcludedSurface(details: PermissionSurfaceDetails): boolean {
+  const surface = details.accessIntent?.surface ?? details.surface ?? null;
+  if (!surface) return false;
+  return DELEGATION_EXCLUDED_SURFACES.has(surface);
+}
+
 export class PermissionDecisionSurface {
   private step: Step = "decision";
   private focusedIdx = 0;
@@ -142,8 +159,16 @@ export class PermissionDecisionSurface {
   getStep(): Step {
     return this.step;
   }
+  private isExcluded(): boolean {
+    return isExcludedSurface(this.details);
+  }
+  private getActiveControls(): Array<{ key: ControlKey; label: string; hint: string }> {
+    if (this.isExcluded()) return CONTROLS.filter((c) => c.key !== "y");
+    return CONTROLS;
+  }
   getFocusedKey(): ControlKey {
-    return CONTROLS[this.focusedIdx]?.key ?? "y";
+    const active = this.getActiveControls();
+    return active[this.focusedIdx]?.key ?? active[0]?.key ?? "s";
   }
   getReasonDraft(): string {
     return this.reasonDraft;
@@ -179,6 +204,7 @@ export class PermissionDecisionSurface {
 
   private handleDecisionKey(key: ControlKey): void {
     if (this.step !== "decision") return;
+    if (this.isExcluded() && key === "y") return;
     const action = () => {
       switch (key) {
         case "y":
@@ -247,19 +273,22 @@ export class PermissionDecisionSurface {
       return;
     }
     if (data === "\x1b[D") {
-      this.focusedIdx = (this.focusedIdx - 1 + CONTROLS.length) % CONTROLS.length;
+      const active = this.getActiveControls();
+      this.focusedIdx = (this.focusedIdx - 1 + active.length) % active.length;
       this.armedKey = null;
       clearTimeout(this.armedTimer as unknown as number);
       return;
     }
     if (data === "\x1b[C") {
-      this.focusedIdx = (this.focusedIdx + 1) % CONTROLS.length;
+      const active = this.getActiveControls();
+      this.focusedIdx = (this.focusedIdx + 1) % active.length;
       this.armedKey = null;
       clearTimeout(this.armedTimer as unknown as number);
       return;
     }
     if (data === "\r" || data === "\n") {
-      const focused = CONTROLS[this.focusedIdx];
+      const active = this.getActiveControls();
+      const focused = active[this.focusedIdx];
       if (focused) this.handleDecisionKey(focused.key);
       return;
     }
@@ -272,7 +301,9 @@ export class PermissionDecisionSurface {
     }
     const lower = data.toLowerCase();
     if (lower === "y" || lower === "s" || lower === "n" || lower === "r") {
-      const idx = CONTROLS.findIndex((c) => c.key === lower);
+      if (this.isExcluded() && lower === "y") return;
+      const active = this.getActiveControls();
+      const idx = active.findIndex((c) => c.key === lower);
       if (idx >= 0) this.focusedIdx = idx;
       this.handleDecisionKey(lower as ControlKey);
       return;
@@ -364,9 +395,10 @@ export class PermissionDecisionSurface {
   }
 
   private renderControls(width: number): string {
+    const active = this.getActiveControls();
     const parts: string[] = [];
-    for (let i = 0; i < CONTROLS.length; i++) {
-      const c = CONTROLS[i]!;
+    for (let i = 0; i < active.length; i++) {
+      const c = active[i]!;
       const isFocused = i === this.focusedIdx;
       const isArmed = this.armedKey === c.key;
       let label = c.hint;
