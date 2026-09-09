@@ -36,11 +36,10 @@ export interface PermissionSurfaceOptions {
 }
 
 type Step = "decision" | "reason" | "detail";
-type ControlKey = "y" | "s" | "n" | "r";
+type ControlKey = "y" | "n" | "r";
 
 const CONTROLS: Array<{ key: ControlKey; label: string; hint: string }> = [
   { key: "y", label: "Allow", hint: "[Y] Allow" },
-  { key: "s", label: "Session", hint: "[S] Session · policy" },
   { key: "n", label: "Deny", hint: "[N] Deny" },
   { key: "r", label: "Reason", hint: "[R] Reason" },
 ];
@@ -159,16 +158,8 @@ export class PermissionDecisionSurface {
   getStep(): Step {
     return this.step;
   }
-  private isExcluded(): boolean {
-    return isExcludedSurface(this.details);
-  }
-  private getActiveControls(): Array<{ key: ControlKey; label: string; hint: string }> {
-    if (this.isExcluded()) return CONTROLS.filter((c) => c.key !== "y");
-    return CONTROLS;
-  }
   getFocusedKey(): ControlKey {
-    const active = this.getActiveControls();
-    return active[this.focusedIdx]?.key ?? active[0]?.key ?? "s";
+    return CONTROLS[this.focusedIdx]?.key ?? "y";
   }
   getReasonDraft(): string {
     return this.reasonDraft;
@@ -204,14 +195,10 @@ export class PermissionDecisionSurface {
 
   private handleDecisionKey(key: ControlKey): void {
     if (this.step !== "decision") return;
-    if (this.isExcluded() && key === "y") return;
     const action = () => {
       switch (key) {
         case "y":
           this.resolveOnce({ kind: "allow" });
-          break;
-        case "s":
-          this.resolveOnce({ kind: "defer" });
           break;
         case "n":
           this.resolveOnce({ kind: "deny" });
@@ -273,22 +260,19 @@ export class PermissionDecisionSurface {
       return;
     }
     if (data === "\x1b[D") {
-      const active = this.getActiveControls();
-      this.focusedIdx = (this.focusedIdx - 1 + active.length) % active.length;
+      this.focusedIdx = (this.focusedIdx - 1 + CONTROLS.length) % CONTROLS.length;
       this.armedKey = null;
       clearTimeout(this.armedTimer as unknown as number);
       return;
     }
     if (data === "\x1b[C") {
-      const active = this.getActiveControls();
-      this.focusedIdx = (this.focusedIdx + 1) % active.length;
+      this.focusedIdx = (this.focusedIdx + 1) % CONTROLS.length;
       this.armedKey = null;
       clearTimeout(this.armedTimer as unknown as number);
       return;
     }
     if (data === "\r" || data === "\n") {
-      const active = this.getActiveControls();
-      const focused = active[this.focusedIdx];
+      const focused = CONTROLS[this.focusedIdx];
       if (focused) this.handleDecisionKey(focused.key);
       return;
     }
@@ -300,10 +284,8 @@ export class PermissionDecisionSurface {
       return;
     }
     const lower = data.toLowerCase();
-    if (lower === "y" || lower === "s" || lower === "n" || lower === "r") {
-      if (this.isExcluded() && lower === "y") return;
-      const active = this.getActiveControls();
-      const idx = active.findIndex((c) => c.key === lower);
+    if (lower === "y" || lower === "n" || lower === "r") {
+      const idx = CONTROLS.findIndex((c) => c.key === lower);
       if (idx >= 0) this.focusedIdx = idx;
       this.handleDecisionKey(lower as ControlKey);
       return;
@@ -395,10 +377,9 @@ export class PermissionDecisionSurface {
   }
 
   private renderControls(width: number): string {
-    const active = this.getActiveControls();
     const parts: string[] = [];
-    for (let i = 0; i < active.length; i++) {
-      const c = active[i]!;
+    for (let i = 0; i < CONTROLS.length; i++) {
+      const c = CONTROLS[i]!;
       const isFocused = i === this.focusedIdx;
       const isArmed = this.armedKey === c.key;
       let label = c.hint;

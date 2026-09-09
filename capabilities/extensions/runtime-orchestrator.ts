@@ -2993,6 +2993,7 @@ export function getLifecycleStore(): LifecycleStore {
 // ---------------------------------------------------------------------------
 let currentPermissionUi: { ui: ExtensionContext["ui"]; mode: ExtensionContext["mode"] } | null = null;
 let harnessPermissionDisposer: (() => void) | null = null;
+let harnessPromptRendererDisposer: (() => void) | null = null;
 
 function getPermissionsService(): unknown | undefined {
   return (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("@gotgenes/pi-permission-system:service")] as unknown;
@@ -3020,54 +3021,73 @@ function mapDetailsToSurface(details: Record<string, unknown>): PermissionSurfac
   };
 }
 
-function tryRegisterHarnessAuthorizer(): void {
-  const svc = getPermissionsService() as { registerAuthorizer?: (name: string, fn: (details: unknown, query: unknown, log: unknown) => Promise<unknown>) => () => void } | undefined;
-  if (!svc || typeof svc.registerAuthorizer !== "function") return;
-  if (harnessPermissionDisposer) {
-    try { harnessPermissionDisposer(); } catch {}
-    harnessPermissionDisposer = null;
-  }
-  harnessPermissionDisposer = svc.registerAuthorizer("harness-decision-surface", async (details: unknown, _query: unknown, _log: unknown) => {
-    const ctx = currentPermissionUi;
-    if (!ctx || ctx.mode !== "tui" || !(ctx.ui as unknown as { custom?: unknown }).custom) return { kind: "defer" as const };
-    const surfaceDetails = mapDetailsToSurface(details as Record<string, unknown>);
-    let doublePress = false;
+function tryRegisterHarnessPromptRenderer(): void {
+  const svc = getPermissionsService() as {
+    registerPermissionPromptRenderer?: (
+      renderer: (
+        details: unknown,
+        view: { mode: string; ui: unknown; doublePressToConfirm: boolean },
+        title: string,
+        message: string,
+        options?: unknown,
+      ) => Promise<unknown>,
+    ) => () => void;
+  } | undefined;
+  if (!svc || typeof svc.registerPermissionPromptRenderer !== "function") return;
+  if (harnessPromptRendererDisposer) {
     try {
-      const cfgPath = path.join(os.homedir(), ".pi", "agent", "extensions", "pi-permission-system", "config.json");
-      if (fs.existsSync(cfgPath)) {
-        const raw = fs.readFileSync(cfgPath, "utf8");
-        const j = JSON.parse(raw) as Record<string, unknown>;
-        if (typeof j["doublePressToConfirm"] === "boolean") doublePress = j["doublePressToConfirm"] as boolean;
-        else if (j["permissions"] && typeof (j["permissions"] as Record<string, unknown>)["doublePressToConfirm"] === "boolean") doublePress = (j["permissions"] as Record<string, unknown>)["doublePressToConfirm"] as boolean;
-      }
+      harnessPromptRendererDisposer();
     } catch {}
+    harnessPromptRendererDisposer = null;
+  }
+  harnessPromptRendererDisposer = svc.registerPermissionPromptRenderer(async (details: unknown, view: unknown, _title: string, _message: string, _options?: unknown) => {
+    const v = view as { mode: string; ui: { custom: (fn: (tui: TUI, theme: Theme, kb: KeybindingsManager, done: (v: unknown) => void) => { render: (w: number) => string[]; handleInput: (d: string) => void; invalidate: () => void }, opts: unknown) => void }; doublePressToConfirm: boolean };
+    if (!v || v.mode !== "tui" || !v.ui?.custom) {
+      return { approved: false, state: "denied" as const, denialReason: "cancelled" };
+    }
+    const surfaceDetails = mapDetailsToSurface(details as Record<string, unknown>);
     return new Promise((resolve) => {
       let settled = false;
-      const resolveOnce = (v: unknown) => {
+      const resolveOnce = (decision: unknown) => {
         if (settled) return;
         settled = true;
-        resolve(v);
+        resolve(decision);
       };
-      const ui = ctx.ui as unknown as { custom: (fn: (tui: TUI, theme: Theme, kb: KeybindingsManager, done: (v: unknown) => void) => { render: (w: number) => string[]; handleInput: (d: string) => void; invalidate: () => void }, opts: unknown) => void };
-      ui.custom((tui: TUI, theme: Theme, _kb: KeybindingsManager, done: (v: unknown) => void) => {
-        const surface = new PermissionDecisionSurface(surfaceDetails, theme, (verdict) => {
-          done(null);
-          if (verdict.kind === "allow") resolveOnce({ kind: "allow" as const });
-          else if (verdict.kind === "deny") resolveOnce({ kind: "deny" as const, reason: verdict.reason });
-          else resolveOnce({ kind: "defer" as const });
-        }, { doublePressToConfirm: doublePress });
-        return {
-          render: (w: number) => surface.render(w),
-          handleInput: (data: string) => {
-            surface.handleInput(data);
-            tui.requestRender();
-          },
-          invalidate: () => surface.invalidate(),
-        };
-      }, { overlay: false });
+      const ui = v.ui as unknown as {
+        custom: (
+          fn: (tui: TUI, theme: Theme, kb: KeybindingsManager, done: (v: unknown) => void) => { render: (w: number) => string[]; handleInput: (d: string) => void; invalidate: () => void },
+          opts: unknown,
+        ) => void;
+      };
+      ui.custom(
+        (tui: TUI, theme: Theme, _kb: KeybindingsManager, done: (v: unknown) => void) => {
+          const surface = new PermissionDecisionSurface(surfaceDetails, theme, (verdict) => {
+            done(null);
+            if (verdict.kind === "allow") resolveOnce({ approved: true, state: "approved" as const });
+            else if (verdict.kind === "deny") {
+              const reason = (verdict as { reason?: string }).reason;
+              if (reason && reason !== "cancelled") resolveOnce({ approved: false, state: "denied" as const, denialReason: reason });
+              else if (reason === "cancelled") resolveOnce({ approved: false, state: "denied" as const, denialReason: "cancelled" });
+              else resolveOnce({ approved: false, state: "denied" as const });
+            } else {
+              resolveOnce({ approved: false, state: "denied" as const });
+            }
+          }, { doublePressToConfirm: v.doublePressToConfirm });
+          return {
+            render: (w: number) => surface.render(w),
+            handleInput: (data: string) => {
+              surface.handleInput(data);
+              tui.requestRender();
+            },
+            invalidate: () => surface.invalidate(),
+          };
+        },
+        { overlay: false },
+      );
     });
   });
 }
+
 
 /**
  * LAYER 3 — the input surface. Built through the PUBLIC setEditorComponent
@@ -3489,12 +3509,11 @@ export default function (pi: ExtensionAPI) {
     try {
       const topo = detectProjectTopology(ctx.cwd);
       resetLifecycleStore();
-      // Permission surface: capture current session UI for authorizer (presentation only)
+      // Permission surface: Harness prompt renderer (terminal presentation, package remains authority)
       try {
         currentPermissionUi = { ui: ctx.ui, mode: ctx.mode };
-        tryRegisterHarnessAuthorizer();
+        tryRegisterHarnessPromptRenderer();
       } catch {}
-      // activity widget is registered FIRST so it renders ABOVE the context
       // bar; the reduced footer stays; the native "Working..." spinner is
       // suppressed via the public setWorkingIndicator/setWorkingMessage APIs
       // (single lifecycle signal lives in the activity line); the π input
@@ -3966,21 +3985,22 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // Permission Decision Surface — authorizer registration (presentation only)
-  // The permission policy is entirely owned by pi-permission-system; we only
-  // replace the prompt presentation. The service is published per session and
-  // emits `permissions:ready` on pi.events when ready; we also try immediately for reload.
+  // Permission Decision Surface — prompt renderer registration (terminal presentation, package remains authority)
+  // The permission policy is entirely owned by pi-permission-system; Harness only
+  // replaces the prompt presentation at the terminal LocalUserAuthorizer level.
+  // The service is published per session and emits `permissions:ready` on pi.events when ready; we also try immediately for reload.
   pi.events.on("permissions:ready", () => {
-    try { tryRegisterHarnessAuthorizer(); } catch {}
+    try { tryRegisterHarnessPromptRenderer(); } catch {}
   });
-  try { tryRegisterHarnessAuthorizer(); } catch {}
+  try { tryRegisterHarnessPromptRenderer(); } catch {}
   (pi as unknown as { on: (event: string, handler: () => void) => void }).on("session_shutdown", () => {
     try { currentPermissionUi = null; } catch {}
+    try { harnessPromptRendererDisposer?.(); } catch {}
+    harnessPromptRendererDisposer = null;
   });
 }
 
 /** Active runModelControlCenter loops. While one is open, model_select events
- * fired by the surface's own setModel are absorbed: the loop re-renders with
  * fresh state itself, so a second loop must never stack on top (which caused
  * double-Esc exits and state carryover between layers). */
 let modelSurfaceLoops = 0;

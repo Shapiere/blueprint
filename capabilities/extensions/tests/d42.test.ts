@@ -1680,7 +1680,7 @@ check("PERM SURFACE: title, target, command, policy, controls, subagent badge", 
   assert.match(flat, /Command/, "command label");
   assert.match(flat, /rm -rf/, "command preview");
   assert.match(flat, /\[Y\] Allow/, "controls Y");
-  assert.match(flat, /\[S\] Session/, "controls S");
+  assert.doesNotMatch(flat, /\[S\] Session/, "S not shown in final single-UI");
   assert.match(flat, /\[N\] Deny/, "controls N");
   assert.match(flat, /\[R\] Reason/, "controls R");
   void verdict;
@@ -1716,13 +1716,12 @@ check("PERM SURFACE: keyboard Y → allow", () => {
   assert.equal((v as unknown as { kind: string }).kind, "allow", "Y must allow");
 });
 
-check("PERM SURFACE: keyboard S → defer (never allow, never SessionRules)", () => {
+check("PERM SURFACE: keyboard S → ignored (no Session in final single-UI)", () => {
   let v: unknown = null;
   const surf = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x) => { v = x; });
   surf.handleInput("s");
-  assert.equal((v as unknown as { kind: string }).kind, "defer", "S must defer");
-  // Ensure SessionRules not touched: we cannot check file, but ensure no allow
-  assert.notEqual((v as unknown as { kind: string }).kind, "allow", "S must not allow");
+  assert.equal(v, null, "S must be ignored (no Session button in final)");
+  assert.equal(surf.getFocusedKey(), "y", "focus stays y, not s");
 });
 
 check("PERM SURFACE: keyboard N → deny", () => {
@@ -1772,13 +1771,13 @@ check("PERM SURFACE: arrow focus and Enter activation", () => {
   const surf = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x) => { v = x; });
   assert.equal(surf.getFocusedKey(), "y", "initial Y");
   surf.handleInput("\x1b[C"); // →
-  assert.equal(surf.getFocusedKey(), "s", "→ to S");
+  assert.equal(surf.getFocusedKey(), "n", "→ to N (S absent, y→n→r)");
   surf.handleInput("\x1b[C");
-  assert.equal(surf.getFocusedKey(), "n", "→ to N");
+  assert.equal(surf.getFocusedKey(), "r", "→ to R");
   surf.handleInput("\x1b[D"); // ←
-  assert.equal(surf.getFocusedKey(), "s", "← to S");
-  surf.handleInput("\r"); // Enter on S → defer
-  assert.equal((v as unknown as { kind: string }).kind, "defer");
+  assert.equal(surf.getFocusedKey(), "n", "← to N");
+  surf.handleInput("\r"); // Enter on N → deny
+  assert.equal((v as unknown as { kind: string }).kind, "deny");
 });
 
 check("PERM SURFACE: exactly-once resolution", () => {
@@ -1855,27 +1854,31 @@ check("PERM SURFACE: helpers humanSummary/scopeTarget/commandPreview/policyLine"
   assert.equal(policyLine({ message: "m", requestId: "1", agentName: null } as unknown as import("../components/permission-surface.js").PermissionSurfaceDetails), null);
 });
 
-check("PERM INTEGRATION: mock getPermissionsService registerAuthorizer and defer", async () => {
-  let registeredName: string | null = null;
-  let authorize: ((details: unknown, query: unknown) => Promise<unknown>) | null = null;
-  const mockService = {
-    registerAuthorizer: (name: string, fn: (d: unknown, q: unknown) => Promise<unknown>) => {
-      registeredName = name;
-      authorize = fn;
-      return () => { registeredName = null; };
+check("PERM INTEGRATION: mock getPermissionsService registerPermissionPromptRenderer", async () => {
+  let registeredRenderer: unknown = null;
+  const mockService: any = {
+    registerPermissionPromptRenderer: (fn: unknown) => {
+      registeredRenderer = fn;
+      return () => { registeredRenderer = null; };
     },
   };
   (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("@gotgenes/pi-permission-system:service")] = mockService;
-  // Simulate the wiring's tryRegister
   const svc = (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("@gotgenes/pi-permission-system:service")] as typeof mockService;
-  svc.registerAuthorizer("harness-decision-surface", async () => ({ kind: "allow" }));
-  assert.equal(registeredName, "harness-decision-surface", "registerAuthorizer called");
-  // S defer must be defer, not allow, and not mutate SessionRules
-  // We test the surface's S directly, not the service, but ensure the authorizer would return defer for S
+  svc.registerPermissionPromptRenderer(async () => ({ approved: true, state: "approved" }));
+  assert.ok(registeredRenderer, "registerPermissionPromptRenderer called");
+  // Verify final UI has no Session, Y/N/R work
   let v: unknown = null;
   const surf = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x) => { v = x; });
-  surf.handleInput("s");
-  assert.equal((v as unknown as { kind: string }).kind, "defer", "S is defer");
+  surf.handleInput("y");
+  assert.equal((v as unknown as { kind: string }).kind, "allow", "Y→allow");
+  v=null;
+  const surf2 = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x) => { v = x; });
+  surf2.handleInput("n");
+  assert.equal((v as unknown as { kind: string }).kind, "deny", "N→deny");
+  v=null;
+  const surf3 = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x) => { v = x; });
+  surf3.handleInput("s");
+  assert.equal(v, null, "S ignored (no Session)");
   // Cleanup
   delete (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("@gotgenes/pi-permission-system:service")];
 });
@@ -1887,31 +1890,28 @@ check("PERM REGRESSION A: event bus uses pi.events.on for permissions:ready", ()
   assert.doesNotMatch(src, /\(pi as unknown[^)]+\)\.on\("permissions:ready"/, "must not use pi.on cast for permissions:ready");
 });
 
-check("PERM REGRESSION B: harness authorizer registered via registerAuthorizer", () => {
+check("PERM REGRESSION B: harness prompt renderer registered via registerPermissionPromptRenderer", () => {
   const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
-  assert.match(src, /registerAuthorizer\s*\(\s*"harness-decision-surface"/, "registerAuthorizer harness-decision-surface");
+  assert.match(src, /registerPermissionPromptRenderer/, "registerPermissionPromptRenderer harness");
   // Verify wiring attempts both via pi.events and immediate/session_start
-  assert.match(src, /tryRegisterHarnessAuthorizer\(\)/, "tryRegister present");
+  assert.match(src, /tryRegisterHarnessPromptRenderer\(\)/, "tryRegister present");
 });
 
-check("PERM REGRESSION C: authorizer has no hasAuthority dependency", () => {
+check("PERM REGRESSION C: prompt renderer has no hasAuthority dependency, has view/ui guard", () => {
   const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
-  const authorizerBlock = src.slice(src.indexOf('registerAuthorizer("harness-decision-surface"'), src.indexOf('registerAuthorizer("harness-decision-surface"') + 2000);
-  assert.doesNotMatch(authorizerBlock, /hasAuthority/, "must not reference hasAuthority");
-  // Ensure the remaining UI guard is preserved
-  assert.match(authorizerBlock, /currentPermissionUi/, "must guard on currentPermissionUi");
-  assert.match(authorizerBlock, /mode.*tui/, "must guard mode===tui");
-  assert.match(authorizerBlock, /custom/, "must guard ui.custom");
+  const rendererBlock = src.slice(src.indexOf('registerPermissionPromptRenderer'), src.indexOf('registerPermissionPromptRenderer') + 2000);
+  assert.doesNotMatch(rendererBlock, /hasAuthority/, "must not reference hasAuthority");
+  // Ensure the remaining UI guard is preserved (view.mode/view.ui)
+  assert.match(rendererBlock, /view\.mode.*tui|mode.*tui/, "must guard mode===tui");
+  assert.match(rendererBlock, /custom/, "must guard ui.custom");
 });
 
-check("PERM REGRESSION D: decision mapping Y/S/N/R/Esc preserved", () => {
+check("PERM REGRESSION D: decision mapping Y/N/R/Esc preserved (S absent)", () => {
   const cases: Array<[string, string, string | undefined]> = [
     ["y", "allow", undefined],
     ["Y", "allow", undefined],
     ["n", "deny", undefined],
     ["N", "deny", undefined],
-    ["s", "defer", undefined],
-    ["S", "defer", undefined],
     ["\x1b", "deny", "cancelled"],
     ["\x03", "deny", "cancelled"],
   ];
@@ -1922,6 +1922,11 @@ check("PERM REGRESSION D: decision mapping Y/S/N/R/Esc preserved", () => {
     assert.equal((v as unknown as { kind: string }).kind, kind, `${JSON.stringify(key)}→${kind}`);
     if (reason !== undefined) assert.equal((v as unknown as { reason?: string }).reason, reason, `${JSON.stringify(key)} reason`);
   }
+  // S is now absent — s hotkey ignored
+  let vs:any=null;
+  const ss = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{vs=x;});
+  ss.handleInput("s");
+  assert.equal(vs, null, "s ignored in final");
   // R flow
   let rv: unknown = null;
   const rs = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x) => { rv = x; });
@@ -1932,32 +1937,31 @@ check("PERM REGRESSION D: decision mapping Y/S/N/R/Esc preserved", () => {
   assert.equal((rv as unknown as { reason?: string }).reason, "test");
 });
 
-check("PERM REGRESSION E: S defer fallback preserves session grant authority", () => {
+check("PERM REGRESSION E: S absent in final single-UI (no Session)", () => {
   let v: unknown = null;
   const surf = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x) => { v = x; });
   surf.handleInput("s");
-  assert.equal((v as unknown as { kind: string }).kind, "defer", "S must be defer, never allow");
-  assert.notEqual((v as unknown as { kind: string }).kind, "allow");
+  assert.equal(v, null, "S must be ignored (no Session button in final)");
   // Ensure no SessionRules mutation is attempted by surface (surface is presentation only)
   const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
-  const block = src.slice(src.indexOf('registerAuthorizer("harness-decision-surface"'), src.indexOf('registerAuthorizer("harness-decision-surface"') + 3000);
-  assert.doesNotMatch(block, /SessionRules|approved_for_session/, "must not synthesize session grant");
+  const hasRenderer = src.includes('registerPermissionPromptRenderer');
+  assert.ok(hasRenderer, "must use registerPermissionPromptRenderer (terminal, not link)");
+  assert.doesNotMatch(src, /SessionRules|approved_for_session/, "must not synthesize session grant");
 });
 
-check("PERM REGRESSION F: headless/no UI returns defer fail-safe (no hasAuthority)", () => {
-  // Surface itself never auto-allows; wiring's UI guard returns defer when no UI context
-  // We verify surface never resolves without input, and wiring text confirms guard
+check("PERM REGRESSION F: headless/no UI fail-safe via renderer (denied/cancelled)", () => {
+  // Surface itself never auto-allows; wiring's UI guard for renderer returns denied/cancelled when no UI context
   let v: unknown = null;
   const surf = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x) => { v = x; });
   surf.render(80);
   assert.equal(v, null, "no auto-allow on render");
   const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
-  const block = src.slice(src.indexOf('registerAuthorizer("harness-decision-surface"'), src.indexOf('registerAuthorizer("harness-decision-surface"') + 3000);
-  assert.match(block, /if\s*\(\s*!ctx\s*\|\|\s*ctx\.mode\s*!==\s*"tui"/, "must defer when !ctx or mode!==tui");
-  assert.match(block, /custom/, "must defer when no ui.custom");
+  assert.match(src, /registerPermissionPromptRenderer/, "must use renderer");
+  assert.match(src, /if\s*\(\s*!v\s*\|\|\s*v\.mode\s*!==\s*"tui"/, "must deny when !view or mode!==tui");
+  assert.match(src, /custom/, "must handle no ui.custom");
 });
 
-check("PERM REGRESSION G: exactly-once resolve guard preserved", () => {
+check("PERM REGRESSION G: exactly-once resolve guard preserved (renderer)", () => {
   let count = 0;
   const surf = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => { count++; });
   surf.handleInput("y");
@@ -1965,15 +1969,14 @@ check("PERM REGRESSION G: exactly-once resolve guard preserved", () => {
   surf.handleInput("s");
   surf.handleInput("\x03");
   assert.equal(count, 1, "surface exactly once");
-  // Wiring Promise guard: settled flag + resolveOnce
+  // Wiring Promise guard: settled flag + resolveOnce, overlay:false, renderer registration
   const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
-  const block = src.slice(src.indexOf('registerAuthorizer("harness-decision-surface"'), src.indexOf('registerAuthorizer("harness-decision-surface"') + 4000);
-  assert.match(block, /let settled = false/, "wiring settled flag");
-  assert.match(block, /resolveOnce/, "wiring resolveOnce guard");
-  assert.match(block, /overlay:\s*false/, "overlay:false editor slot");
+  assert.match(src, /registerPermissionPromptRenderer/, "wiring uses renderer");
+  assert.match(src, /let settled = false/, "wiring settled flag");
+  assert.match(src, /resolveOnce/, "wiring resolveOnce guard");
+  assert.match(src, /overlay:\s*false/, "overlay:false editor slot");
 });
 
-// ------------------------------------------------------- Perm refinement: compact primary, long command
 check("PERM REFINEMENT 1: normal command — concise summary, one preview, policy, controls", () => {
   const details = permDetails({ toolName: "bash", command: "ls -la", path: "G:\\pitesting\\a.txt", message: "Current agent requested bash command 'ls -la' which references path(s) outside working directory 'G:\\pisetup': g:\\pitesting\\a.txt. Allow?", accessIntent: { surface: "external_directory", path: "G:\\pitesting\\a.txt" } as any });
   const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => {});
@@ -1987,9 +1990,9 @@ check("PERM REFINEMENT 1: normal command — concise summary, one preview, polic
   assert.match(flat, /ls -la/, "command preview present");
   // Policy compact
   assert.match(flat, /Policy/, "policy line");
-  // Controls for excluded: Y not actionable, only S/N/R
-  assert.doesNotMatch(flat, /\[Y\] Allow/, "Y not shown on excluded external_directory");
-  assert.match(flat, /\[S\] Session/, "S");
+  // Controls for final single-UI: Y/N/R (no S) even on external_directory (terminal)
+  assert.match(flat, /\[Y\] Allow/, "Y shown even on excluded (terminal)");
+  assert.doesNotMatch(flat, /\[S\] Session/, "S not shown (final)");
   assert.match(flat, /\[N\] Deny/, "N");
   assert.match(flat, /\[R\] Reason/, "R");
 });
@@ -2073,9 +2076,9 @@ check("PERM REFINEMENT 5: narrow-width priority decision>target>tool>command>pol
   for (const w of [40,60,80,120,160]) {
     const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => {});
     const flat = flatText(surf.render(w));
-    // For excluded, Y not shown, S/N/R always
-    assert.doesNotMatch(flat, /\[Y\] Allow/, `Y not shown excluded at w=${w}`);
-    assert.match(flat, /\[S\] Session/, `S at w=${w}`);
+    // For final, Y shown even on excluded (terminal), S absent for all
+    assert.match(flat, /\[Y\] Allow/, `Y shown at w=${w}`);
+    assert.doesNotMatch(flat, /\[S\] Session/, `S not shown at w=${w} (final)`);
     // Target always (or truncated)
     assert.ok(flat.includes("G:\\pitesting") || flat.includes("…"), `target at w=${w}`);
     // Command preview exists but truncated
@@ -2131,14 +2134,19 @@ check("PERM REFINEMENT 7: subagent badge remains compact, no verbose prose", () 
   assert.ok(lines.length < 20, "badge still compact");
 });
 
-check("PERM REFINEMENT 8: decision regression Y/S/N/R/Esc still correct after refinement", () => {
-  const cases: Array<[string, string]> = [["y","allow"],["s","defer"],["n","deny"],["\x1b","deny"]];
+check("PERM REFINEMENT 8: decision regression Y/N/R/Esc still correct after refinement (S absent)", () => {
+  const cases: Array<[string, string]> = [["y","allow"],["n","deny"],["\x1b","deny"]];
   for (const [k, exp] of cases) {
     let v:any=null;
     const s = new PermissionDecisionSurface(permDetails({ command: "x".repeat(13000), path: "G:\\pitesting\\long.txt" }), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
     s.handleInput(k);
     assert.equal((v as any).kind, exp, `${JSON.stringify(k)}→${exp} after refinement`);
   }
+  // S is now absent for all (single-UI)
+  let vs:any=null;
+  const ss = new PermissionDecisionSurface(permDetails({ command: "x".repeat(13000) }), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{vs=x;});
+  ss.handleInput("s");
+  assert.equal(vs, null, "s ignored in final (no Session)");
   let rv:any=null;
   const rs = new PermissionDecisionSurface(permDetails({ command: "x".repeat(13000) }), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{rv=x;});
   rs.handleInput("r"); rs.handleInput("h"); rs.handleInput("i"); rs.handleInput("\r");
@@ -2146,23 +2154,22 @@ check("PERM REFINEMENT 8: decision regression Y/S/N/R/Esc still correct after re
   assert.equal((rv as any).reason, "hi");
 });
 
-// ------------------------------------------------------- D66.2 filesystem control refinement — excluded surfaces
-check("PERM D66.2-1: external_directory Y not actionable, S defer N deny R reason Esc deny", () => {
+// ------------------------------------------------------- D66.2 filesystem control refinement — excluded surfaces (now obsolete: final single-UI has Y for all)
+// For the final terminal renderer, Y is available even on external_directory/path (package remains authority, renderer is terminal not link), S is intentionally absent for all surfaces per owner.
+check("PERM D66.2-1: external_directory Y now allow via terminal renderer, S absent", () => {
   const details = permDetails({ accessIntent: { surface: "external_directory", path: "G:\\pitesting\\a.txt" } as any, surface: "external_directory", path: "G:\\pitesting\\a.txt", command: "mkdir -p G:\\pitesting\\a.txt", message: "External directory access" });
-  assert.equal(isExcludedSurface(details), true, "external_directory is excluded");
-  // Y must not allow
+  assert.equal(isExcludedSurface(details), true, "external_directory is excluded for link delegation, but terminal renderer allows Y");
+  // Y now allow (terminal, not link)
   let v:any=null;
   const sY = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
   sY.handleInput("y");
-  assert.equal(v, null, "Y hotkey must not resolve on excluded");
-  assert.equal(sY.getFocusedKey(), "s", "initial focus is s, not y");
-  sY.handleInput("Y");
-  assert.equal(v, null, "Y uppercase also ignored");
-  // S defer
+  assert.equal((v as any).kind, "allow", "Y→allow even on excluded (terminal)");
+  assert.equal(sY.getFocusedKey(), "y", "initial focus is y (S absent, Y restored)");
+  // S is now absent for all — s hotkey ignored
   v=null;
   const sS = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
   sS.handleInput("s");
-  assert.equal((v as any).kind, "defer", "S→defer on excluded");
+  assert.equal(v, null, "S hotkey ignored (no Session in final UI)");
   // N deny
   v=null;
   const sN = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
@@ -2184,20 +2191,23 @@ check("PERM D66.2-1: external_directory Y not actionable, S defer N deny R reaso
   assert.equal((v as any).reason, "cancelled");
 });
 
-check("PERM D66.2-2: path Y not actionable, same as external_directory", () => {
+check("PERM D66.2-2: path Y now allow via terminal, S absent", () => {
   const details = permDetails({ accessIntent: { surface: "path", path: "G:\\repo\\.env" } as any, surface: "path", path: "G:\\repo\\.env", command: "read G:\\repo\\.env", message: "Path access" });
-  assert.equal(isExcludedSurface(details), true, "path is excluded");
+  assert.equal(isExcludedSurface(details), true, "path is excluded for link, but terminal Y still allow");
   let v:any=null;
   const s = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
   s.handleInput("y");
-  assert.equal(v, null, "Y ignored on path");
-  s.handleInput("s");
-  assert.equal((v as any).kind, "defer", "S defer on path");
+  assert.equal((v as any).kind, "allow", "Y→allow on path via terminal");
+  v=null;
+  const s2 = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
+  s2.handleInput("s");
+  assert.equal(v, null, "S ignored on path (no Session)");
 });
 
-check("PERM D66.2-3: ordinary allow-capable surface Y still allow", () => {
+
+check("PERM D66.2-3: ordinary allow-capable surface Y still allow, S absent for all", () => {
   const details = permDetails({ accessIntent: { surface: "bash", value: "git push" } as any, surface: "bash", command: "git push --force", message: "Bash command" });
-  assert.equal(isExcludedSurface(details), false, "bash is allow-capable");
+  assert.equal(isExcludedSurface(details), false, "bash is allow-capable, but final UI has no S for any surface");
   let v:any=null;
   const sY = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
   sY.handleInput("y");
@@ -2205,7 +2215,7 @@ check("PERM D66.2-3: ordinary allow-capable surface Y still allow", () => {
   v=null;
   const sS = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
   sS.handleInput("s");
-  assert.equal((v as any).kind, "defer", "S→defer on bash");
+  assert.equal(v, null, "S ignored on bash (no Session in final UI)");
   v=null;
   const sN = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
   sN.handleInput("n");
@@ -2216,31 +2226,30 @@ check("PERM D66.2-3: ordinary allow-capable surface Y still allow", () => {
   assert.equal((rv as any).kind, "deny");
 });
 
-check("PERM D66.2-4: excluded Y omitted — focus never on y, Enter does nothing, Y hotkey ignored", () => {
+check("PERM D66.2-4: final Y/N/R only — Y not omitted, S absent, focus among 3", () => {
   const details = permDetails({ accessIntent: { surface: "external_directory" } as any, surface: "external_directory", path: "G:\\pitesting\\x.txt" });
   const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, ()=>{});
-  assert.equal(surf.getFocusedKey(), "s", "initial focus s");
-  surf.handleInput("\x1b[D"); // left from s should wrap to r
-  assert.equal(surf.getFocusedKey(), "r", "left wraps to r among 3");
-  surf.handleInput("\x1b[C"); // right back to s
-  assert.equal(surf.getFocusedKey(), "s");
+  assert.equal(surf.getFocusedKey(), "y", "initial focus y (Y restored for terminal)");
+  surf.handleInput("\x1b[D"); // left from y should wrap to r
+  assert.equal(surf.getFocusedKey(), "r", "left wraps to r among 3 (y,n,r)");
+  surf.handleInput("\x1b[C"); // right back to y
+  assert.equal(surf.getFocusedKey(), "y");
   surf.handleInput("\x1b[C"); // to n
   assert.equal(surf.getFocusedKey(), "n");
-  // Y hotkey must not move focus nor resolve
+  // Y hotkey should now work even on excluded (terminal)
   let v:any=null;
   const surf2 = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
   surf2.handleInput("y");
-  assert.equal(v, null);
-  assert.equal(surf2.getFocusedKey(), "s", "Y hotkey ignored, focus stays s");
-  // Enter on s should defer, not allow
+  assert.equal((v as any).kind, "allow", "Y→allow even on excluded (terminal)");
+  assert.equal(surf2.getFocusedKey(), "y", "Y hotkey moves focus to y and allows");
+  // Enter on y should allow
   let v2:any=null;
   const surf3 = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v2=x;});
   surf3.handleInput("\r");
-  assert.equal((v2 as any).kind, "defer", "Enter on s → defer");
-  // If somehow focused on y (should never happen), Enter would not allow — verified by getActiveControls filtering
+  assert.equal((v2 as any).kind, "allow", "Enter on y → allow");
   const flat = flatText(surf.render(80));
-  assert.doesNotMatch(flat, /\[Y\] Allow/, "Y not shown for excluded");
-  assert.match(flat, /\[S\] Session/, "S shown");
+  assert.match(flat, /\[Y\] Allow/, "Y shown for excluded in final");
+  assert.doesNotMatch(flat, /\[S\] Session/, "S not shown for any (final)");
   assert.match(flat, /\[N\] Deny/, "N shown");
   assert.match(flat, /\[R\] Reason/, "R shown");
 });
@@ -2273,13 +2282,14 @@ check("PERM D66.2-6: width 12-400 for excluded and non-excluded", () => {
   }
 });
 
-check("PERM D66.2-7: excluded long-command remains compact after control change", () => {
+check("PERM D66.2-7: excluded long-command remains compact after control change (final Y present)", () => {
   const longCmd = "x".repeat(14000);
   const details = permDetails({ accessIntent: { surface: "external_directory", path: "G:\\pitesting\\long.txt" } as any, command: longCmd, path: "G:\\pitesting\\long.txt", message: `Current agent requested bash command '${longCmd.slice(0,100)}...'` });
   const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, ()=>{});
   const flat = flatText(surf.render(80));
   assert.doesNotMatch(flat, /Current agent requested/, "no verbose");
-  assert.doesNotMatch(flat, /\[Y\] Allow/, "no Y on excluded long");
+  assert.match(flat, /\[Y\] Allow/, "Y shown even on excluded long (terminal)");
+  assert.doesNotMatch(flat, /\[S\] Session/, "S not shown");
   const lines = surf.render(80);
   assert.ok(lines.length < 20, `excluded long still compact ${lines.length}`);
   surf.handleInput("d");
@@ -2287,16 +2297,15 @@ check("PERM D66.2-7: excluded long-command remains compact after control change"
   assert.ok(dFlat.includes("x".repeat(10)), "detail has long command");
 });
 
-check("PERM D66.2-8: S never mutates SessionRules and never returns allow (excluded)", () => {
+check("PERM D66.2-8: S never mutates SessionRules and never returns allow (final no Session)", () => {
   const details = permDetails({ accessIntent: { surface: "external_directory" } as any, surface: "external_directory" });
   let v:any=null;
   const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
   surf.handleInput("s");
-  assert.equal((v as any).kind, "defer", "S is defer");
-  assert.notEqual((v as any).kind, "allow");
+  assert.equal(v, null, "S ignored in final (no Session)");
   const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
-  const block = src.slice(src.indexOf('registerAuthorizer("harness-decision-surface"'), src.indexOf('registerAuthorizer("harness-decision-surface"')+3000);
-  assert.doesNotMatch(block, /SessionRules|approved_for_session/, "wiring never mutates SessionRules");
+  assert.match(src, /registerPermissionPromptRenderer/, "wiring uses prompt renderer");
+  assert.doesNotMatch(src, /SessionRules|approved_for_session/, "wiring never mutates SessionRules");
 });
 
 
