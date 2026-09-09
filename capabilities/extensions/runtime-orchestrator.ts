@@ -3027,9 +3027,7 @@ function tryRegisterHarnessAuthorizer(): void {
     try { harnessPermissionDisposer(); } catch {}
     harnessPermissionDisposer = null;
   }
-  harnessPermissionDisposer = svc.registerAuthorizer("harness-decision-surface", async (details: unknown, query: unknown, _log: unknown) => {
-    const q = query as { hasAuthority?: boolean };
-    if (!q.hasAuthority) return { kind: "defer" as const };
+  harnessPermissionDisposer = svc.registerAuthorizer("harness-decision-surface", async (details: unknown, _query: unknown, _log: unknown) => {
     const ctx = currentPermissionUi;
     if (!ctx || ctx.mode !== "tui" || !(ctx.ui as unknown as { custom?: unknown }).custom) return { kind: "defer" as const };
     const surfaceDetails = mapDetailsToSurface(details as Record<string, unknown>);
@@ -3971,8 +3969,8 @@ export default function (pi: ExtensionAPI) {
   // Permission Decision Surface — authorizer registration (presentation only)
   // The permission policy is entirely owned by pi-permission-system; we only
   // replace the prompt presentation. The service is published per session and
-  // emits `permissions:ready` when ready; we also try immediately for reload.
-  (pi as unknown as { on: (event: string, handler: () => void) => void }).on("permissions:ready", () => {
+  // emits `permissions:ready` on pi.events when ready; we also try immediately for reload.
+  pi.events.on("permissions:ready", () => {
     try { tryRegisterHarnessAuthorizer(); } catch {}
   });
   try { tryRegisterHarnessAuthorizer(); } catch {}
@@ -3980,7 +3978,6 @@ export default function (pi: ExtensionAPI) {
     try { currentPermissionUi = null; } catch {}
   });
 }
-
 
 /** Active runModelControlCenter loops. While one is open, model_select events
  * fired by the surface's own setModel are absorbed: the loop re-renders with

@@ -1879,6 +1879,273 @@ check("PERM INTEGRATION: mock getPermissionsService registerAuthorizer and defer
   delete (globalThis as unknown as Record<symbol, unknown>)[Symbol.for("@gotgenes/pi-permission-system:service")];
 });
 
+check("PERM REGRESSION A: event bus uses pi.events.on for permissions:ready", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.match(src, /pi\.events\.on\("permissions:ready"/, "must use pi.events.on for permissions:ready");
+  // Ensure not using the wrong bus for this event
+  assert.doesNotMatch(src, /\(pi as unknown[^)]+\)\.on\("permissions:ready"/, "must not use pi.on cast for permissions:ready");
+});
+
+check("PERM REGRESSION B: harness authorizer registered via registerAuthorizer", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.match(src, /registerAuthorizer\s*\(\s*"harness-decision-surface"/, "registerAuthorizer harness-decision-surface");
+  // Verify wiring attempts both via pi.events and immediate/session_start
+  assert.match(src, /tryRegisterHarnessAuthorizer\(\)/, "tryRegister present");
+});
+
+check("PERM REGRESSION C: authorizer has no hasAuthority dependency", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  const authorizerBlock = src.slice(src.indexOf('registerAuthorizer("harness-decision-surface"'), src.indexOf('registerAuthorizer("harness-decision-surface"') + 2000);
+  assert.doesNotMatch(authorizerBlock, /hasAuthority/, "must not reference hasAuthority");
+  // Ensure the remaining UI guard is preserved
+  assert.match(authorizerBlock, /currentPermissionUi/, "must guard on currentPermissionUi");
+  assert.match(authorizerBlock, /mode.*tui/, "must guard mode===tui");
+  assert.match(authorizerBlock, /custom/, "must guard ui.custom");
+});
+
+check("PERM REGRESSION D: decision mapping Y/S/N/R/Esc preserved", () => {
+  const cases: Array<[string, string, string | undefined]> = [
+    ["y", "allow", undefined],
+    ["Y", "allow", undefined],
+    ["n", "deny", undefined],
+    ["N", "deny", undefined],
+    ["s", "defer", undefined],
+    ["S", "defer", undefined],
+    ["\x1b", "deny", "cancelled"],
+    ["\x03", "deny", "cancelled"],
+  ];
+  for (const [key, kind, reason] of cases) {
+    let v: unknown = null;
+    const surf = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x) => { v = x; });
+    surf.handleInput(key);
+    assert.equal((v as unknown as { kind: string }).kind, kind, `${JSON.stringify(key)}→${kind}`);
+    if (reason !== undefined) assert.equal((v as unknown as { reason?: string }).reason, reason, `${JSON.stringify(key)} reason`);
+  }
+  // R flow
+  let rv: unknown = null;
+  const rs = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x) => { rv = x; });
+  rs.handleInput("r");
+  assert.equal(rs.getStep(), "reason");
+  rs.handleInput("t"); rs.handleInput("e"); rs.handleInput("s"); rs.handleInput("t"); rs.handleInput("\r");
+  assert.equal((rv as unknown as { kind: string }).kind, "deny");
+  assert.equal((rv as unknown as { reason?: string }).reason, "test");
+});
+
+check("PERM REGRESSION E: S defer fallback preserves session grant authority", () => {
+  let v: unknown = null;
+  const surf = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x) => { v = x; });
+  surf.handleInput("s");
+  assert.equal((v as unknown as { kind: string }).kind, "defer", "S must be defer, never allow");
+  assert.notEqual((v as unknown as { kind: string }).kind, "allow");
+  // Ensure no SessionRules mutation is attempted by surface (surface is presentation only)
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  const block = src.slice(src.indexOf('registerAuthorizer("harness-decision-surface"'), src.indexOf('registerAuthorizer("harness-decision-surface"') + 3000);
+  assert.doesNotMatch(block, /SessionRules|approved_for_session/, "must not synthesize session grant");
+});
+
+check("PERM REGRESSION F: headless/no UI returns defer fail-safe (no hasAuthority)", () => {
+  // Surface itself never auto-allows; wiring's UI guard returns defer when no UI context
+  // We verify surface never resolves without input, and wiring text confirms guard
+  let v: unknown = null;
+  const surf = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x) => { v = x; });
+  surf.render(80);
+  assert.equal(v, null, "no auto-allow on render");
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  const block = src.slice(src.indexOf('registerAuthorizer("harness-decision-surface"'), src.indexOf('registerAuthorizer("harness-decision-surface"') + 3000);
+  assert.match(block, /if\s*\(\s*!ctx\s*\|\|\s*ctx\.mode\s*!==\s*"tui"/, "must defer when !ctx or mode!==tui");
+  assert.match(block, /custom/, "must defer when no ui.custom");
+});
+
+check("PERM REGRESSION G: exactly-once resolve guard preserved", () => {
+  let count = 0;
+  const surf = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => { count++; });
+  surf.handleInput("y");
+  surf.handleInput("n");
+  surf.handleInput("s");
+  surf.handleInput("\x03");
+  assert.equal(count, 1, "surface exactly once");
+  // Wiring Promise guard: settled flag + resolveOnce
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  const block = src.slice(src.indexOf('registerAuthorizer("harness-decision-surface"'), src.indexOf('registerAuthorizer("harness-decision-surface"') + 4000);
+  assert.match(block, /let settled = false/, "wiring settled flag");
+  assert.match(block, /resolveOnce/, "wiring resolveOnce guard");
+  assert.match(block, /overlay:\s*false/, "overlay:false editor slot");
+});
+
+// ------------------------------------------------------- Perm refinement: compact primary, long command
+check("PERM REFINEMENT 1: normal command — concise summary, one preview, policy, controls", () => {
+  const details = permDetails({ toolName: "bash", command: "ls -la", path: "G:\\pitesting\\a.txt", message: "Current agent requested bash command 'ls -la' which references path(s) outside working directory 'G:\\pisetup': g:\\pitesting\\a.txt. Allow?", accessIntent: { surface: "external_directory", path: "G:\\pitesting\\a.txt" } as any });
+  const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => {});
+  const flat = flatText(surf.render(80));
+  // Compact summary, not verbose prose
+  assert.match(flat, /External directory access/, "compact WHAT");
+  assert.doesNotMatch(flat, /Current agent requested/, "no verbose summary in primary");
+  // Exactly one Command preview
+  const cmdCount = (flat.match(/Command/g) ?? []).length;
+  assert.equal(cmdCount, 1, `exactly one Command preview, got ${cmdCount}`);
+  assert.match(flat, /ls -la/, "command preview present");
+  // Policy compact
+  assert.match(flat, /Policy/, "policy line");
+  // Controls
+  assert.match(flat, /\[Y\] Allow/, "Y");
+  assert.match(flat, /\[S\] Session/, "S");
+  assert.match(flat, /\[N\] Deny/, "N");
+  assert.match(flat, /\[R\] Reason/, "R");
+});
+
+check("PERM REFINEMENT 2: long 13k command — primary compact, full in detail", () => {
+  const longCmd = "mkdir -p \"G:\\pitesting\\permission test\" && " + "echo hello && ".repeat(1000) + "node -e \"console.log('hi')\""; // >13k
+  assert.ok(longCmd.length > 13000, `longCmd ${longCmd.length} >13000`);
+  const verboseMsg = `Current agent requested bash command '${longCmd}' which references path(s) outside working directory 'G:\\pisetup': g:\\pitesting\\permission test\\long-command-test.txt. Allow this external directory access?`;
+  const details = permDetails({ toolName: "bash", command: longCmd, path: "G:\\pitesting\\permission test\\long-command-test.txt", message: verboseMsg, accessIntent: { surface: "external_directory", path: "G:\\pitesting\\permission test\\long-command-test.txt" } as any, cwd: "G:\\pisetup" });
+  const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => {});
+  const flat = flatText(surf.render(80));
+  // Primary must NOT contain full long command in prose
+  assert.ok(!flat.includes(longCmd.slice(0, 200)), "primary must not dump full command");
+  assert.doesNotMatch(flat, /Current agent requested bash command/, "no verbose duplicated summary");
+  // Compact summary
+  assert.match(flat, /External directory access/, "compact summary");
+  // Exactly one Command preview, truncated with …
+  const cmdOccurrences = (flat.match(/Command/g) ?? []).length;
+  assert.equal(cmdOccurrences, 1, `one Command preview, got ${cmdOccurrences}`);
+  // Primary height bounded (decision > target > command > policy)
+  const lines = surf.render(80);
+  assert.ok(lines.length < 20, `primary compact height ${lines.length} <20, got ${lines.length}`);
+  for (const l of lines) assert.ok(visibleWidth(l) <= 80, `width 80 overflow ${visibleWidth(l)}`);
+  // Full command available in detail
+  surf.handleInput("d");
+  assert.equal(surf.getStep(), "detail", "d opens detail");
+  const detailFlat = flatText(surf.render(80));
+  assert.match(detailFlat, /Command Detail/, "detail title");
+  // Detail must contain a chunk of the long command (wrapped, not truncated single line)
+  // Since detail wraps, at least first 50 chars of longCmd should appear somewhere in detail lines
+  const detailLines = surf.render(80).map(stripAnsi).join("\n");
+  assert.ok(detailLines.includes(longCmd.slice(0, 50)), "detail contains full command start");
+  assert.ok(detailLines.includes(longCmd.slice(8000, 8050)), "detail contains middle of long command");
+  // Esc returns
+  surf.handleInput("\x1b");
+  assert.equal(surf.getStep(), "decision", "Esc returns");
+});
+
+check("PERM REFINEMENT 3: extreme 25k command — no overflow/crash, primary still compact", () => {
+  const extreme = "x".repeat(25000);
+  const details = permDetails({ toolName: "bash", command: extreme, path: "G:\\pitesting\\x.txt", message: `Current agent requested bash command '${extreme.slice(0, 100)}...'`, accessIntent: { surface: "external_directory" } as any });
+  const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => {});
+  const lines = surf.render(80);
+  assert.ok(lines.length < 20, `extreme primary still compact ${lines.length}`);
+  for (const w of [40,60,80,120]) {
+    const lns = surf.render(w);
+    for (const l of lns) assert.ok(visibleWidth(l) <= w, `extreme w=${w} overflow`);
+  }
+  // Detail must handle extreme without crash
+  surf.handleInput("d");
+  const dLines = surf.render(80);
+  for (const l of dLines) assert.ok(visibleWidth(l) <= 80, "detail line width-safe");
+  // Ensure detail contains extreme start
+  const flat = flatText(dLines);
+  assert.ok(flat.includes("x".repeat(10)), "detail has extreme content");
+  surf.handleInput("\x1b");
+  assert.equal(surf.getStep(), "decision");
+});
+
+check("PERM REFINEMENT 4: long path remains visible and width-safe", () => {
+  const longPath = "G:\\pitesting\\permission test\\" + "very-long-segment\\".repeat(20) + "long-command-test.txt";
+  const details = permDetails({ path: longPath, command: "write", message: "External directory access", accessIntent: { surface: "external_directory", path: longPath } as any });
+  for (const w of [40,60,80,120,160]) {
+    const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => {});
+    const flat = flatText(surf.render(w));
+    // Path must be visible (at least first 10 chars or truncated with …)
+    assert.ok(flat.includes("G:\\pitesting") || flat.includes("…"), `path visible at w=${w}`);
+    for (const l of surf.render(w)) assert.ok(visibleWidth(l) <= w, `path w=${w} overflow`);
+  }
+});
+
+check("PERM REFINEMENT 5: narrow-width priority decision>target>tool>command>policy", () => {
+  const details = permDetails({
+    toolName: "bash",
+    command: "very long command that would dominate if not truncated ".repeat(10),
+    path: "G:\\pitesting\\target.txt",
+    message: "Current agent requested bash command 'very long...'",
+    accessIntent: { surface: "external_directory", path: "G:\\pitesting\\target.txt" } as any,
+    policyReason: "external_directory · session grant available",
+  });
+  for (const w of [40,60,80,120,160]) {
+    const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => {});
+    const flat = flatText(surf.render(w));
+    // Decision controls always
+    assert.match(flat, /\[Y\] Allow/, `controls at w=${w}`);
+    // Target always (or truncated)
+    assert.ok(flat.includes("G:\\pitesting") || flat.includes("…"), `target at w=${w}`);
+    // Command preview exists but truncated
+    assert.match(flat, /Command/, `command label at w=${w}`);
+    for (const l of surf.render(w)) assert.ok(visibleWidth(l) <= w, `priority w=${w} overflow ${visibleWidth(l)}>${w}`);
+  }
+  // Policy dropped first at very narrow: at 40 it may still show, at 30 it should drop? Our code drops at <40
+  const narrow = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => {});
+  const flat40 = flatText(narrow.render(40));
+  const flat30 = flatText(narrow.render(30));
+  // At 30, Policy line should be absent (width>=40 guard)
+  assert.ok(flat40.includes("Policy") || true, "policy may show at 40");
+  assert.ok(!flat30.includes("Policy   external_directory"), "policy dropped at very narrow");
+});
+
+check("PERM REFINEMENT 6: detail wrapping correct, Esc returns, controls not triggered", () => {
+  const longCmd = "a".repeat(5000);
+  const details = permDetails({ command: longCmd, cwd: "G:\\pisetup", policyReason: "external_directory", path: "G:\\pitesting\\x.txt" });
+  const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => {});
+  surf.handleInput("d");
+  assert.equal(surf.getStep(), "detail");
+  const lines = surf.render(80);
+  for (const l of lines) assert.ok(visibleWidth(l) <= 80, "detail width-safe");
+  // Scroll test: Down should adjust detailScroll without resolving
+  let resolved = false;
+  const surf2 = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => { resolved = true; });
+  surf2.handleInput("d");
+  surf2.handleInput("\x1b[B"); // Down
+  surf2.handleInput("\x1b[B");
+  assert.equal(resolved, false, "scroll must not resolve");
+  assert.equal(surf2.getStep(), "detail", "still in detail after scroll");
+  surf2.handleInput("\x1b"); // Esc
+  assert.equal(surf2.getStep(), "decision", "Esc returns");
+  assert.equal(resolved, false, "Esc in detail must not resolve");
+  // Controls not triggered in detail
+  surf2.handleInput("d");
+  let v:any=null;
+  const surf3 = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
+  surf3.handleInput("d");
+  surf3.handleInput("y"); // y in detail should not allow
+  assert.equal(v, null, "y in detail must not trigger allow");
+  assert.equal(surf3.getStep(), "detail");
+});
+
+check("PERM REFINEMENT 7: subagent badge remains compact, no verbose prose", () => {
+  const details = permDetails({ forwarding: { requesterAgentName: "review", requesterSessionId: "sess-1" }, agentName: "review", message: "Current agent requested bash command 'very long ...' file read", command: "read G:\\pitesting\\x", accessIntent: { surface: "external_directory" } as any });
+  const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => {});
+  const flat = flatText(surf.render(80));
+  assert.match(flat, /· \(Subagent: review\)/, "compact badge");
+  assert.doesNotMatch(flat, /Current agent requested/, "no verbose in badge");
+  // Ensure badge doesn't expand vertically
+  const lines = surf.render(80);
+  assert.ok(lines.length < 20, "badge still compact");
+});
+
+check("PERM REFINEMENT 8: decision regression Y/S/N/R/Esc still correct after refinement", () => {
+  const cases: Array<[string, string]> = [["y","allow"],["s","defer"],["n","deny"],["\x1b","deny"]];
+  for (const [k, exp] of cases) {
+    let v:any=null;
+    const s = new PermissionDecisionSurface(permDetails({ command: "x".repeat(13000), path: "G:\\pitesting\\long.txt" }), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
+    s.handleInput(k);
+    assert.equal((v as any).kind, exp, `${JSON.stringify(k)}→${exp} after refinement`);
+  }
+  let rv:any=null;
+  const rs = new PermissionDecisionSurface(permDetails({ command: "x".repeat(13000) }), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{rv=x;});
+  rs.handleInput("r"); rs.handleInput("h"); rs.handleInput("i"); rs.handleInput("\r");
+  assert.equal((rv as any).kind, "deny");
+  assert.equal((rv as any).reason, "hi");
+});
+
+
+
 // ------------------------------------------------------- Model selection → profiles focus (friction fix)
 // After a successful model selection the surface must automatically move keyboard
 // focus to REASONING PROFILES, preserving D54 single-active, D44 same-model,

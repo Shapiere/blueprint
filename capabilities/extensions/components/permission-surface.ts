@@ -50,9 +50,48 @@ function stripAnsi(s: string): string {
 }
 
 export function humanSummary(details: PermissionSurfaceDetails): string {
-  if (details.message && details.message.length > 0) return details.message;
-  if (details.toolName) return `${details.toolName} access`;
-  if (details.surface) return `${details.surface} access`;
+  const msg = (details.message ?? "").trim();
+  const cmd = details.command ?? details.toolInputPreview ?? "";
+  // Drop verbose duplicated prose even when short: "Current agent requested ..." is the observed dump
+  const isVerboseProse = msg.startsWith("Current agent requested");
+  // If message is short (<120), not verbose prose, and does not duplicate the full command, use its first line
+  if (!isVerboseProse && msg.length > 0 && msg.length < 120) {
+    const first = msg.split("\n")[0]?.trim() ?? "";
+    if (first.length > 0 && first.length < 120) {
+      // Avoid using verbose message that already contains the long command
+      if (!cmd || cmd.length < 80 || !msg.includes(cmd.slice(0, 80))) return first;
+    }
+  }
+  // Derive compact semantic summary from authoritative surface/tool
+  const surf = details.accessIntent?.surface ?? details.surface ?? null;
+  if (surf) {
+    const map: Record<string, string> = {
+      external_directory: "External directory access",
+      bash: "Bash command",
+      path: "Path access",
+      read: "File read",
+      write: "File write",
+      edit: "File edit",
+      skill: "Skill access",
+      mcp: "MCP tool",
+    };
+    if (map[surf]) return map[surf];
+    return surf.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) + " access";
+  }
+  if (details.toolName) {
+    const toolMap: Record<string, string> = {
+      write: "File write",
+      read: "File read",
+      edit: "File edit",
+      bash: "Bash command",
+    };
+    if (toolMap[details.toolName]) return toolMap[details.toolName]!;
+    return `${details.toolName} access`;
+  }
+  if (msg.length > 0) {
+    const first = msg.split("\n")[0]?.trim() ?? "";
+    if (first.length > 0 && first.length < 80) return first;
+  }
   return "Permission Required";
 }
 
@@ -74,7 +113,11 @@ export function commandPreview(details: PermissionSurfaceDetails): string | null
 export function policyLine(details: PermissionSurfaceDetails): string | null {
   const parts: string[] = [];
   if (details.accessIntent?.surface) parts.push(details.accessIntent.surface);
-  if (details.policyReason) parts.push(details.policyReason);
+  else if (details.surface) parts.push(details.surface);
+  if (details.policyReason) {
+    // Keep policyReason compact in primary: truncate is done at render time; here just join
+    parts.push(details.policyReason);
+  }
   if (details.sessionApproval) parts.push("session grant available");
   if (parts.length === 0) return null;
   return parts.join(" · ");
@@ -349,23 +392,48 @@ export class PermissionDecisionSurface {
     out.push(this.frameTop(width, "Command Detail"));
     out.push(this.emptyRow(width));
     const cmd = commandPreview(this.details) ?? "(no command)";
-    const cmdLines = this.wrapText(this.theme.fg("text", cmd), Math.max(0, width - 6));
-    for (const l of cmdLines) out.push(this.frameRow(width, `  ${l}`));
+    // Wrap extremely long commands across multiple width-safe lines; detail is the full-command view
+    const cmdStyled = this.theme.fg("text", cmd);
+    const cmdLines = this.wrapTextMultiline(cmdStyled, Math.max(0, width - 6));
+    // Apply scroll offset for navigability (Up/Down adjusts detailScroll)
+    const maxDetailBody = Math.max(0, 30); // soft cap for viewport; scroll reveals rest
+    const sliced = cmdLines.slice(this.detailScroll, this.detailScroll + maxDetailBody);
+    for (const l of sliced) out.push(this.frameRow(width, `  ${l}`));
+    if (cmdLines.length > sliced.length) {
+      const more = this.theme.fg("dim", `  … ${cmdLines.length - sliced.length} more lines (↑/↓ to scroll, Esc to return)`);
+      out.push(this.frameRow(width, more));
+    }
     out.push(this.emptyRow(width));
     if (this.details.cwd) {
-      out.push(this.frameRow(width, `  ${this.theme.fg("dim", "CWD      ")}${this.theme.fg("text", truncateToWidth(this.details.cwd, Math.max(0, width - 14), "…"))}`));
+      const cwdLines = this.wrapTextMultiline(this.details.cwd, Math.max(0, width - 14));
+      for (let i = 0; i < Math.min(cwdLines.length, 3); i++) {
+        const prefix = i === 0 ? this.theme.fg("dim", "CWD      ") : this.theme.fg("dim", "         ");
+        out.push(this.frameRow(width, `  ${prefix}${this.theme.fg("text", cwdLines[i]!)}`));
+      }
     }
     if (this.details.policyReason) {
-      out.push(this.frameRow(width, `  ${this.theme.fg("dim", "Reason   ")}${this.theme.fg("text", truncateToWidth(this.details.policyReason, Math.max(0, width - 14), "…"))}`));
+      const reasonLines = this.wrapTextMultiline(this.details.policyReason, Math.max(0, width - 14));
+      for (let i = 0; i < Math.min(reasonLines.length, 4); i++) {
+        const prefix = i === 0 ? this.theme.fg("dim", "Reason   ") : this.theme.fg("dim", "         ");
+        out.push(this.frameRow(width, `  ${prefix}${this.theme.fg("text", reasonLines[i]!)}`));
+      }
     }
     if (this.details.path) {
-      out.push(this.frameRow(width, `  ${this.theme.fg("dim", "Path     ")}${this.theme.fg("text", truncateToWidth(this.details.path, Math.max(0, width - 14), "…"))}`));
+      const pLines = this.wrapTextMultiline(this.details.path, Math.max(0, width - 14));
+      for (let i = 0; i < Math.min(pLines.length, 3); i++) {
+        const prefix = i === 0 ? this.theme.fg("dim", "Path     ") : this.theme.fg("dim", "         ");
+        out.push(this.frameRow(width, `  ${prefix}${this.theme.fg("text", pLines[i]!)}`));
+      }
     }
     if (this.details.target) {
-      out.push(this.frameRow(width, `  ${this.theme.fg("dim", "Target   ")}${this.theme.fg("text", truncateToWidth(this.details.target, Math.max(0, width - 14), "…"))}`));
+      const tLines = this.wrapTextMultiline(this.details.target, Math.max(0, width - 14));
+      for (let i = 0; i < Math.min(tLines.length, 3); i++) {
+        const prefix = i === 0 ? this.theme.fg("dim", "Target   ") : this.theme.fg("dim", "         ");
+        out.push(this.frameRow(width, `  ${prefix}${this.theme.fg("text", tLines[i]!)}`));
+      }
     }
     out.push(this.emptyRow(width));
-    out.push(this.frameRow(width, `  ${this.theme.fg("dim", "Esc to return")}`));
+    out.push(this.frameRow(width, `  ${this.theme.fg("dim", "Esc to return · ↑/↓ scroll detail")}`));
     out.push(this.frameBottom(width));
     return out.map((l) => (visibleWidth(l) <= width ? l : truncateToWidth(l, width, "")));
   }
@@ -393,5 +461,27 @@ export class PermissionDecisionSurface {
     return [truncateToWidth(text, maxW, "…")];
   }
 
+  private wrapTextMultiline(text: string, maxW: number): string[] {
+    if (maxW <= 0) return [""];
+    if (visibleWidth(text) <= maxW) return [text];
+    // For ANSI-free authoritative fields (command/path/cwd) a simple visibleWidth-chunked split is correct;
+    // truncateToWidth respects visibleWidth including ANSI, so chunking via it is width-safe.
+    const lines: string[] = [];
+    let remaining = text;
+    // Guard against pathological single-token > maxW by truncating with ellipsis per chunk
+    while (visibleWidth(remaining) > maxW) {
+      const chunk = truncateToWidth(remaining, maxW, "");
+      if (!chunk || chunk.length === 0) break;
+      lines.push(chunk);
+      remaining = remaining.slice(chunk.length);
+      if (remaining.length === 0) break;
+      // Prevent infinite loop on zero-progress (e.g., ANSI-only prefix)
+      if (lines.length > 1000) break;
+    }
+    if (remaining.length > 0) lines.push(remaining);
+    return lines.length > 0 ? lines : [""];
+  }
+
   invalidate(): void {}
 }
+
