@@ -40,6 +40,10 @@ interface PathNormalizerProvider {
  * Constructed once in the composition root and backed by the single shared
  * `PermissionResolver` and `PermissionSession` that the gates also use — so
  * service queries and gate-path decisions see the same state. Path-shaped
+ * surface queries route through the resolver as an `access-path` intent, so
+ * they match the lexical aliases ∪ canonical (symlink-resolved) set the gates
+ * do (#503); non-path surfaces stay on the `tool` intent.
+ */
 export class LocalPermissionsService implements PermissionsService {
   constructor(
     private readonly resolver: ResolverForService,
