@@ -1,4 +1,4 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 /**
@@ -342,7 +342,7 @@ export class PermissionDecisionSurface {
     for (const l of summaryLines) out.push(this.frameRow(width, `  ${l}`));
     const target = scopeTarget(this.details);
     if (target) {
-      const targetStyled = this.theme.fg("text", truncateToWidth(target, Math.max(0, width - 6), "…"));
+      const targetStyled = this.theme.fg("text", this.theme.bold(truncateToWidth(target, Math.max(0, width - 6), "…")));
       const targetLines = this.wrapText(targetStyled, Math.max(0, width - 6));
       for (const l of targetLines) out.push(this.frameRow(width, `  ${l}`));
     }
@@ -362,8 +362,9 @@ export class PermissionDecisionSurface {
     }
     const pol = policyLine(this.details);
     if (pol && width >= 40) {
-      const polStyled = this.theme.fg("dim", `Policy   ${truncateToWidth(pol, Math.max(0, width - 14), "…")}`);
-      out.push(this.frameRow(width, `  ${polStyled}`));
+      const label = this.theme.fg("dim", "Policy   ");
+      const value = this.theme.fg("muted", truncateToWidth(pol, Math.max(0, width - 14), "…"));
+      out.push(this.frameRow(width, `  ${label}${value}`));
     }
     out.push(this.emptyRow(width));
     const controlsLine = this.renderControls(width);
@@ -377,20 +378,30 @@ export class PermissionDecisionSurface {
   }
 
   private renderControls(width: number): string {
+    const semanticForKey = (key: ControlKey): ThemeColor => {
+      if (key === "y") return "success";
+      if (key === "n") return "error";
+      return "warning";
+    };
     const parts: string[] = [];
     for (let i = 0; i < CONTROLS.length; i++) {
       const c = CONTROLS[i]!;
       const isFocused = i === this.focusedIdx;
       const isArmed = this.armedKey === c.key;
-      let label = c.hint;
+      const semantic = semanticForKey(c.key);
+      const keyHint = `[${c.key.toUpperCase()}]`;
+      const label = c.label;
+      let rendered: string;
       if (isArmed) {
-        label = this.theme.bg("selectedBg", this.theme.fg("warning", `› ${label} ‹`));
+        rendered = this.theme.bg("selectedBg", this.theme.fg("warning", `› ${keyHint} ${label} ‹`));
       } else if (isFocused) {
-        label = this.theme.bg("selectedBg", this.theme.fg("text", `› ${label}`));
+        rendered = this.theme.bg("selectedBg", this.theme.fg(semantic, `› ${keyHint} ${label}`));
       } else {
-        label = this.theme.fg("dim", `  ${label}`);
+        const keyPart = this.theme.fg("dim", `  ${keyHint}`);
+        const labelPart = this.theme.fg(semantic, ` ${label}`);
+        rendered = `${keyPart}${labelPart}`;
       }
-      parts.push(label);
+      parts.push(rendered);
     }
     const interiorW = Math.max(0, width - 4);
     let combined = parts.join(this.theme.fg("dim", "   "));
@@ -399,7 +410,6 @@ export class PermissionDecisionSurface {
     }
     return combined;
   }
-
   private renderDetail(width: number): string[] {
     const out: string[] = [];
     out.push(this.frameTop(width, "Command Detail"));

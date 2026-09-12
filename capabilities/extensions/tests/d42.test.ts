@@ -2307,6 +2307,91 @@ check("PERM D66.2-8: S never mutates SessionRules and never returns allow (final
   assert.match(src, /registerPermissionPromptRenderer/, "wiring uses prompt renderer");
   assert.doesNotMatch(src, /SessionRules|approved_for_session/, "wiring never mutates SessionRules");
 });
+// ------------------------------------------------------- D66.3 visual hierarchy polish
+check("PERM D66.3-1: information hierarchy — title/summary/target vs command/policy labels", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../components/permission-surface.ts"), "utf8");
+  assert.match(src, /(?:this\.)?theme\.fg\("text",\s*(?:this\.)?theme\.bold/, "summary uses text bold");
+  assert.match(src, /scopeTarget[\s\S]*?(?:this\.)?theme\.fg\("text",\s*(?:this\.)?theme\.bold/, "target uses text bold");
+  assert.match(src, /label\s*=\s*(?:this\.)?theme\.fg\("dim",\s*"Command/, "Command label dim");
+  assert.match(src, /(?:this\.)?theme\.fg\("text",\s*preview\)/, "command value text");
+  assert.match(src, /label\s*=\s*(?:this\.)?theme\.fg\("dim",\s*"Policy/, "Policy label dim");
+  assert.match(src, /value\s*=\s*(?:this\.)?theme\.fg\("muted"/, "policy value muted");
+  const details = permDetails({ accessIntent: { surface: "external_directory", path: "G:\\pitesting\\a.txt" } as any, command: "ls -la", path: "G:\\pitesting\\a.txt" });
+  const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, ()=>{});
+  const flat = flatText(surf.render(80));
+  assert.match(flat, /External directory access/, "WHAT readable");
+  assert.match(flat, /G:\\pitesting\\a\.txt/, "WHERE readable");
+  assert.match(flat, /Command/, "Command label");
+  assert.match(flat, /ls -la/, "command readable");
+  assert.match(flat, /Policy/, "Policy label");
+  assert.match(flat, /\[Y\] Allow/, "Allow control");
+  assert.match(flat, /\[N\] Deny/, "Deny control");
+  assert.match(flat, /\[R\] Reason/, "Reason control");
+});
+
+check("PERM D66.3-2: action semantics — Allow success, Deny error, Reason warning, no raw hex", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../components/permission-surface.ts"), "utf8");
+  assert.match(src, /return "success"/, "Allow success token");
+  assert.match(src, /return "error"/, "Deny error token");
+  assert.match(src, /return "warning"/, "Reason warning token");
+  assert.doesNotMatch(src, /#[0-9a-fA-F]{6}/, "no raw hex");
+  // Permission surface uses theme tokens, not raw ANSI color codes; key handling uses \x1b for arrows which is expected
+  assert.ok(!src.includes("\x1b[38;") && !src.includes("\x1b[48;"), "no raw ANSI color codes");
+});
+
+check("PERM D66.3-3: focus — exactly one, semantic remains under focus", () => {
+  const details = permDetails({ accessIntent: { surface: "external_directory" } as any });
+  const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, ()=>{});
+  assert.equal(surf.getFocusedKey(), "y", "initial y");
+  surf.handleInput("\x1b[C");
+  assert.equal(surf.getFocusedKey(), "n", "→ n");
+  surf.handleInput("\x1b[C");
+  assert.equal(surf.getFocusedKey(), "r", "→ r");
+  const flat = flatText(surf.render(80));
+  const cursors = (flat.match(/›/g) ?? []).length;
+  assert.equal(cursors, 1, "exactly one ›");
+  // Focused uses semantic foreground on selectedBg
+  const src = fs.readFileSync(path.resolve(__dirname, "../components/permission-surface.ts"), "utf8");
+  assert.match(src, /bg\("selectedBg",\s*(?:this\.)?theme\.fg\(semantic/, "focused uses semantic foreground on selectedBg");
+});
+
+check("PERM D66.3-4: width safety 12..400 after hierarchy polish", () => {
+  const details = permDetails({ accessIntent: { surface: "external_directory", path: "G:\\pitesting\\very\\long\\path\\".repeat(5) } as any, command: "x".repeat(14000), path: "G:\\pitesting\\long.txt" });
+  for (const w of [12,20,40,60,80,100,120,140,160,200,300,400]) {
+    const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, ()=>{});
+    for (const l of surf.render(w)) assert.ok(visibleWidth(l) <= w, `decision w=${w} overflow ${visibleWidth(l)}>${w}`);
+    surf.handleInput("d");
+    for (const l of surf.render(w)) assert.ok(visibleWidth(l) <= w, `detail w=${w} overflow`);
+    surf.handleInput("\x1b");
+  }
+});
+
+check("PERM D66.3-5: long command hierarchy preserved — primary compact, command readable", () => {
+  const long = "x".repeat(13000);
+  const details = permDetails({ accessIntent: { surface: "external_directory" } as any, command: long, path: "G:\\pitesting\\long.txt" });
+  const surf = new PermissionDecisionSurface(details, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, ()=>{});
+  const flat = flatText(surf.render(80));
+  assert.match(flat, /External directory access/, "WHAT still readable");
+  assert.match(flat, /G:\\pitesting\\long\.txt/, "WHERE still readable");
+  assert.match(flat, /Command/, "Command label");
+  assert.match(flat, /Policy/, "Policy label");
+  assert.ok(!flat.includes(long.slice(0,200)), "primary not dominated by 13k");
+  assert.ok(surf.render(80).length < 20, "primary still compact");
+  surf.handleInput("d");
+  assert.ok(flatText(surf.render(80)).includes("x".repeat(10)), "detail full");
+});
+
+check("PERM D66.3-6: decision regression Y/N/R/Esc unchanged after hierarchy polish", () => {
+  let v:any=null;
+  const y = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;});
+  y.handleInput("y"); assert.equal((v as any).kind, "allow");
+  v=null; const n = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;}); n.handleInput("n"); assert.equal((v as any).kind, "deny");
+  v=null; const r = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;}); r.handleInput("r"); r.handleInput("h"); r.handleInput("i"); r.handleInput("\r"); assert.equal((v as any).kind, "deny"); assert.equal((v as any).reason, "hi");
+  v=null; const esc = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;}); esc.handleInput("\x1b"); assert.equal((v as any).kind, "deny"); assert.equal((v as any).reason, "cancelled");
+  // S still absent
+  v=null; const s = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;}); s.handleInput("s"); assert.equal(v, null);
+});
+
 
 
 
