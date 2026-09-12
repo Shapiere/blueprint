@@ -2336,12 +2336,13 @@ check("PERM D66.3-2: action semantics — Allow success, Deny error, Reason warn
   assert.match(src, /return "success"/, "Allow success token");
   assert.match(src, /return "error"/, "Deny error token");
   assert.match(src, /return "warning"/, "Reason warning token");
-  assert.match(src, /keyPart\s*=\s*(?:this\.)?theme\.fg\(semantic,\s*(?:this\.)?theme\.bold\(`  \$\{keyHint\}`\)/, "key hint uses semantic success/error/warning bold");
-  assert.match(src, /labelPart\s*=\s*(?:this\.)?theme\.fg\(semantic,\s*(?:this\.)?theme\.bold\(` \$\{label\}`\)/, "label uses same semantic bold as key hint");
+  assert.match(src, /theme\.bg\("selectedBg",\s*(?:this\.)?theme\.fg\(semantic/, "focused uses semantic on selectedBg");
+  assert.match(src, /(?:this\.)?theme\.fg\("text",\s*(?:this\.)?theme\.bold\(`  \$\{keyHint\}/, "default uses text bold for key hint");
+  assert.match(src, /Allow/, "Allow exists");
   assert.doesNotMatch(src, /#[0-9a-fA-F]{6}/, "no raw hex");
-  // Permission surface uses theme tokens, not raw ANSI color codes; key handling uses \x1b for arrows which is expected
   assert.ok(!src.includes("\x1b[38;") && !src.includes("\x1b[48;"), "no raw ANSI color codes");
 });
+
 
 
 check("PERM D66.3-3: focus — exactly one, semantic remains under focus", () => {

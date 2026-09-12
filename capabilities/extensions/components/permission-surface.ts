@@ -397,9 +397,7 @@ export class PermissionDecisionSurface {
       } else if (isFocused) {
         rendered = this.theme.bg("selectedBg", this.theme.fg(semantic, this.theme.bold(`› ${keyHint} ${label}`)));
       } else {
-        const keyPart = this.theme.fg(semantic, this.theme.bold(`  ${keyHint}`));
-        const labelPart = this.theme.fg(semantic, this.theme.bold(` ${label}`));
-        rendered = `${keyPart}${labelPart}`;
+        rendered = this.theme.fg("text", this.theme.bold(`  ${keyHint} ${label}`));
       }
       parts.push(rendered);
     }
