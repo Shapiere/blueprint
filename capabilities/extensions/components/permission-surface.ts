@@ -299,7 +299,7 @@ export class PermissionDecisionSurface {
   }
 
   private frameTop(width: number, title: string): string {
-    const border = (t: string) => this.theme.fg("border", t);
+    const border = (t: string) => this.theme.fg("customMessageLabel", t);
     const titleText = this.theme.fg("customMessageLabel", this.theme.bold(title));
     const left = border("╭─ ") + titleText + border(" ");
     const tail = border("──╮");
@@ -310,13 +310,13 @@ export class PermissionDecisionSurface {
   }
 
   private frameBottom(width: number): string {
-    const border = (t: string) => this.theme.fg("border", t);
+    const border = (t: string) => this.theme.fg("customMessageLabel", t);
     const line = border("╰" + "─".repeat(Math.max(0, width - 2)) + "╯");
     return visibleWidth(line) <= width ? line : truncateToWidth(line, width, "");
   }
 
   private frameRow(width: number, content: string): string {
-    const border = (t: string) => this.theme.fg("border", t);
+    const border = (t: string) => this.theme.fg("customMessageLabel", t);
     const left = border("│ ");
     const right = border(" │");
     const interiorW = Math.max(0, width - visibleWidth(left) - visibleWidth(right));
@@ -393,12 +393,12 @@ export class PermissionDecisionSurface {
       const label = c.label;
       let rendered: string;
       if (isArmed) {
-        rendered = this.theme.bg("selectedBg", this.theme.fg("warning", `› ${keyHint} ${label} ‹`));
+        rendered = this.theme.bg("selectedBg", this.theme.fg("warning", this.theme.bold(`› ${keyHint} ${label} ‹`)));
       } else if (isFocused) {
-        rendered = this.theme.bg("selectedBg", this.theme.fg(semantic, `› ${keyHint} ${label}`));
+        rendered = this.theme.bg("selectedBg", this.theme.fg(semantic, this.theme.bold(`› ${keyHint} ${label}`)));
       } else {
-        const keyPart = this.theme.fg(semantic, `  ${keyHint}`);
-        const labelPart = this.theme.fg(semantic, ` ${label}`);
+        const keyPart = this.theme.fg(semantic, this.theme.bold(`  ${keyHint}`));
+        const labelPart = this.theme.fg(semantic, this.theme.bold(` ${label}`));
         rendered = `${keyPart}${labelPart}`;
       }
       parts.push(rendered);

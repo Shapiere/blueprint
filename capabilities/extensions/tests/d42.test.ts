@@ -2311,7 +2311,7 @@ check("PERM D66.2-8: S never mutates SessionRules and never returns allow (final
 check("PERM D66.3-1: information hierarchy — title/summary/target vs command/policy labels", () => {
   const src = fs.readFileSync(path.resolve(__dirname, "../components/permission-surface.ts"), "utf8");
   assert.match(src, /(?:this\.)?theme\.fg\("customMessageLabel",\s*(?:this\.)?theme\.bold\(title\)/, "title uses lavender customMessageLabel");
-  assert.match(src, /(?:this\.)?theme\.fg\("border",\s*t\)/, "permission border uses muted lavender border token");
+  assert.match(src, /(?:this\.)?theme\.fg\("customMessageLabel",\s*t\)/, "permission border uses muted lavender customMessageLabel token");
   assert.match(src, /(?:this\.)?theme\.fg\("text",\s*(?:this\.)?theme\.bold/, "summary uses text bold");
   assert.match(src, /scopeTarget[\s\S]*?(?:this\.)?theme\.fg\("text",\s*(?:this\.)?theme\.bold/, "target uses text bold");
   assert.match(src, /label\s*=\s*(?:this\.)?theme\.fg\("dim",\s*"Command/, "Command label dim");
@@ -2336,8 +2336,8 @@ check("PERM D66.3-2: action semantics — Allow success, Deny error, Reason warn
   assert.match(src, /return "success"/, "Allow success token");
   assert.match(src, /return "error"/, "Deny error token");
   assert.match(src, /return "warning"/, "Reason warning token");
-  assert.match(src, /keyPart\s*=\s*(?:this\.)?theme\.fg\(semantic,\s*`  \$\{keyHint\}`/, "key hint uses semantic success/error/warning");
-  assert.match(src, /labelPart\s*=\s*(?:this\.)?theme\.fg\(semantic,\s*` \$\{label\}`/, "label uses same semantic as key hint");
+  assert.match(src, /keyPart\s*=\s*(?:this\.)?theme\.fg\(semantic,\s*(?:this\.)?theme\.bold\(`  \$\{keyHint\}`\)/, "key hint uses semantic success/error/warning bold");
+  assert.match(src, /labelPart\s*=\s*(?:this\.)?theme\.fg\(semantic,\s*(?:this\.)?theme\.bold\(` \$\{label\}`\)/, "label uses same semantic bold as key hint");
   assert.doesNotMatch(src, /#[0-9a-fA-F]{6}/, "no raw hex");
   // Permission surface uses theme tokens, not raw ANSI color codes; key handling uses \x1b for arrows which is expected
   assert.ok(!src.includes("\x1b[38;") && !src.includes("\x1b[48;"), "no raw ANSI color codes");
