@@ -299,8 +299,8 @@ export class PermissionDecisionSurface {
   }
 
   private frameTop(width: number, title: string): string {
-    const border = (t: string) => this.theme.fg("text", t);
-    const titleText = this.theme.fg("text", this.theme.bold(title));
+    const border = (t: string) => this.theme.fg("border", t);
+    const titleText = this.theme.fg("customMessageLabel", this.theme.bold(title));
     const left = border("╭─ ") + titleText + border(" ");
     const tail = border("──╮");
     const fillLen = Math.max(0, width - visibleWidth(left) - visibleWidth(tail) - 1);
@@ -310,13 +310,13 @@ export class PermissionDecisionSurface {
   }
 
   private frameBottom(width: number): string {
-    const border = (t: string) => this.theme.fg("text", t);
+    const border = (t: string) => this.theme.fg("border", t);
     const line = border("╰" + "─".repeat(Math.max(0, width - 2)) + "╯");
     return visibleWidth(line) <= width ? line : truncateToWidth(line, width, "");
   }
 
   private frameRow(width: number, content: string): string {
-    const border = (t: string) => this.theme.fg("text", t);
+    const border = (t: string) => this.theme.fg("border", t);
     const left = border("│ ");
     const right = border(" │");
     const interiorW = Math.max(0, width - visibleWidth(left) - visibleWidth(right));
@@ -397,7 +397,7 @@ export class PermissionDecisionSurface {
       } else if (isFocused) {
         rendered = this.theme.bg("selectedBg", this.theme.fg(semantic, `› ${keyHint} ${label}`));
       } else {
-        const keyPart = this.theme.fg("dim", `  ${keyHint}`);
+        const keyPart = this.theme.fg(semantic, `  ${keyHint}`);
         const labelPart = this.theme.fg(semantic, ` ${label}`);
         rendered = `${keyPart}${labelPart}`;
       }
