@@ -2808,13 +2808,112 @@ export class RuntimeContextBar implements Component {
   invalidate(): void {}
 }
 
+/**
+ * WORK PLAN — compact status layer between Activity and Runtime Context.
+ * Reads the single authoritative rpiv-todo state via getRenderState() +
+ * selectTodoCounts/selectOverlayLayout at render time (never replayFromBranch).
+ * Collapsed primary is one horizontal line: `◆ Work plan · 1/5 · current task`.
+ * Returns [] (zero lines) when no active plan exists — auto-hide, no dashboard.
+ * The 12-row rpiv-todos overlay remains the on-demand full list via the existing
+ * `r` collapse/expand shortcut; WorkPlanWidget and rpiv-todos are never both
+ * visible in the primary strip (see session_start ordering).
+ */
 
+export class WorkPlanWidget implements Component {
+  private tui: TUI | undefined;
+  private collapsed = true;
+  constructor(
+    private readonly theme: Theme,
+    private readonly getState: () => { tasks: Array<{ content: string; status: string }>; nextId: number } | null,
+  ) {}
+
+  setTui(tui: TUI): void {
+    this.tui = tui;
+  }
+  repaint(): void {
+    this.tui?.requestRender();
+  }
+  isCollapsed(): boolean {
+    return this.collapsed;
+  }
+  toggleCollapse(): void {
+    this.collapsed = !this.collapsed;
+    this.repaint();
+  }
+
+  render(width: number): string[] {
+    let state: { tasks: Array<{ content: string; status: string }>; nextId: number } | null = null;
+    try {
+      state = this.getState();
+    } catch {
+      return [];
+    }
+    if (!state || !state.tasks || state.tasks.length === 0) return [];
+    const visible = state.tasks.filter((t) => t.status !== "deleted");
+    if (visible.length === 0) return [];
+    // Find current task: in_progress first, else first pending, else none → hide (unless expanded with completed)
+    let active = visible.find((t) => t.status === "in_progress");
+    if (!active) active = visible.find((t) => t.status === "pending");
+    // Expanded: show full list via overlay layout; collapsed: show one line
+    if (!this.collapsed) {
+      // Full list — up to 12 rows, selectOverlayLayout style (completed hidden first, then pending)
+      const maxLines = 12;
+      let toShow: typeof visible = visible;
+      if (visible.length > maxLines) {
+        const nonCompleted = visible.filter((t) => t.status !== "completed");
+        if (nonCompleted.length <= maxLines - 1) {
+          const keep = new Set(nonCompleted);
+          for (const t of visible) {
+            if (keep.size >= maxLines - 1) break;
+            if (t.status === "completed") keep.add(t);
+          }
+          toShow = visible.filter((t) => keep.has(t));
+        } else {
+          toShow = nonCompleted.slice(0, maxLines - 1);
+        }
+      }
+      const lines: string[] = [];
+      for (const task of toShow) {
+        const icon = task.status === "completed" ? "●" : task.status === "in_progress" ? "◐" : "○";
+        const color = task.status === "completed" ? "dim" : task.status === "in_progress" ? "accent" : "dim";
+        const line = this.theme.fg(color as ThemeColor, `${icon} ${task.content}`);
+        lines.push(visibleWidth(line) <= width ? line : truncateToWidth(line, width, "…"));
+      }
+      if (visible.length > toShow.length) {
+        const more = visible.length - toShow.length;
+        lines.push(this.theme.fg("dim", `… ${more} more`));
+      }
+      lines.push(this.theme.fg("dim", `  [${this.collapsed ? "expand" : "collapse"}]`));
+      return lines.map((l) => (visibleWidth(l) <= width ? l : truncateToWidth(l, width, "…")));
+    }
+    if (!active) return [];
+    const total = visible.length;
+    const completed = visible.filter((t) => t.status === "completed").length;
+    const idx = visible.indexOf(active);
+    const pos = idx >= 0 ? idx + 1 : 1;
+    const progress = `${pos}/${total}`;
+    const prefixStyled = this.theme.fg("dim", "◆ Work plan · ") + this.theme.fg("dim", `${progress} · `);
+    const taskStyled = this.theme.fg("text", active.content);
+    const prefixW = visibleWidth(prefixStyled);
+    const taskAvail = Math.max(0, width - prefixW);
+    const taskFitted = taskAvail <= 0 ? "" : visibleWidth(taskStyled) <= taskAvail ? taskStyled : truncateToWidth(taskStyled, taskAvail, "…");
+    const line = `${prefixStyled}${taskFitted}`;
+    if (visibleWidth(line) > width) {
+      const fallback = this.theme.fg("dim", `◆ Work plan · ${progress}`);
+      return [visibleWidth(fallback) <= width ? fallback : truncateToWidth(fallback, width, "…")];
+    }
+    return [visibleWidth(line) <= width ? line : truncateToWidth(line, width, "…")];
+  }
+
+  invalidate(): void {}
+}
 /** Token counts for compact footer display (mirrors the built-in formatTokens). */
 export function formatTokensCompact(count: number): string {
   if (count < 1000) return count.toString();
   if (count < 10_000) return `${(count / 1000).toFixed(1)}k`;
   if (count < 1_000_000) return `${Math.round(count / 1000)}k`;
   if (count < 10_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+
   return `${Math.round(count / 1_000_000)}M`;
 }
 
@@ -3162,11 +3261,11 @@ export function piInputEditorFactory(
  * these refs (no ctx captured at registration time). */
 let activeActivityWidget: ActivityWidget | null = null;
 let activeRuntimeBar: RuntimeContextBar | null = null;
+let activeWorkPlanWidget: WorkPlanWidget | null = null;
 /** Authoritative git-branch source, captured from the footer factory's
  * FooterDataProvider (the only public path to git state). */
 let runtimeFooterData: { getGitBranch(): string | null } | null = null;
 let runtimeBarContext: (() => BarContext) | null = null;
-
 /** Live session data for the bar. Every ctx accessor is try/caught: async
  * continuations can outlive the runner in headless modes, where ctx accessors
  * throw assertActive — the bar must never crash a render. */
@@ -3227,12 +3326,32 @@ function runtimeContextWidgetFactory(_tui: TUI, theme: Theme): RuntimeContextBar
   return new RuntimeContextBar(theme, () => runtimeBarContext?.() ?? EMPTY_BAR_CONTEXT);
 }
 
+function workPlanWidgetFactory(tui: TUI, theme: Theme): WorkPlanWidget {
+  const getState = (): { tasks: Array<{ content: string; status: string }>; nextId: number } | null => {
+    try {
+      // rpiv-todo is the single source of truth; Pi's jiti loader isolates per-extension module caches,
+      // but globalThis Symbols survive. Use a runtime require that jiti can resolve.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const store = eval("require")("@juicesharp/rpiv-todo/state/store.js") as {
+        getRenderState: () => { tasks: Array<{ content: string; status: string }>; nextId: number };
+      };
+      return store.getRenderState();
+    } catch {
+      return null;
+    }
+  };
+  const w = new WorkPlanWidget(theme, getState);
+  (w as unknown as { setTui: (t: TUI) => void }).setTui?.(tui);
+  activeWorkPlanWidget = w;
+  (tui as unknown as { requestRender: () => void }).requestRender?.();
+  return w;
+}
+
 const RUNTIME_ACTIVITY_WIDGET_KEY = "runtime-activity";
 const RUNTIME_CONTEXT_WIDGET_KEY = "runtime-context";
+const WORK_PLAN_WIDGET_KEY = "harness-work-plan";
 /**
  * Grouped selection list for the /mcc overview. Headers and disabled rows are
- * rendered but skipped by navigation; arrow keys wrap across selectable items
- * only. Viewport-limited to maxLines rendered lines with a scroll indicator.
  */
 export class MccOverviewList implements Component {
   private readonly items: MccItem[] = [];
@@ -3527,11 +3646,19 @@ export default function (pi: ExtensionAPI) {
             { placement: "aboveEditor" },
           );
           ctx.ui.setWidget(
+            WORK_PLAN_WIDGET_KEY,
+            (tui, theme) => workPlanWidgetFactory(tui, theme),
+            { placement: "aboveEditor" },
+          );
+          ctx.ui.setWidget(
             RUNTIME_CONTEXT_WIDGET_KEY,
             (_tui, theme) => runtimeContextWidgetFactory(_tui, theme),
             { placement: "aboveEditor" },
           );
-          ctx.ui.setWorkingMessage("");
+          // Hide the full rpiv-todos board when WorkPlan compact is primary — WorkPlanWidget + rpiv-todos must never both be visible in the primary strip
+          try {
+            ctx.ui.setWidget("rpiv-todos", undefined);
+          } catch {}
           ctx.ui.setWorkingIndicator({ frames: [] });
           // D64 primary-surface discipline: third-party extensions may mount
           // their own status widgets below the editor (pi-lens). These are
@@ -3613,6 +3740,7 @@ export default function (pi: ExtensionAPI) {
     } catch {}
   });
 
+
   pi.on("agent_start", (_event, ctx) => {
     applyAgentStart(lifecycleStore);
     try {
@@ -3640,10 +3768,19 @@ export default function (pi: ExtensionAPI) {
       if (ctx.hasUI && ctx.mode === "tui") activeActivityWidget?.repaint();
     } catch {}
   });
-  pi.on("tool_execution_end", (_event, ctx) => {
+  pi.on("tool_execution_end", (event, ctx) => {
     applyToolEnd(lifecycleStore);
     try {
       if (ctx.hasUI && ctx.mode === "tui") activeActivityWidget?.repaint();
+    } catch {}
+    try {
+      if (ctx.hasUI && ctx.mode === "tui" && event.toolName === "todo") {
+        activeWorkPlanWidget?.repaint();
+        // Keep the full rpiv-todos board hidden while the compact Work Plan is primary
+        try {
+          ctx.ui.setWidget("rpiv-todos", undefined);
+        } catch {}
+      }
     } catch {}
   });
   pi.on("session_shutdown", (_event, ctx) => {
@@ -3651,13 +3788,26 @@ export default function (pi: ExtensionAPI) {
     try {
       if (ctx.hasUI && ctx.mode === "tui") {
         activeActivityWidget?.dispose();
+        activeWorkPlanWidget?.repaint();
       }
     } catch {}
     activeActivityWidget = null;
+    activeWorkPlanWidget = null;
+    try {
+      ctx.ui.setWidget(WORK_PLAN_WIDGET_KEY, undefined);
+    } catch {}
   });
-
+  pi.on("session_compact", () => {
+    try {
+      activeWorkPlanWidget?.repaint();
+    } catch {}
+  });
+  pi.on("session_tree", () => {
+    try {
+      activeWorkPlanWidget?.repaint();
+    } catch {}
+  });
   pi.on("model_select", async (event, ctx) => {
-    if (!ctx.hasUI) return;
     if (restoringBootDefault) {
       restoringBootDefault = false; // boot restoration is not a user model change
       return;

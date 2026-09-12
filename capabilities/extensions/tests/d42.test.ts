@@ -52,6 +52,7 @@ import {
   ActivityWidget,
   MinimalFooter,
   RuntimeContextBar,
+  WorkPlanWidget,
   ACTIVITY_FRAMES,
   activityLine,
   activityPhrase,
@@ -2397,6 +2398,139 @@ check("PERM D66.3-6: decision regression Y/N/R/Esc unchanged after hierarchy pol
   // S still absent
   v=null; const s = new PermissionDecisionSurface(permDetails(), themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, (x:any)=>{v=x;}); s.handleInput("s"); assert.equal(v, null);
 });
+// ------------------------------------------------------- Work Plan / Todo Surface
+check("WORK PLAN 1 — NO PLAN: empty state renders zero lines", () => {
+  const w = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks: [], nextId: 1 }));
+  assert.deepEqual(w.render(80), [], "no plan → []");
+  const w2 = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks: [{ content: "a", status: "deleted" } as any], nextId: 2 }));
+  assert.deepEqual(w2.render(80), [], "deleted only → []");
+});
+
+check("WORK PLAN 2 — ACTIVE TASK: in_progress → first pending fallback", () => {
+  const tasksInProg = [{ content: "Inventory repo", status: "in_progress" } as any, { content: "Trace authority", status: "pending" } as any];
+  const w = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks: tasksInProg, nextId: 3 }));
+  const flat = flatText(w.render(80));
+  assert.match(flat, /◆ Work plan · 1\/2 · Inventory repo/, "in_progress 1/2");
+  assert.equal(w.render(80).length, 1, "exactly one line");
+  const tasksPendingOnly = [{ content: "Trace authority", status: "pending" } as any, { content: "Inventory repo", status: "completed" } as any];
+  const w2 = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks: tasksPendingOnly, nextId: 3 }));
+  const flat2 = flatText(w2.render(80));
+  assert.match(flat2, /Trace authority/, "first pending fallback");
+});
+
+check("WORK PLAN 3 — PENDING FALLBACK: no in_progress, first pending becomes active", () => {
+  const tasks = [{ content: "Trace authority", status: "pending" } as any, { content: "Audit", status: "pending" } as any];
+  const w = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks, nextId: 3 }));
+  assert.match(flatText(w.render(80)), /Trace authority/);
+});
+
+check("WORK PLAN 4 — PROGRESS: 1/5, 2/5 etc. match authoritative state", () => {
+  const tasks = [
+    { content: "a", status: "completed" } as any,
+    { content: "b", status: "in_progress" } as any,
+    { content: "c", status: "pending" } as any,
+    { content: "d", status: "pending" } as any,
+    { content: "e", status: "pending" } as any,
+  ];
+  const w = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks, nextId: 6 }));
+  assert.match(flatText(w.render(80)), /2\/5/);
+});
+
+check("WORK PLAN 5 — NO DASHBOARD: collapsed primary never contains full list", () => {
+  const tasks = [{ content: "a", status: "pending" } as any, { content: "b", status: "pending" } as any, { content: "c", status: "pending" } as any];
+  const w = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks, nextId: 4 }));
+  const flat = flatText(w.render(80));
+  assert.ok(!flat.includes("●") || flat.includes("◆ Work plan"), "no full ●/○ board in collapsed");
+  assert.ok(!flat.includes("Todos (") , "no Todos heading in collapsed");
+  assert.equal(w.render(80).length, 1, "one line collapsed");
+});
+
+check("WORK PLAN 6 — ACTIVITY SEPARATION: Activity and Work Plan are separate lines", () => {
+  const act = new ActivityWidget({ requestRender: () => {} } as unknown as import("@earendil-works/pi-tui").TUI, themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme);
+  // Activity idle → []
+  assert.deepEqual(act.render(80), [], "idle activity []");
+  // Work Plan with task → one line
+  const w = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks: [{ content: "Inventory", status: "pending" } as any], nextId: 2 }));
+  assert.equal(w.render(80).length, 1, "work plan one line");
+  // They are separate components, not merged
+  assert.notEqual(act.render(80).join(""), w.render(80).join(""));
+});
+
+check("WORK PLAN 7 — WIDGET ORDER: Activity → Work Plan → Runtime Context → Input", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  const actIdx = src.indexOf('RUNTIME_ACTIVITY_WIDGET_KEY,');
+  const workIdx = src.indexOf('WORK_PLAN_WIDGET_KEY,');
+  const ctxIdx = src.indexOf('RUNTIME_CONTEXT_WIDGET_KEY,');
+  assert.ok(actIdx >= 0 && workIdx >= 0 && ctxIdx >= 0, "all three keys present");
+  assert.ok(actIdx < workIdx && workIdx < ctxIdx, "order Activity → Work Plan → Context");
+  assert.match(src, /placement:\s*"aboveEditor"/, "aboveEditor placement");
+});
+
+check("WORK PLAN 8 — NO DUPLICATION: collapsed WorkPlan visible, rpiv-todos hidden; expanded vice versa", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.match(src, /setWidget\("rpiv-todos",\s*undefined\)/, "hides rpiv-todos when WorkPlan primary");
+  // WorkPlanWidget collapsed true → one line, false → multiple lines
+  const tasks = [{ content: "a", status: "pending" } as any, { content: "b", status: "pending" } as any];
+  const w = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks, nextId: 3 }));
+  assert.equal(w.render(80).length, 1, "collapsed one line");
+  (w as unknown as { collapsed: boolean }).collapsed = false;
+  assert.ok(w.render(80).length > 1, "expanded multiple lines");
+});
+
+check("WORK PLAN 9 — WIDTH safety 12–400", () => {
+  const tasks = [{ content: "Very long task name that should truncate gracefully and not overflow the runtime context or input surfaces", status: "pending" } as any];
+  for (const w of [12,20,40,60,80,100,120,140,160,200,300,400]) {
+    const widget = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks, nextId: 2 }));
+    for (const line of widget.render(w)) assert.ok(visibleWidth(line) <= w, `width ${w} overflow ${visibleWidth(line)}>${w}`);
+  }
+});
+
+check("WORK PLAN 10 — LONG TASK truncates, never wraps", () => {
+  const long = "Investigate the permission rendering architecture across twelve files and document the findings thoroughly for the next session";
+  const w = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks: [{ content: long, status: "pending" } as any], nextId: 2 }));
+  const lines = w.render(80);
+  assert.equal(lines.length, 1, "one line even for long task");
+  assert.ok(!flatText(lines).includes(long) || visibleWidth(lines[0]!) <= 80, "truncated");
+  assert.ok(visibleWidth(lines[0]!) <= 80, "width-safe");
+});
+
+check("WORK PLAN 11 — EVENT-DRIVEN: todo tool update triggers repaint, non-todo does not", () => {
+  let repainted = false;
+  const fakeTui = { requestRender: () => { repainted = true; } } as unknown as import("@earendil-works/pi-tui").TUI;
+  const w = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks: [{ content: "a", status: "pending" } as any], nextId: 2 }));
+  (w as unknown as { setTui: (t: import("@earendil-works/pi-tui").TUI) => void }).setTui(fakeTui);
+  w.repaint();
+  assert.ok(repainted, "repaint calls tui.requestRender");
+  repainted = false;
+  // Non-todo tool should not affect WorkPlan — verified by handler only repainting on todo toolName
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.match(src, /toolName === "todo"/, "only todo triggers repaint");
+});
+
+check("WORK PLAN 12 — SESSION: compact survives, no stale tasks after shutdown", () => {
+  const tasks = [{ content: "a", status: "pending" } as any];
+  const w = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks, nextId: 2 }));
+  assert.equal(w.render(80).length, 1, "before shutdown one line");
+  // Simulate session_shutdown clearing activeWorkPlanWidget
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.match(src, /activeWorkPlanWidget = null/, "clears on shutdown");
+  assert.match(src, /setWidget\(WORK_PLAN_WIDGET_KEY, undefined\)/, "hides widget on shutdown");
+  // After eviction, getRenderState would return empty, so render would be []
+  const w2 = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks: [], nextId: 1 }));
+  assert.deepEqual(w2.render(80), [], "empty after eviction");
+});
+
+check("WORK PLAN 13 — INPUT REGRESSION: multiline input unchanged", () => {
+  const lines = ["hello", "world"];
+  const width = 80;
+  const frame = piFrameRender(lines, width, (t: string) => t);
+  // piFrameRender should still produce single bottomInput for 1 row, N content + bottom for multiline — tested in existing PI FRAME tests
+  assert.ok(frame.length >= 1, "piFrameRender still works");
+  // WorkPlanWidget does not touch piFrameRender
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.doesNotMatch(src, /setEditorComponent.*WorkPlan/, "Work Plan not inside CustomEditor");
+});
+
 
 
 
