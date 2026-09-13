@@ -3739,6 +3739,35 @@ export default function (pi: ExtensionAPI) {
         .catch(() => {});
     } catch {}
   });
+  // Work Plan expand/collapse — Harness is the SOLE owner of ctrl+shift+t for the Work Plan.
+  // rpiv-todo's overlay shortcut is disabled via its config (collapseKey:"off" at ~/.config/rpiv-todo/config.json)
+  // so Pi sees exactly one registration. Collapsed = WorkPlanWidget one-line visible, rpiv-todos hidden.
+  // Expanded = WorkPlanWidget 12-row full list visible, rpiv-todos remains hidden (single source, no duplication).
+  // This keeps presentation in one place with the existing ●/○/◐ 12-row budget, no second Todo state.
+  pi.registerShortcut("ctrl+shift+t" as never, {
+    description: "Collapse or expand the Work Plan",
+    handler: (ctx) => {
+      if (!ctx.hasUI || !activeWorkPlanWidget) return;
+      // Only toggle when there is an active Work Plan (has tasks); otherwise keep hidden.
+      try {
+        const maybe = activeWorkPlanWidget as unknown as { getState?: unknown };
+        if (maybe && typeof maybe === "object" && "getState" in maybe && typeof (maybe as { getState: unknown }).getState === "function") {
+          const st = (maybe as { getState: () => unknown }).getState();
+          if (st && typeof st === "object" && "tasks" in st) {
+            const tasksVal = (st as { tasks: unknown }).tasks;
+            const hasTasks = Array.isArray(tasksVal) && tasksVal.length > 0;
+            if (!hasTasks) return;
+          }
+        }
+      } catch {}
+      activeWorkPlanWidget.toggleCollapse();
+      // Keep rpiv-todos hidden — expanded is WorkPlanWidget's own 12-row rendering, not the rpiv board.
+      try {
+        ctx.ui.setWidget("rpiv-todos", undefined);
+      } catch {}
+    },
+  });
+
 
 
   pi.on("agent_start", (_event, ctx) => {

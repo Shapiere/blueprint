@@ -2530,6 +2530,24 @@ check("WORK PLAN 13 — INPUT REGRESSION: multiline input unchanged", () => {
   const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
   assert.doesNotMatch(src, /setEditorComponent.*WorkPlan/, "Work Plan not inside CustomEditor");
 });
+check("WORK PLAN 14 — EXPAND/COLLAPSE: exactly one shortcut owner, deterministic toggle", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  // Harness must be sole owner of ctrl+shift+t for Work Plan
+  assert.match(src, /registerShortcut\("ctrl\+shift\+t"/, "Harness registers ctrl+shift+t");
+  // rpiv-todo's shortcut must be disabled via config off (single owner)
+  const cfgPath = "C:/Users/hikari/.config/rpiv-todo/config.json";
+  let cfg: unknown = null;
+  try { cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")); } catch {}
+  assert.ok(cfg && typeof cfg === "object" && "collapseKey" in (cfg as Record<string, unknown>) && (cfg as { collapseKey: string }).collapseKey === "off", "rpiv-todo collapseKey off — Harness sole owner");
+  // Handler must hide rpiv-todos when WorkPlan toggles (never both)
+  assert.match(src, /setWidget\("rpiv-todos", undefined\)/, "hides rpiv-todos on toggle");
+  // Toggle is deterministic: activeWorkPlanWidget.toggleCollapse() + requestRender
+  assert.match(src, /activeWorkPlanWidget\.toggleCollapse\(\)/, "toggles WorkPlanWidget");
+  // No duplicate registration in Harness (exactly one registerShortcut for ctrl+shift+t)
+  const count = (src.match(/registerShortcut\("ctrl\+shift\+t"/g) || []).length;
+  assert.equal(count, 1, "exactly one ctrl+shift+t registration in Harness");
+});
+
 
 
 
