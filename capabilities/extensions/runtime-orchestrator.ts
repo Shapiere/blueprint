@@ -2824,7 +2824,7 @@ export class WorkPlanWidget implements Component {
   private collapsed = true;
   constructor(
     private readonly theme: Theme,
-    private readonly getState: () => { tasks: Array<{ content: string; status: string }>; nextId: number } | null,
+    private readonly getState: () => { tasks: Array<{ subject?: string; content?: string; status: string }>; nextId: number } | null,
   ) {}
 
   setTui(tui: TUI): void {
@@ -2842,7 +2842,7 @@ export class WorkPlanWidget implements Component {
   }
 
   render(width: number): string[] {
-    let state: { tasks: Array<{ content: string; status: string }>; nextId: number } | null = null;
+    let state: { tasks: Array<{ subject?: string; content?: string; status: string }>; nextId: number } | null = null;
     try {
       state = this.getState();
     } catch {
@@ -2876,7 +2876,8 @@ export class WorkPlanWidget implements Component {
       for (const task of toShow) {
         const icon = task.status === "completed" ? "●" : task.status === "in_progress" ? "◐" : "○";
         const color = task.status === "completed" ? "dim" : task.status === "in_progress" ? "accent" : "dim";
-        const line = this.theme.fg(color as ThemeColor, `${icon} ${task.content}`);
+        const subjectVal = task.subject ?? task.content ?? "";
+        const line = this.theme.fg(color as ThemeColor, `${icon} ${subjectVal}`);
         lines.push(visibleWidth(line) <= width ? line : truncateToWidth(line, width, "…"));
       }
       if (visible.length > toShow.length) {
@@ -2893,7 +2894,8 @@ export class WorkPlanWidget implements Component {
     const pos = idx >= 0 ? idx + 1 : 1;
     const progress = `${pos}/${total}`;
     const prefixStyled = this.theme.fg("dim", "◆ Work plan · ") + this.theme.fg("dim", `${progress} · `);
-    const taskStyled = this.theme.fg("text", active.content);
+    const subjectActive = active.subject ?? active.content ?? "";
+    const taskStyled = this.theme.fg("text", subjectActive);
     const prefixW = visibleWidth(prefixStyled);
     const taskAvail = Math.max(0, width - prefixW);
     const taskFitted = taskAvail <= 0 ? "" : visibleWidth(taskStyled) <= taskAvail ? taskStyled : truncateToWidth(taskStyled, taskAvail, "…");
@@ -3328,9 +3330,22 @@ function runtimeContextWidgetFactory(_tui: TUI, theme: Theme): RuntimeContextBar
 
 function workPlanWidgetFactory(tui: TUI, theme: Theme): WorkPlanWidget {
   const getState = (): { tasks: Array<{ content: string; status: string }>; nextId: number } | null => {
+    // 1) Preferred: globalThis Symbol exposed by rpiv-todo's store (same instance as rpiv-todo, survives jiti isolation)
     try {
-      // rpiv-todo is the single source of truth; Pi's jiti loader isolates per-extension module caches,
-      // but globalThis Symbols survive. Use a runtime require that jiti can resolve.
+      const g = globalThis as unknown as Record<symbol, unknown>;
+      const sym = Symbol.for("rpiv-todo.store");
+      const store = g[sym] as { getRenderState: () => { tasks: Array<{ content: string; status: string }>; nextId: number } } | undefined;
+      if (store && typeof store.getRenderState === "function") return store.getRenderState();
+    } catch {}
+    // 2) Fallback: runtime require that jiti can resolve (per-extension cache, but try both specifiers)
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const store = eval("require")("@juicesharp/rpiv-todo/state/store") as {
+        getRenderState: () => { tasks: Array<{ content: string; status: string }>; nextId: number };
+      };
+      return store.getRenderState();
+    } catch {}
+    try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const store = eval("require")("@juicesharp/rpiv-todo/state/store.js") as {
         getRenderState: () => { tasks: Array<{ content: string; status: string }>; nextId: number };
@@ -3805,10 +3820,9 @@ export default function (pi: ExtensionAPI) {
     try {
       if (ctx.hasUI && ctx.mode === "tui" && event.toolName === "todo") {
         activeWorkPlanWidget?.repaint();
-        // Keep the full rpiv-todos board hidden while the compact Work Plan is primary
-        try {
-          ctx.ui.setWidget("rpiv-todos", undefined);
-        } catch {}
+        // rpiv-todos overlay is disabled via ~/.config/rpiv-todo/config.json {"overlayEnabled":false}
+        // (see C:/Users/hikari/.pi/agent/npm/node_modules/@juicesharp/rpiv-todo/config.ts isOverlayEnabled())
+        // so it never registers; no setWidget("rpiv-todos", undefined) race needed here.
       }
     } catch {}
   });

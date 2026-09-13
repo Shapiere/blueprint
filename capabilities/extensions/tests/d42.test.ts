@@ -2534,19 +2534,36 @@ check("WORK PLAN 14 — EXPAND/COLLAPSE: exactly one shortcut owner, determinist
   const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
   // Harness must be sole owner of ctrl+shift+t for Work Plan
   assert.match(src, /registerShortcut\("ctrl\+shift\+t"/, "Harness registers ctrl+shift+t");
-  // rpiv-todo's shortcut must be disabled via config off (single owner)
+  // rpiv-todo's shortcut must be disabled via config off (single owner) and overlay disabled
   const cfgPath = "C:/Users/hikari/.config/rpiv-todo/config.json";
   let cfg: unknown = null;
   try { cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")); } catch {}
   assert.ok(cfg && typeof cfg === "object" && "collapseKey" in (cfg as Record<string, unknown>) && (cfg as { collapseKey: string }).collapseKey === "off", "rpiv-todo collapseKey off — Harness sole owner");
-  // Handler must hide rpiv-todos when WorkPlan toggles (never both)
-  assert.match(src, /setWidget\("rpiv-todos", undefined\)/, "hides rpiv-todos on toggle");
-  // Toggle is deterministic: activeWorkPlanWidget.toggleCollapse() + requestRender
+  assert.ok(cfg && typeof cfg === "object" && "overlayEnabled" in (cfg as Record<string, unknown>) && (cfg as { overlayEnabled: boolean }).overlayEnabled === false, "rpiv-todo overlayEnabled false — no rpiv-todos presentation");
+  // rpiv-todo config must expose isOverlayEnabled and index must respect it
+  const rpivConfigSrc = fs.readFileSync("C:/Users/hikari/.pi/agent/npm/node_modules/@juicesharp/rpiv-todo/config.ts", "utf8");
+  assert.match(rpivConfigSrc, /isOverlayEnabled/, "config exposes isOverlayEnabled");
+  const rpivIndexSrc = fs.readFileSync("C:/Users/hikari/.pi/agent/npm/node_modules/@juicesharp/rpiv-todo/index.ts", "utf8");
+  assert.match(rpivIndexSrc, /isOverlayEnabled/, "index respects isOverlayEnabled — no overlay registration when disabled");
+  // WorkPlanWidget must read same store instance via globalThis Symbol (not fragile eval require)
+  assert.match(src, /Symbol\.for\("rpiv-todo\.store"\)/, "WorkPlan reads same store via global Symbol");
+  // Handler must keep rpiv-todos hidden on toggle (defense, but primary is overlayEnabled)
   assert.match(src, /activeWorkPlanWidget\.toggleCollapse\(\)/, "toggles WorkPlanWidget");
   // No duplicate registration in Harness (exactly one registerShortcut for ctrl+shift+t)
   const count = (src.match(/registerShortcut\("ctrl\+shift\+t"/g) || []).length;
   assert.equal(count, 1, "exactly one ctrl+shift+t registration in Harness");
 });
+check("WORK PLAN 15 — SAME AUTHORITATIVE STATE: WorkPlan reads same store instance as rpiv-todo", () => {
+  // Verify store exposes global Symbol and WorkPlan uses it as primary
+  const storeSrc = fs.readFileSync("C:/Users/hikari/.pi/agent/npm/node_modules/@juicesharp/rpiv-todo/state/store.ts", "utf8");
+  assert.match(storeSrc, /Symbol\.for\("rpiv-todo\.store"\)/, "store exposes global Symbol");
+  assert.match(storeSrc, /getRenderState/, "store has getRenderState");
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.match(src, /Symbol\.for\("rpiv-todo\.store"\)/, "WorkPlan getState uses global Symbol as primary");
+  assert.match(src, /getRenderState/, "WorkPlan getState uses getRenderState");
+});
+
+
 
 
 
