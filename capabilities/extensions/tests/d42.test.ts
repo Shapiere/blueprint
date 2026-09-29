@@ -13,6 +13,7 @@ import { getKeybindings } from "@earendil-works/pi-tui";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
   MccOverviewList,
@@ -39,6 +40,11 @@ import {
   scriptWritesProtectedState,
   setExecutionProfile,
   sortModelsRouterFirst,
+  ROUTER_HEALTH_TIMEOUT_MS,
+  check9routerHealth,
+  mapRouterCatalog,
+  refreshRouterCatalogOnce,
+  resolveRefreshedCatalog,
   type EffectiveReasoning,
   type ModelSurfaceState,
   type MccSection,
@@ -2561,6 +2567,186 @@ check("WORK PLAN 15 — SAME AUTHORITATIVE STATE: WorkPlan reads same store inst
   const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
   assert.match(src, /Symbol\.for\("rpiv-todo\.store"\)/, "WorkPlan getState uses global Symbol as primary");
   assert.match(src, /getRenderState/, "WorkPlan getState uses getRenderState");
+});
+
+// ------------------------------------------------------- D73 — 9router catalog reliability
+/** Ephemeral local HTTP server so health probes are exercised over real HTTP. */
+async function withRouter(
+  handler: (req: IncomingMessage, res: ServerResponse) => void,
+  fn: (endpoint: string) => Promise<void>,
+): Promise<void> {
+  const http = await import("node:http");
+  const server = http.createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  try {
+    await fn(`http://127.0.0.1:${port}/v1/models`);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+check("D73 1 — HEALTH TIMEOUT: boot-safe and still bounded", () => {
+  assert.ok(ROUTER_HEALTH_TIMEOUT_MS > 1500, `timeout ${ROUTER_HEALTH_TIMEOUT_MS} must exceed the old 1500 ms budget`);
+  assert.ok(ROUTER_HEALTH_TIMEOUT_MS <= 10000, `timeout ${ROUTER_HEALTH_TIMEOUT_MS} must stay bounded (no infinite wait)`);
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  // The abort window must cover the body: the timer is cleared in `finally`,
+  // not immediately after the headers arrive.
+  assert.match(src, /} finally \{\s*clearTimeout\(timer\);\s*}/, "health probe clears its timer in finally (body inside the bound)");
+});
+
+check("D73 2 — HEALTH OK: HTTP 200 with a valid model array", async () => {
+  await withRouter(
+    (_req, res) => {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ object: "list", data: [{ id: "a" }, { id: "b" }, { id: "c" }] }));
+    },
+    async (endpoint) => {
+      const health = await check9routerHealth(endpoint, 2000);
+      assert.equal(health.ok, true, "reachable router is healthy");
+      assert.equal(health.modelCount, 3, "model count from the body");
+      assert.equal(health.kind, undefined, "no failure classification when ok");
+    },
+  );
+});
+
+check("D73 3 — HEALTH HTTP FAILURE: 500 classified, not a generic error", async () => {
+  await withRouter(
+    (_req, res) => {
+      res.statusCode = 500;
+      res.end("boom");
+    },
+    async (endpoint) => {
+      const health = await check9routerHealth(endpoint, 2000);
+      assert.equal(health.ok, false, "500 is not healthy");
+      assert.equal(health.kind, "http", "classified as http");
+      assert.match(String(health.error), /HTTP 500/, "error names the status");
+    },
+  );
+});
+
+check("D73 4 — HEALTH TIMEOUT: slow body still completes bounded", async () => {
+  await withRouter(
+    (_req, res) => {
+      res.setHeader("content-type", "application/json");
+      res.write('{"object":"list","data":['); // headers + partial body, then stall
+    },
+    async (endpoint) => {
+      const started = Date.now();
+      const health = await check9routerHealth(endpoint, 300);
+      const elapsed = Date.now() - started;
+      assert.equal(health.ok, false, "a stalled body is not healthy");
+      assert.equal(health.kind, "timeout", "classified as timeout");
+      assert.ok(elapsed < 3000, `bounded completion (took ${elapsed}ms)`);
+    },
+  );
+});
+
+check("D73 5 — EMPTY CATALOG: no fabricated models", () => {
+  assert.deepEqual(mapRouterCatalog({ object: "list", data: [] }), [], "empty live payload maps to no models");
+  // Nothing trustworthy to publish: `null` makes the caller throw so the host
+  // keeps its last-good catalog rather than applying an empty list.
+  assert.equal(resolveRefreshedCatalog([], []), null, "empty live + no prior publishes nothing (nothing invented)");
+  assert.equal(resolveRefreshedCatalog(null, []), null, "failed fetch + no prior publishes nothing");
+});
+
+check("D73 6 — STALE SNAPSHOT: reachable router refreshes even when the snapshot is non-empty", async () => {
+  // CRITICAL: the D57-era gate skipped recovery when the availability snapshot
+  // was non-empty, so stale static entries suppressed refresh forever.
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.doesNotMatch(
+    src,
+    /!recoveryRefreshed && listAvailableModelSpecsSafe\(ctx\)\.length === 0/,
+    "the empty-snapshot gate is gone",
+  );
+  assert.match(src, /refreshRouterCatalogOnce\(\(\) => ctx\.modelRegistry\.refresh\(\)\)/, "surface open uses the one-shot recovery");
+  // Behavioural: with a non-empty stale snapshot the refresh still runs.
+  let refreshed = 0;
+  const stale = ["9router/oc/deepseek-v4-flash", "9router/gel-m/openai/gpt-5.4-pro"];
+  assert.ok(stale.length > 0, "precondition: stale snapshot is non-empty");
+  const attempted = await refreshRouterCatalogOnce(async () => { refreshed++; }, async () => ({ ok: true }));
+  assert.equal(attempted, true, "refresh attempted despite a non-empty snapshot");
+  assert.equal(refreshed, 1, "exactly one refresh");
+});
+
+check("D73 7 — REFRESH FAILURE PRESERVES the known-good catalog", () => {
+  const prior = [{ id: "kimi/kimi-k3" }, { id: "cc/" }] as never[];
+  assert.deepEqual(resolveRefreshedCatalog(null, prior), prior, "failed refresh republishes the prior catalog");
+  assert.deepEqual(resolveRefreshedCatalog([], prior), prior, "empty live catalog republishes the prior catalog");
+  const live = [{ id: "fresh/one" }] as never[];
+  assert.deepEqual(resolveRefreshedCatalog(live, prior), live, "a non-empty live catalog wins");
+  // The destructive path the host creates: on error it retries with
+  // allowNetwork:false and applies whatever we return. The extension must never
+  // answer that retry with an empty list.
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.doesNotMatch(src, /allowNetwork === false\) return \[\];/, "offline path never returns an empty list (would wipe the catalog)");
+  assert.match(src, /throw new Error\("9router catalog unavailable/, "offline/absent catalog throws so the host keeps its catalog");
+});
+
+check("D73 8 — ONE-SHOT: at most one probe and one refresh per open, no polling", async () => {
+  let probes = 0;
+  let refreshes = 0;
+  const attempted = await refreshRouterCatalogOnce(async () => { refreshes++; }, async () => { probes++; return { ok: true }; });
+  assert.equal(attempted, true);
+  assert.equal(probes, 1, "one probe");
+  assert.equal(refreshes, 1, "one refresh");
+  // Unreachable router: probe happens, refresh does not, and it never loops.
+  let probes2 = 0;
+  let refreshes2 = 0;
+  const attempted2 = await refreshRouterCatalogOnce(async () => { refreshes2++; }, async () => { probes2++; return { ok: false }; });
+  assert.equal(attempted2, false, "unreachable router attempts no refresh");
+  assert.equal(probes2, 1, "still exactly one probe");
+  assert.equal(refreshes2, 0, "no refresh when unhealthy");
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  // The only interval is the Activity spinner animation (D64). Nothing in the
+  // router/catalog path may schedule repeated work.
+  const intervals = src.match(/setInterval\(/g) || [];
+  assert.equal(intervals.length, 1, "exactly one interval in the extension (the Activity animation)");
+  assert.match(src, /class ActivityWidget/, "that interval belongs to Activity");
+  assert.doesNotMatch(src, /setInterval\([^)]*check9routerHealth/, "no interval-driven health probe");
+  assert.doesNotMatch(src, /setInterval\([^)]*modelRegistry\.refresh/, "no interval-driven catalog refresh");
+});
+
+check("D73 9 — PROVIDER ISOLATION: only the 9router dynamic path is touched", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.match(src, /pi\.registerProvider\("9router"/, "only the 9router provider is registered");
+  assert.equal((src.match(/pi\.registerProvider\(/g) || []).length, 1, "exactly one dynamic provider registration");
+  const mapped = mapRouterCatalog({ data: [{ id: "kimi/kimi-k3" }, { id: "cc/" }] });
+  assert.ok(mapped.every((m) => typeof m.id === "string" && !m.id.includes("9router/")), "mapped ids stay bare provider/model");
+  // Refresh must never write the static catalog file.
+  assert.doesNotMatch(src, /writeFileSync\([^)]*models\.json/, "refresh never writes models.json");
+});
+
+check("D73 10 — DEFAULT RESTORE: truthful, never a silent substitution", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.match(src, /export async function restoreDeclaredDefault/, "restore handshake preserved");
+  assert.match(src, /const target = available\.find\(\(m\) => m\.provider === provider && m\.id === id\);/, "restore matches the declared model exactly");
+  assert.match(src, /if \(!target\) return false;/, "a missing declared model stays unset (no substitution)");
+  // The boot handshake still runs after a successful refresh.
+  assert.match(src, /await refreshCatalogWhenRouterReady\(\(\) => ctx\.modelRegistry\.refresh\(\)\);/, "boot refresh preserved");
+  assert.match(src, /setTimeout\(tryRestore, 1200\)/, "bounded boot restore handshake preserved");
+});
+
+check("D73 11 — D72 REGRESSION: Work Plan surface untouched by D73", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.match(src, /class WorkPlanWidget implements Component/, "WorkPlanWidget intact");
+  assert.match(src, /◆ Work plan · /, "compact Work Plan line intact");
+  assert.match(src, /registerShortcut\("ctrl\+shift\+t"/, "Work Plan shortcut intact");
+  assert.match(src, /Symbol\.for\("rpiv-todo\.store"\)/, "shared rpiv-todo store intact");
+  assert.match(src, /class ActivityWidget/, "Activity intact");
+  assert.match(src, /class RuntimeContextBar/, "Runtime Context intact");
+  // The input editor is the anonymous subclass assigned to PiInputEditorClass.
+  assert.match(src, /PiInputEditorClass = class extends/, "input editor intact");
+  assert.match(src, /return piFrameRender\(base, width, borderFn\);/, "input frame composition intact");
+});
+
+check("D73 12 — FULL REGRESSION: /model command registration is unchanged (D51/D63 intact)", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  // The extension `model` command is the D51 bridge target; removing it would
+  // break /model routing. Left unchanged by D73 (reported separately).
+  assert.match(src, /pi\.registerCommand\("model", \{/, "extension model command preserved for the D51 bridge");
+  const bridge = fs.readFileSync(path.resolve(__dirname, "../../scripts/pi-model-bridge.mjs"), "utf8");
+  assert.match(bridge, /_cmds\.find\(\(c\) => c\.name === "model"\)/, "bridge dispatches the extension model command");
 });
 
 

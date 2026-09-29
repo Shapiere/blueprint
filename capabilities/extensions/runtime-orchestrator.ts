@@ -70,7 +70,23 @@ export interface SyncSummary {
 }
 
 const ROUTER_ENDPOINT = "http://127.0.0.1:20128/v1/models";
-const ROUTER_HEALTH_TIMEOUT_MS = 1500;
+/**
+ * D73: bounded budget for a complete 9router request (headers + body).
+ *
+ * Measured on this machine against the live router, unloaded, from the same
+ * Node runtime Pi uses: 474–1180 ms for the identical request. The previous
+ * 1500 ms left ~320 ms of headroom, so the boot-time probe (which races
+ * topology detection, MCP, extension loading, theme and editor install on one
+ * event loop) aborted intermittently and the session reported a false
+ * "9router is offline" — with no retry, because D57 forbids polling.
+ *
+ * 4500 ms is ~4x the worst measured cold call, stays inside the existing boot
+ * envelope (the restore handshake alone already budgets 8 x 900 ms), and
+ * remains a hard bound: the probe can never hang. A closed port fails
+ * immediately (ECONNREFUSED on loopback), so the larger budget only elapses
+ * when the router is up but slow — exactly the case where waiting is correct.
+ */
+export const ROUTER_HEALTH_TIMEOUT_MS = 4500;
 /** Base URL for the 9router chat API (derived, single source of truth). */
 export const ROUTER_BASE_URL = ROUTER_ENDPOINT.replace(/\/models$/, "");
 const DEFAULT_BLUEPRINT_REPO_PATH = "G:/pisetup";
@@ -329,23 +345,50 @@ export function formatTopologyContext(topo: ProjectTopology): string {
   return parts.join("\n");
 }
 
-export async function check9routerHealth(): Promise<{ ok: boolean; modelCount?: number; error?: string }> {
+/** D73: why a router probe failed, so /doctor can distinguish the causes. */
+export type RouterHealthFailure = "timeout" | "http" | "connection" | "parse";
+
+export interface RouterHealth {
+  ok: boolean;
+  modelCount?: number;
+  error?: string;
+  /** Failure classification; absent when ok. */
+  kind?: RouterHealthFailure;
+}
+
+/**
+ * D73: probes the router. `endpoint`/`timeoutMs` are test seams — production
+ * always uses the defaults (the local /v1/models endpoint and the D73 budget).
+ *
+ * The abort window deliberately covers the WHOLE request: the timer is
+ * cleared in `finally`, after the body has been read, so a router that sends
+ * headers promptly and then stalls on the body cannot hang the probe.
+ * Invariant: fetch + body = one bounded operation.
+ */
+export async function check9routerHealth(
+  endpoint: string = ROUTER_ENDPOINT,
+  timeoutMs: number = ROUTER_HEALTH_TIMEOUT_MS,
+): Promise<RouterHealth> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), ROUTER_HEALTH_TIMEOUT_MS);
-    const res = await fetch(ROUTER_ENDPOINT, {
+    const res = await fetch(endpoint, {
       signal: controller.signal,
       headers: { Authorization: "Bearer sk_9router" },
     });
-    clearTimeout(timer);
-    if (res.ok) {
-      const data = (await res.json()) as { data?: unknown[] };
-      const modelCount = Array.isArray(data?.data) ? data.data.length : undefined;
-      return { ok: true, modelCount };
-    }
-    return { ok: false, error: `HTTP ${res.status}` };
+    if (!res.ok) return { ok: false, kind: "http", error: `HTTP ${res.status}` };
+    const data = (await res.json()) as { data?: unknown[] };
+    const modelCount = Array.isArray(data?.data) ? data.data.length : undefined;
+    return { ok: true, modelCount };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    if (controller.signal.aborted) {
+      return { ok: false, kind: "timeout", error: `timeout after ${timeoutMs}ms` };
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    const kind: RouterHealthFailure = /JSON|Unexpected token|parse/i.test(message) ? "parse" : "connection";
+    return { ok: false, kind, error: message };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -364,6 +407,52 @@ export async function refreshCatalogWhenRouterReady(
   try {
     await refresh();
   } catch {}
+}
+
+/**
+ * D73: decides what a refresh is allowed to publish.
+ *
+ * `live === null` means the fetch failed; `live` empty means the router
+ * answered but published nothing. Only a non-empty live catalog replaces the
+ * previous one. Otherwise the prior catalog is republished when one exists,
+ * and `null` is returned when nothing trustworthy is available at all.
+ *
+ * `null` matters: the caller must then THROW. The host treats an extension
+ * refresh error as "keep the last applied catalog" and additionally retries
+ * once with `allowNetwork:false` — so returning `[]` from that retry would
+ * apply an empty list and wipe a known-good catalog. Throwing is the only
+ * non-destructive signal. Nothing is ever fabricated either way.
+ */
+export function resolveRefreshedCatalog(
+  live: readonly PiModelDefinition[] | null,
+  prior: readonly PiModelDefinition[],
+): PiModelDefinition[] | null {
+  if (live && live.length > 0) return [...live];
+  if (prior.length > 0) return [...prior];
+  return null;
+}
+
+/**
+ * D73: one bounded router-catalog recovery attempt, used once per /model open.
+ *
+ * Probes health, then performs exactly ONE catalog refresh when the router is
+ * reachable. The decision is deliberately INDEPENDENT of the current
+ * availability snapshot: the D57-era gate (`snapshot.length === 0`) let stale
+ * static 9router entries suppress recovery forever, so a reachable router
+ * could never replace them.
+ *
+ * Bounded by construction: no polling, no retries, no timers, no auto-start
+ * (D57 preserved). `health` is a test seam; production uses the real probe.
+ * Returns whether a refresh was attempted.
+ */
+export async function refreshRouterCatalogOnce(
+  refresh: () => unknown,
+  health: () => Promise<{ ok: boolean }> = check9routerHealth,
+): Promise<boolean> {
+  const probed = await health();
+  if (!probed.ok) return false;
+  await refreshCatalogWhenRouterReady(refresh);
+  return true;
 }
 
 /**
@@ -3608,32 +3697,46 @@ export default function (pi: ExtensionAPI) {
 
   // Phase 4 (D36): bridge the live 9router catalog into Pi's /model selector via
   // the native dynamic-provider mechanism. Only the "9router" provider id is
-  // touched; all other providers remain untouched. Fail-open: refresh errors are
-  // handled by Pi's per-provider error isolation and keep the previous catalog.
+  // touched; all other providers remain untouched.
+  //
+  // D73: the refresh is explicitly non-destructive. The host applies whatever
+  // this returns and, on error, keeps the last applied catalog but retries once
+  // with `allowNetwork:false` — so returning `[]` on that retry would WIPE a
+  // known-good catalog. We therefore publish only a live or prior catalog and
+  // throw when neither exists, which is the host's "keep what you have" signal.
+  // Nothing is ever fabricated: a router that publishes nothing yields no models.
   pi.registerProvider("9router", {
     name: "9router",
     baseUrl: ROUTER_BASE_URL,
     models: [],
     async refreshModels(ctx) {
-      if (ctx.allowNetwork === false) return []; // offline: serve store-only
-      const mapped = await fetchRouterCatalog();
-      let models = mapped;
-      if (models.length === 0) {
-        // Entire response invalid/empty: prefer previous usable catalog.
-        const stored = await ctx.store?.read?.();
-        const prior = [...((stored?.models ?? []) as readonly PiModelDefinition[])];
-        if (prior.length > 0) models = prior;
+      const stored = await ctx.store?.read?.().catch(() => undefined);
+      const prior = [...((stored?.models ?? []) as readonly PiModelDefinition[])];
+      let live: PiModelDefinition[] | null = null;
+      if (ctx.allowNetwork !== false) {
+        try {
+          live = await fetchRouterCatalog();
+        } catch {
+          live = null; // unreachable/slow: fall through to the prior catalog
+        }
+      }
+      const models = resolveRefreshedCatalog(live, prior);
+      if (models === null) {
+        // Offline init, or the router is down and no prior catalog exists.
+        // Throwing leaves the host's last-known-good 9router catalog in place
+        // (and keeps the provider truthfully empty on a cold offline boot).
+        throw new Error("9router catalog unavailable (router unreachable and no cached catalog)");
       }
       // D42 Phase 1: apply user visibility curation (never claims connectivity).
       const vis = loadModelsVisibility();
       const ids = models.map((m) => `9router/${m.id}`);
       catalogStats.discovered = ids.length;
       const selectable = new Set(applyVisibility(ids, vis));
-      models = models.filter((m) => selectable.has(`9router/${m.id}`));
-      catalogStats.selectable = models.length;
+      const curated = models.filter((m) => selectable.has(`9router/${m.id}`));
+      catalogStats.selectable = curated.length;
       // Cosmetic only: bounded display-name enrichment, never blocks selection.
       void enrichModelNames([...selectable]).catch(() => {});
-      return models;
+      return curated;
     },
   });
 
@@ -4033,7 +4136,10 @@ export default function (pi: ExtensionAPI) {
       if (routerHealth.ok) {
         results.push(`✓ 9router: Online (:20128) — ${routerHealth.modelCount ?? catalogStats.discovered} models discovered (live refresh via RAL)`);
       } else {
-        results.push(`✗ 9router: Offline (${routerHealth.error ?? "connection refused"})`);
+        // D73: expose the exact failure class (timeout / http / connection /
+        // parse) so a future false-offline report is diagnosable in one line.
+        const why = `${routerHealth.kind ? `${routerHealth.kind}: ` : ""}${routerHealth.error ?? "connection refused"}`;
+        results.push(`✗ 9router: Offline (${why})`);
       }
 
       // D42: model catalog + connectivity truth (Phase 1 = UNVERIFIED by design).
@@ -4241,19 +4347,17 @@ async function runModelControlCenter(pi: ExtensionAPI, ctx: ExtensionContext): P
 
 async function runModelControlSurfaceLoop(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   const surfaceState: ModelSurfaceState = { focus: "models", provider: null, filter: "", profileFocus: 0 };
-  // D57 manual-start recovery (one-shot per surface open): when the dynamic
-  // catalog is empty but the router is now reachable (the user started it
-  // manually after Pi booted), refresh once so this very surface shows the
-  // models. No polling, no retries — if the router is still down the surface
-  // renders the truthful offline state and the next open tries again.
-  let recoveryRefreshed = false;
+  // D57 manual-start recovery, D73 one-shot policy: exactly ONE health probe
+  // and at most ONE catalog refresh per surface open — independent of whether
+  // the current availability snapshot is empty. The previous gate
+  // (`snapshot.length === 0`) let stale static 9router entries suppress
+  // recovery permanently, so a reachable router could never replace them.
+  // Still no polling, no retries, no auto-start: one open = one bounded attempt.
+  let recoveryAttempted = false;
   for (;;) {
-    if (!recoveryRefreshed && listAvailableModelSpecsSafe(ctx).length === 0) {
-      recoveryRefreshed = true;
-      const health = await check9routerHealth();
-      if (health.ok) {
-        await refreshCatalogWhenRouterReady(() => ctx.modelRegistry.refresh());
-      }
+    if (!recoveryAttempted) {
+      recoveryAttempted = true;
+      await refreshRouterCatalogOnce(() => ctx.modelRegistry.refresh());
     }
     const state = loadReasoningState();
     const resolved = resolveEffective(state);
