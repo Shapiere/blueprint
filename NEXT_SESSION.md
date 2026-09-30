@@ -44,10 +44,11 @@ Handoff: what to do first, what must not be broken, and what is genuinely left. 
 
 No runtime work is pending, and the repository has no open findings. The four interactive capabilities were audited and live-validated on 2026-10-01 (plan-mode, ask-user prompting and pi-lens fully; pi-simplify at its entry point). In order of value:
 
-1. **Trigger-based integrations** when their triggers actually fire: GitHub MCP (PAT), piolium (container), playwright (E2E need), pi-web-access (API key). Do not adopt them speculatively.
-2. **Optional follow-ups from the interactive sweep** — neither is required work: a plan-mode run that actually attempts an edit (to observe the refusal rather than infer it from the tool set), and a pi-simplify end-to-end run on a scratch branch (its workflow edits files, so it must not be run against the main tree).
-3. **Optional documentation debt** — work items D55, D56 and D58 have no decision entry (evidence exists in the reports and `CHANGELOG.md`). Writing them retroactively is optional and must be evidence-based; the numbering deliberately leaves the gaps.
-4. **New engineering work** starts only from a real need, through the capability lifecycle and the capture loop. Do not create a milestone to consume remaining documentation debt.
+1. **Pi host upgrade (deferred — D78).** Only if a real need appears. Prerequisites, in order: (a) migrate `refreshModels` to the 0.99 `stored` + `publish()` API; (b) extend `SUPPORTED_PREFIXES` in `capabilities/scripts/pi-model-bridge.mjs` once the patch signatures are re-verified for the exact target; (c) install with an explicit `--prefix "$APPDATA/npm"` (never `pi update` — it targets Hermes's npm prefix and would create a second install); (d) live-validate all five third-party extensions under 0.99's `VIRTUAL_MODULES` TUI resolution. Rollback is `npm install -g --prefix "$APPDATA/npm" @earendil-works/pi-coding-agent@0.83.0` followed by re-applying the bridge.
+2. **Trigger-based integrations** when their triggers actually fire: GitHub MCP (PAT), piolium (container), playwright (E2E need), pi-web-access (API key). Do not adopt them speculatively.
+3. **Optional follow-ups from the interactive sweep** — neither is required work: a plan-mode run that actually attempts an edit (to observe the refusal rather than infer it from the tool set), and a pi-simplify end-to-end run on a scratch branch (its workflow edits files, so it must not be run against the main tree).
+4. **Optional documentation debt** — work items D55, D56 and D58 have no decision entry (evidence exists in the reports and `CHANGELOG.md`). Writing them retroactively is optional and must be evidence-based; the numbering deliberately leaves the gaps.
+5. **New engineering work** starts only from a real need, through the capability lifecycle and the capture loop. Do not create a milestone to consume remaining documentation debt.
 
 ## Left Unresolved / Deferred
 

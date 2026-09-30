@@ -21,8 +21,8 @@ Everything required to rebuild this environment from scratch, and the current st
 
 ## Pi CLI
 
-- Package: `@earendil-works/pi-coding-agent` **0.83.0** (latest), installed globally via npm. Binary: `pi`.
-- Install: `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`
+- Package: `@earendil-works/pi-coding-agent` **0.83.0**, installed globally via npm. Binary: `pi`. **This is the validated host**; `0.99.2` (the registry's `latest`) was audited 2026-10-01 and deliberately **deferred** — see D78 for the two blockers. Do not upgrade without addressing them.
+- Install / upgrade: `npm install -g --prefix "$APPDATA/npm" --ignore-scripts @earendil-works/pi-coding-agent@<version>` — the explicit `--prefix` is **required** in this environment: the `npm` on PATH is Hermes's bundled npm (global prefix `%LOCALAPPDATA%/hermes/node`), and Pi's own `getInferredNpmInstall()` declines to infer a Windows prefix, so `pi update` would install a *second* copy elsewhere instead of upgrading in place.
 - Config directory: `~/.pi/agent` (`settings.json`, `models.json`, `auth.json`, `extensions/`, `prompts/`, `skills/`).
 
 ## Provider and Models
@@ -216,7 +216,7 @@ Health check: `curl http://127.0.0.1:20128/v1/models` returns the model catalog 
 
 Updates:
 
-- Pi: `pi update` (or reinstall: `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`)
+- Pi: **do not use `pi update` here** (wrong prefix — see the Pi CLI section). Use `npm install -g --prefix "$APPDATA/npm" --ignore-scripts @earendil-works/pi-coding-agent@<version>`, then re-apply the host bridge: `node capabilities/scripts/pi-model-bridge.mjs apply`.
 - Packages: `pi update --extensions`
 - 9router: `npm install -g 9router`; verify with `npm ls -g 9router`
 
