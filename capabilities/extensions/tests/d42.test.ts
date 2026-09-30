@@ -55,6 +55,9 @@ import {
   isUnresolvedModel,
   restoreDeclaredDefault,
   setPiSetModelRef,
+  setExplicitUserSelection,
+  hasExplicitUserSelection,
+  withModelWrite,
   type EffectiveReasoning,
   type ModelSurfaceState,
   type MccSection,
@@ -2786,7 +2789,12 @@ function makeBootCtx(opts: {
  */
 let d75Lock: Promise<unknown> = Promise.resolve();
 async function d75Serial(fn: () => Promise<void>): Promise<void> {
-  const run = d75Lock.then(fn);
+  // D76: the user-selection marker is module-global, so it is reset inside the
+  // serialized section — exactly like the shared settings.json declared default.
+  const run = d75Lock.then(() => {
+    setExplicitUserSelection(false);
+    return fn();
+  });
   d75Lock = run.catch(() => {});
   return run;
 }
@@ -3019,6 +3027,227 @@ check("D75 9 — D57/ONE-SHOT: bounded handshake, no polling, no retry loop adde
   assert.doesNotMatch(src, /while \(true\)[\s\S]{0,200}restoreDeclaredDefault/, "no unbounded loop");
   assert.doesNotMatch(src, /node:child_process|require\("child_process"\)/, "never imports a spawning module (D57)");
   assert.doesNotMatch(src, /\b(spawn|spawnSync|execFile|execFileSync|execSync)\s*\(/, "never calls a spawning API (D57)");
+});
+
+// ------------------------------------------------------- D76 — model governance & restore races
+/**
+ * Writes the declared default the way the HOST does at selection time
+ * (`settingsManager.setDefaultModelAndProvider` inside `setModel`). Kept inside
+ * the surrounding `withDeclaredDefault` backup scope, so the original file is
+ * still restored by that outer `finally`.
+ */
+function writeDeclared(provider: string, model: string): void {
+  const p = path.join(os.homedir(), ".pi", "agent", "settings.json");
+  const parsed = JSON.parse(fs.readFileSync(p, "utf-8")) as Record<string, unknown>;
+  parsed.defaultProvider = provider;
+  parsed.defaultModel = model;
+  fs.writeFileSync(p, JSON.stringify(parsed, null, 2) + "\n", "utf-8");
+}
+
+/**
+ * The user explicitly selects `model` mid-window, as the host sees it: the
+ * session adopts it, `setModel` persists it as the declared default, and the
+ * extension's `model_select` handler records the choice (the real assignment,
+ * mirrored here — `D76 4` asserts that assignment exists in the handler).
+ */
+function userSelects(
+  boot: ReturnType<typeof makeBootCtx>,
+  model: { provider: string; id: string },
+  persist: boolean,
+): void {
+  boot.adopt(model);
+  if (persist) writeDeclared(model.provider, model.id);
+  setExplicitUserSelection(true);
+}
+
+check("D76 1 — RACE (host-realistic): an explicit selection during the window is never overwritten", async () => {
+  await d75Serial(async () => {
+    const boot = makeBootCtx({
+      declared: { provider: "9router", model: "oc/declared-a" },
+      supplementary: { provider: "9router", id: "oc/declared-a" },
+      initialModel: { provider: "anthropic", id: "" },
+    });
+    setPiSetModelRef(async (m) => {
+      boot.setModelCalls.push(m as { provider: string; id: string });
+      boot.adopt(m as { provider: string; id: string });
+    });
+    try {
+      await withDeclaredDefault("9router", "oc/declared-a", async () => {
+        // Handshake tick 1 — the exact live ordering: the host already fell
+        // back and the D74 dynamic catalog is not populated yet.
+        assert.equal(await restoreDeclaredDefault(boot.ctx), false, "tick 1 misses before population");
+        boot.populate();
+        // The user selects Model B inside the window; the host persists it.
+        userSelects(boot, { provider: "9router", id: "oc/user-b" }, true);
+        // Handshake tick 2 — reconciliation must stand down.
+        assert.equal(await restoreDeclaredDefault(boot.ctx), false, "no restore after an explicit selection");
+        assert.deepEqual(
+          boot.current(),
+          { provider: "9router", id: "oc/user-b" },
+          "Model B remains current after reconciliation settles",
+        );
+        assert.deepEqual(boot.setModelCalls, [], "Model A was never applied");
+        assert.equal(hasExplicitUserSelection(), true, "the session records the user's own choice");
+      });
+    } finally {
+      setPiSetModelRef(null);
+    }
+  });
+});
+
+check("D76 2 — RACE (host-racy): the user's choice wins even while settings still declare A", async () => {
+  await d75Serial(async () => {
+    const boot = makeBootCtx({
+      declared: { provider: "9router", model: "oc/declared-a" },
+      supplementary: { provider: "9router", id: "oc/declared-a" },
+      initialModel: { provider: "anthropic", id: "" },
+    });
+    setPiSetModelRef(async (m) => {
+      boot.setModelCalls.push(m as { provider: string; id: string });
+      boot.adopt(m as { provider: string; id: string });
+    });
+    try {
+      await withDeclaredDefault("9router", "oc/declared-a", async () => {
+        assert.equal(await restoreDeclaredDefault(boot.ctx), false, "tick 1 misses before population");
+        boot.populate();
+        // The hostile ordering: the user has chosen B, but the declared default
+        // is still A (the settings write has not landed / is in flight). A is
+        // present, visible and not current — i.e. exactly the state the
+        // pre-D76 guard restored from.
+        userSelects(boot, { provider: "9router", id: "oc/user-b" }, false);
+        assert.equal(
+          await restoreDeclaredDefault(boot.ctx),
+          false,
+          "an explicit selection outranks the declared default even when the declared default is resolvable",
+        );
+        assert.deepEqual(boot.current(), { provider: "9router", id: "oc/user-b" }, "Model B survives");
+        assert.deepEqual(boot.setModelCalls, [], "Model A is never forced back");
+      });
+    } finally {
+      setPiSetModelRef(null);
+    }
+  });
+});
+
+check("D76 3 — TRUTHFUL APPLY: a selection landing inside the awaited apply is not reported as restored", async () => {
+  await d75Serial(async () => {
+    const boot = makeBootCtx({
+      declared: { provider: "9router", model: "oc/declared-a" },
+      supplementary: { provider: "9router", id: "oc/declared-a" },
+      initialModel: { provider: "anthropic", id: "" },
+    });
+    setPiSetModelRef(async (m) => {
+      boot.setModelCalls.push(m as { provider: string; id: string });
+      boot.adopt(m as { provider: string; id: string });
+      // The user's pick completes while the restore's apply is still awaited:
+      // the host offers no compare-and-set, so the restore cannot undo it — and
+      // must not claim success either.
+      setExplicitUserSelection(true);
+    });
+    try {
+      await withDeclaredDefault("9router", "oc/declared-a", async () => {
+        boot.populate();
+        assert.equal(await restoreDeclaredDefault(boot.ctx), false, "an overtaken restore reports false, never true");
+      });
+    } finally {
+      setPiSetModelRef(null);
+    }
+  });
+});
+
+check("D76 4 — WIRING: the model_select handler records the user's choice, boot restoration does not", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  const handler = src.indexOf('pi.on("model_select"');
+  assert.ok(handler > 0, "model_select handler located");
+  const body = src.slice(handler, src.indexOf('pi.registerShortcut("alt+m"', handler));
+  const bootBranch = body.indexOf("if (restoringBootDefault)");
+  const marker = body.indexOf("explicitUserSelection = true");
+  assert.ok(bootBranch > 0 && marker > bootBranch, "the marker is recorded after the boot-restoration branch");
+  assert.match(body, /if \(restoringBootDefault\) \{[\s\S]{0,200}return;\s*\}/, "boot restoration returns before the marker");
+  // The reconciliation consults it, and the handshake stands down on it.
+  assert.match(src, /if \(explicitUserSelection\) return false;/, "restoreDeclaredDefault consults the marker");
+  assert.match(src, /if \(explicitUserSelection\) return;\r?\n/, "the handshake stands down on a user choice");
+  // Session lifecycle: a fresh session starts unmarked, and shutdown clears it.
+  assert.match(src, /explicitUserSelection = false;\r?\n      const startReason/, "session_start clears the marker");
+  assert.match(src, /pi\.on\("session_shutdown"[\s\S]{0,120}explicitUserSelection = false;/, "session_shutdown clears the marker");
+  // D76: the reconciliation is a repair — unresolved session, or process startup.
+  assert.match(src, /isUnresolvedModel\(ctx\) \|\| sessionStartReason === "startup"/, "reconciliation applies only where repair is warranted");
+  // The user's own write is serialized through the same chain, so a restore
+  // already in flight cannot land after it.
+  assert.match(src, /withModelWrite\(async \(\) => pi\.setModel\(target as never\)\)/, "the user's selection is serialized");
+  assert.match(src, /return withModelWrite\(\(\) => restoreDeclaredDefaultLocked\(ctx\)\)/, "the reconciliation is serialized");
+});
+
+check("D76 5 — D57 PRESERVED: the governance gate adds no timer, no spawn, no retry loop", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.equal((src.match(/setInterval\(/g) || []).length, 1, "still exactly one interval (Activity)");
+  assert.equal((src.match(/setTimeout\(tryRestore, 900\)/g) || []).length, 1, "handshake spacing unchanged");
+  assert.match(src, /if \(attempts < 8\) \{/, "handshake bound unchanged");
+  assert.doesNotMatch(src, /node:child_process|\b(spawn|execFile|execSync)\s*\(/, "still never spawns anything (D57)");
+  // The D76 gate is pure in-memory state: no file, no registry, no catalog, no
+  // timer of its own — the single write chain is a promise, not a poller.
+  const decl = src.indexOf("let explicitUserSelection = false;");
+  const regionEnd = src.indexOf("D44 bridge decision", decl);
+  assert.ok(decl > 0 && regionEnd > decl, "D76 governance region located");
+  const region = src.slice(decl, regionEnd);
+  assert.doesNotMatch(region, /writeFileSync|saveModelsVisibility|registerProvider|setInterval|fetch\(/, "no new state, network or timer");
+});
+
+check("D76 6 — GENERIC: the new governance path names no provider and no model", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  const start = src.indexOf("export async function restoreDeclaredDefault");
+  const end = src.indexOf("export function hasExplicitUserSelection");
+  assert.ok(start > 0 && end > start, "D76 governance region located");
+  const body = src.slice(start, end).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  for (const needle of ["muse", "opencode", "anthropic", "openai", "oc/"]) {
+    assert.ok(!body.includes(needle), `D76 governance must not mention ${needle}`);
+  }
+});
+
+check("D76 7 — /doctor: declares the default, names advertised vs supplementary, leaks nothing", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  const start = src.indexOf('pi.registerCommand("doctor"');
+  const body = src.slice(start, src.indexOf('pi.registerCommand("sync"', start));
+  assert.match(body, /• Declared Default: \$\{declaredDefaultLabel\(\)\}/, "the declared default is reported");
+  assert.match(body, /restore reconciliation stood down/, "the reconciliation state is reported truthfully");
+  assert.match(body, /is supplementary \(router-declared, routable, not advertised\)/, "advertised vs supplementary is named");
+  assert.match(body, /listAvailableModelSpecsSafe\(ctx\)/, "supplementary detection uses the availability snapshot");
+  assert.doesNotMatch(body, /routerCliToken|sk_9router|9r-cli-auth/, "no token or secret is printed");
+});
+
+check("D76 8 — SERIALIZATION: Harness model writes never overlap and never reorder", async () => {
+  const events: string[] = [];
+  let active = 0;
+  // Each write yields once while it holds the chain. Without the chain all
+  // three would be in flight at the same yield (active > 1) and the order
+  // would not be the enqueue order — deterministic, no wall-clock wait.
+  const write = (label: string) =>
+    withModelWrite(async () => {
+      active++;
+      assert.equal(active, 1, `never two Harness model writes in flight (${label})`);
+      await Promise.resolve();
+      events.push(label);
+      active--;
+    });
+  await Promise.all([write("reconciliation"), write("user-selection"), write("third")]);
+  assert.equal(active, 0, "the chain drains");
+  assert.deepEqual(
+    events,
+    ["reconciliation", "user-selection", "third"],
+    "a later Harness write runs only after the in-flight one completes",
+  );
+});
+
+check("D76 9 — REFRESH IS CATALOG-ONLY: a catalog refresh can never change the current model", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  const start = src.indexOf('pi.registerProvider("9router"');
+  const end = src.indexOf('pi.on("session_start"', start);
+  assert.ok(start > 0 && end > start, "provider registration located");
+  const body = src.slice(start, end);
+  assert.doesNotMatch(body, /setModel/, "refreshModels never selects a model");
+  assert.doesNotMatch(body, /withModelWrite/, "refreshModels never joins the model-write chain");
+  assert.doesNotMatch(body, /explicitUserSelection/, "refreshModels never touches the user-selection marker");
+  assert.match(body, /applyVisibility\(ids, vis\)/, "visibility curation is applied to the catalog only");
 });
 
 // ------------------------------------------------------- D73 — 9router catalog reliability
@@ -3425,7 +3654,9 @@ check("FOCUS: source pins focus switch inside success path only", () => {
   const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
   const idxSet = src.indexOf('surfaceState.focus = "profiles"');
   assert.ok(idxSet > 0, 'surfaceState.focus = "profiles" must exist');
-  const idxPiSet = src.indexOf("await pi.setModel(target");
+  // D76: the selection is applied through the model-write chain, so the pin
+  // matches the chain's call while keeping the original ordering intent.
+  const idxPiSet = src.indexOf("pi.setModel(target as never)");
   assert.ok(idxPiSet > 0 && idxPiSet < idxSet, "focus switch must be after pi.setModel");
   const tryIdx = src.lastIndexOf("try {", idxSet);
   assert.ok(tryIdx > 0 && tryIdx < idxPiSet, "focus switch must be inside try before pi.setModel");
@@ -3540,7 +3771,9 @@ check("D63 PROVENANCE: programmatic model_select never opens MCC", () => {
   // then the matrix, then the re-entrancy guard.
   const src = fs.readFileSync(path.resolve(__dirname, "..", "runtime-orchestrator.ts"), "utf8");
   const i = src.indexOf('pi.on("model_select"');
-  const body = src.slice(i, i + 700);
+  // D76: the handler gained the user-selection marker (and its rationale), so
+  // the window covers the guard matrix with room for documentation.
+  const body = src.slice(i, i + 1600);
   const restoring = body.indexOf("restoringBootDefault");
   const matrix = body.indexOf("shouldOpenControlCenter(ev)");
   const loops = body.indexOf("modelSurfaceLoops > 0");

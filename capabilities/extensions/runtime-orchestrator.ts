@@ -1490,6 +1490,15 @@ export function isUnresolvedModel(ctx: ExtensionContext): boolean {
  * stayed on the sentinel and 401'd every request.
  */
 export async function restoreDeclaredDefault(ctx: ExtensionContext): Promise<boolean> {
+  // D76: every Harness-initiated model write is serialized through one chain,
+  // so this reconciliation cannot land after — and overwrite — a selection the
+  // user made while it was in flight. The declared default is re-read inside
+  // the chain, so a choice that persisted itself is observed, not raced.
+  return withModelWrite(() => restoreDeclaredDefaultLocked(ctx));
+}
+
+/** The reconciliation itself; only ever runs inside the model-write chain. */
+async function restoreDeclaredDefaultLocked(ctx: ExtensionContext): Promise<boolean> {
   try {
     const settings = JSON.parse(
       fs.readFileSync(path.join(os.homedir(), ".pi", "agent", "settings.json"), "utf-8"),
@@ -1500,21 +1509,36 @@ export async function restoreDeclaredDefault(ctx: ExtensionContext): Promise<boo
     const currentProvider = typeof ctx.model?.provider === "string" ? ctx.model.provider.trim() : "";
     const currentId = typeof ctx.model?.id === "string" ? ctx.model.id.trim() : "";
     if (currentProvider === provider && currentId === id) return false;
+    // D76 — the user's model wins, in every ordering:
+    //  (1) a choice already recorded in this session forbids any reconciliation;
+    //  (2) a session the host restored (pi -c) carries that session's own
+    //      explicit model, so the declared default of another session must not
+    //      override it — only an unresolved session, or process startup (where a
+    //      deviation means the host could not honour the declared default), is
+    //      repaired.
+    if (explicitUserSelection) return false;
+    if (!reconciliationApplies(ctx)) return false;
     const available = ctx.modelRegistry.getAvailable();
     const target = available.find((m) => m.provider === provider && m.id === id);
     if (!target) return false;
     const selectable = applyVisibility([`${provider}/${id}`], loadModelsVisibility());
     if (selectable.length === 0) return false;
     restoringBootDefault = true;
+    let applied = false;
     try {
       await piSetModelRef?.(target);
+      applied = true;
     } finally {
       // Let the model_select handler swallow its own dialog for this event.
       setTimeout(() => {
         restoringBootDefault = false;
       }, 0);
     }
-    return true;
+    // D76 — report truthfully. The host offers no compare-and-set on the
+    // current model, so a selection completing inside the awaited apply is the
+    // one interleaving this repo cannot undo; it must not be reported as a
+    // successful restore either.
+    return applied && !explicitUserSelection;
   } catch {
     return false;
   }
@@ -1531,6 +1555,75 @@ let restoringBootDefault = false;
  */
 export function setPiSetModelRef(fn: ((m: unknown) => Promise<unknown>) | null): void {
   piSetModelRef = fn;
+}
+
+/**
+ * D76: has the model been changed in this session by anything other than the
+ * boot reconciliation? Recorded at the single `model_select` entry point — the
+ * host's only model-change notification — and consulted by
+ * `restoreDeclaredDefault`, so a pending or racing restore can never overwrite
+ * a model the user has chosen.
+ *
+ * In-memory only: no new persistent state, no second registry, no catalog.
+ * Cleared on `session_start` and `session_shutdown`.
+ */
+let explicitUserSelection = false;
+
+/** Test seam for the user-selection marker (mirrors setPiSetModelRef). */
+export function setExplicitUserSelection(value: boolean): void {
+  explicitUserSelection = value;
+}
+
+/** Read-only accessor for the reconciliation stand-down (used by the handshake and /doctor). */
+export function hasExplicitUserSelection(): boolean {
+  return explicitUserSelection;
+}
+
+/**
+ * D76: why this session started, from the host's own `session_start` event.
+ * `"startup"` means the process has just resolved its initial model — the only
+ * moment at which a deviation from the declared default is the HOST's fallback
+ * rather than the user's choice. `"resume"` (`pi -c`) means the host restored
+ * the session's own model, which is the user's last explicit decision for that
+ * session and must not be overridden by a declared default from another one.
+ */
+let sessionStartReason: string = "startup";
+
+/** Test seam for the session-start reason (mirrors setExplicitUserSelection). */
+export function setSessionStartReason(reason: string): void {
+  sessionStartReason = reason;
+}
+
+/**
+ * D76: Harness-initiated model writes are serialized through one chain. The
+ * D75 startup reconciliation runs in the background while the user may be
+ * selecting a model in the control center; with both `pi.setModel` calls in
+ * flight the slower one wins, so a restore could land after — and overwrite —
+ * the user's explicit choice. The host offers no compare-and-set, so ordering
+ * every Harness write through this chain (and re-reading the declared default
+ * inside it) is what makes "the user's selection wins" true rather than likely.
+ */
+let modelWriteChain: Promise<unknown> = Promise.resolve();
+
+/** Runs one Harness-initiated model write, serialized against every other. */
+export function withModelWrite<T>(fn: () => Promise<T>): Promise<T> {
+  const run = modelWriteChain.then(fn, fn);
+  modelWriteChain = run.catch(() => undefined);
+  return run;
+}
+
+/**
+ * D76: does this session need the declared default restored?
+ *
+ * The reconciliation is a REPAIR, not a policy: it exists for a session the host
+ * could not resolve (its own provider-sentinel fallback) or for the process
+ * startup, where the host has just picked an initial model and a deviation from
+ * the declared default means it could not honour it. In every other case the
+ * current model is the user's own — a session restored by `pi -c` carries that
+ * session's explicit choice — so it is left alone.
+ */
+function reconciliationApplies(ctx: ExtensionContext): boolean {
+  return isUnresolvedModel(ctx) || sessionStartReason === "startup";
 }
 
 /**
@@ -4069,12 +4162,20 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     // Whole body guarded: async continuations can run after the runner goes
     // inactive (headless runs), where every ctx accessor throws assertActive.
     try {
       const topo = detectProjectTopology(ctx.cwd);
       resetLifecycleStore();
+      // D76: a new session starts with no user model choice recorded, so the
+      // declared-default reconciliation below is free to repair the session the
+      // host constructed — but only where repair is warranted: `startup` is the
+      // host's own initial pick, while `resume` (pi -c) restored THIS session's
+      // model, which is the user's own choice and is left alone.
+      explicitUserSelection = false;
+      const startReason: unknown = event?.reason;
+      sessionStartReason = typeof startReason === "string" ? startReason : "startup";
       // Permission surface: Harness prompt renderer (terminal presentation, package remains authority)
       try {
         currentPermissionUi = { ui: ctx.ui, mode: ctx.mode };
@@ -4161,6 +4262,10 @@ export default function (pi: ExtensionAPI) {
                 attempts++;
                 void (async () => {
                 try {
+                  // D76: the user's own model choice ends the reconciliation —
+                  // no further attempts, and no exhaustion warning either (the
+                  // session is resolved by that choice, not by this handshake).
+                  if (explicitUserSelection) return;
                   if (await restoreDeclaredDefault(ctx)) {
                     if (ctx.hasUI)
                       ctx.ui.notify(`Restored default model:\n${declaredDefaultLabel()}`, "info");
@@ -4273,6 +4378,7 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("session_shutdown", (_event, ctx) => {
     resetLifecycleStore();
+    explicitUserSelection = false;
     try {
       if (ctx.hasUI && ctx.mode === "tui") {
         activeActivityWidget?.dispose();
@@ -4300,6 +4406,11 @@ export default function (pi: ExtensionAPI) {
       restoringBootDefault = false; // boot restoration is not a user model change
       return;
     }
+    // D76: every other model_select is a change the boot reconciliation did not
+    // make — the user's `/model` pick, the host bridge's own set, or a cycle.
+    // Recorded here (the host's single model-change notification) so the
+    // bounded declared-default handshake stands down instead of overwriting it.
+    explicitUserSelection = true;
     // D44 host bridge: same-model selector picks now emit with sameModel+set.
     const ev = event as { sameModel?: boolean; source?: string };
     if (!shouldOpenControlCenter(ev)) return;
@@ -4458,6 +4569,16 @@ export default function (pi: ExtensionAPI) {
 
   // D51: /model routes here via the host bridge (interactive-mode.js override).
   // This is the unified Model Control Surface entry point.
+  // D76: registering a command named `model` collides with Pi's built-in
+  // interactive `/model`, so the host emits
+  //   "Extension command '/model' conflicts with built-in interactive command.
+  //    Skipping in autocomplete."
+  // That warning is cosmetic and the registration is NOT optional: the
+  // version-guarded host bridge (`capabilities/scripts/pi-model-bridge.mjs`,
+  // D51/D63) routes `/model` to this command when it is registered, and falls
+  // through to the native picker when it is not. Removing the command would
+  // silently retire the Model Control Center. Dispatch is unaffected by the
+  // warning — the bridge intercepts the line before the built-in handler runs.
   pi.registerCommand("model", {
     description: "Model Control Center",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
@@ -4485,24 +4606,33 @@ export default function (pi: ExtensionAPI) {
       }
 
       // D42: model catalog + connectivity truth (Phase 1 = UNVERIFIED by design).
+      // D76: also answer "advertised or supplementary?" and name the declared
+      // default, so a restore/reconciliation question is one /doctor run away.
       const isPlaceholderModel =
         !!ctx.model && ctx.model.provider === "unknown" && ctx.model.id === "unknown";
       if (isPlaceholderModel) {
         results.push("! Model Catalog: no session model resolved yet — open /model to choose one");
       } else {
         try {
-          const liveCatalog = await fetchRouterCatalog();
-          const liveIds = new Set(liveCatalog.map((m) => m.id));
+          const advertisedIds = new Set((await fetchRouterCatalog()).map((m) => m.id));
+          const selectableSpecs = new Set(listAvailableModelSpecsSafe(ctx));
           const currentModel = ctx.model;
-          if (currentModel && currentModel.provider === "9router" && !liveIds.has(currentModel.id)) {
-            results.push(`! Model Catalog: configured model "${currentModel.id}" is NOT in the live router catalog — select a current model via /model`);
+          const currentSpec = currentModel ? `${currentModel.provider}/${currentModel.id}` : "";
+          if (currentModel && advertisedIds.has(currentModel.id)) {
+            results.push(`✓ Model Catalog: current model "${currentSpec}" is advertised by the live router`);
+          } else if (currentModel && selectableSpecs.has(currentSpec)) {
+            results.push(`✓ Model Catalog: current model "${currentSpec}" is supplementary (router-declared, routable, not advertised)`);
           } else if (currentModel) {
-            results.push(`✓ Model Catalog: current model "${currentModel.provider}/${currentModel.id}" is live-router current`);
+            results.push(`! Model Catalog: configured model "${currentSpec}" is NOT in the live router catalog — select a current model via /model`);
           }
         } catch {
           results.push("! Model Catalog: could not verify against live router (offline?)");
         }
       }
+      results.push(
+        `• Declared Default: ${declaredDefaultLabel()}` +
+        `${hasExplicitUserSelection() ? " · model chosen this session (restore reconciliation stood down)" : " · restore reconciliation active at startup"}`,
+      );
       const visState = loadModelsVisibility();
       results.push(
         `• Model Selection: discovered ${catalogStats.discovered} · selectable ${catalogStats.selectable}` +
@@ -4792,7 +4922,9 @@ async function runModelControlSurfaceLoop(pi: ExtensionAPI, ctx: ExtensionContex
         continue;
       }
       try {
-        await pi.setModel(target as never);
+        // D76: the user's selection goes through the same single write chain, so
+        // a reconciliation that is already in flight can never land after it.
+        await withModelWrite(async () => pi.setModel(target as never));
         ctx.ui.notify(`Model: ${result.spec}`, "info");
         // Owner friction fix: after a successful model selection the next
         // interaction is almost always reasoning/profile adjustment. Move
