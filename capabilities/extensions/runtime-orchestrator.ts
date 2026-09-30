@@ -432,6 +432,184 @@ export function resolveRefreshedCatalog(
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// D74 — Supplementary discovery for routable-but-unadvertised models
+//
+// `/v1/models` is the [OI]-compatible listing. It advertises models reachable
+// through credential-backed connections (plus combos) and structurally OMITS
+// no-auth/dynamic providers — the OpenCode Free family never appears there, even
+// though the router routes those ids happily. Discovery from `/v1/models` alone
+// therefore cannot see them, and the only previous remedy was hand-maintaining a
+// static list — which is exactly how a stale entry outlives its successor.
+//
+// The router does publish the full routable catalog, and it does declare which
+// provider prefixes Pi needs beyond discovery. Both are reused here:
+//
+//   /api/cli-tools/pi-settings -> the provider prefixes the ROUTER declares for
+//                                 Pi (its own "Pi needs these extra" contract)
+//   /api/models                -> the router's authoritative routable catalog,
+//                                 with real capability metadata per model
+//
+// Scope is therefore router-declared, never a hardcoded provider or model list:
+// every current model under a declared prefix is materialised from the live
+// catalog, so a provider's new releases appear automatically.
+//
+// Auth is the router's own CLI token: sha256(machineId + "9r-cli-auth" + secret)
+// truncated to 16 hex chars, both inputs read from the router's data directory.
+// If the token, the endpoints, or the files are unavailable the supplement is
+// skipped silently and the advertised catalog is used unchanged.
+// ---------------------------------------------------------------------------
+
+/** Derives the router's CLI token locally; null when the router's files are absent. */
+export function routerCliToken(): string | null {
+  try {
+    const appdata = process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming");
+    const dir = path.join(appdata, "9router");
+    const raw = fs.readFileSync(path.join(dir, "machine-id"), "utf8").trim();
+    const secret = fs.readFileSync(path.join(dir, "auth", "cli-secret"), "utf8").trim();
+    if (!raw || !secret) return null;
+    return crypto.createHash("sha256").update(raw + "9r-cli-auth" + secret).digest("hex").substring(0, 16);
+  } catch {
+    return null;
+  }
+}
+
+/** Router admin base (no /v1 suffix). */
+const ROUTER_ADMIN_BASE = ROUTER_BASE_URL.replace(/\/v1$/, "");
+const ROUTER_INTERNAL_MODELS_ENDPOINT = `${ROUTER_ADMIN_BASE}/api/models`;
+const ROUTER_PI_SETTINGS_ENDPOINT = `${ROUTER_ADMIN_BASE}/api/cli-tools/pi-settings`;
+
+/** One-shot admin GET with the CLI token; null on any failure. */
+async function fetchRouterAdminJson(url: string, timeoutMs = ROUTER_HEALTH_TIMEOUT_MS): Promise<unknown | null> {
+  const token = routerCliToken();
+  if (!token) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal, headers: { "x-9r-cli-token": token } });
+    if (!res.ok) return null;
+    return (await res.json()) as unknown;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Pure extraction of the provider prefixes a router Pi-settings payload
+ * declares. Split from the fetch so it is directly testable against fixtures.
+ */
+export function extractPiProviderPrefixes(payload: unknown): Set<string> {
+  const prefixes = new Set<string>();
+  if (!payload || typeof payload !== "object" || !("config" in payload)) return prefixes;
+  const config = payload.config;
+  if (!config || typeof config !== "object" || !("providers" in config)) return prefixes;
+  const providers = config.providers;
+  if (!providers || typeof providers !== "object") return prefixes;
+  for (const provider of Object.values(providers)) {
+    if (!provider || typeof provider !== "object" || !("models" in provider)) continue;
+    const models = provider.models;
+    if (!Array.isArray(models)) continue;
+    for (const entry of models) {
+      if (!entry || typeof entry !== "object" || !("id" in entry)) continue;
+      const id = entry.id;
+      if (typeof id !== "string") continue;
+      const prefix = id.split("/")[0];
+      if (prefix) prefixes.add(prefix);
+    }
+  }
+  return prefixes;
+}
+
+/**
+ * Provider prefixes the router declares for Pi beyond `/v1/models` discovery.
+ * Reads the router's own Pi integration config — the same one it used to write
+ * `~/.pi/agent/models.json`.
+ */
+export async function fetchDeclaredPiProviderPrefixes(): Promise<Set<string>> {
+  return extractPiProviderPrefixes(await fetchRouterAdminJson(ROUTER_PI_SETTINGS_ENDPOINT));
+}
+
+/**
+ * Pure mapping of router internal-catalog entries to Pi model definitions,
+ * restricted to the given provider prefixes and to ids the advertised listing
+ * does not already cover. Never fabricates capability semantics: an entry
+ * without a finite context window / output budget is dropped, and the routed id
+ * is preferred over the display id because that is what the router routes on.
+ */
+export function mapInternalCatalogEntries(
+  payload: unknown,
+  prefixes: ReadonlySet<string>,
+  advertised: ReadonlySet<string>,
+): PiModelDefinition[] {
+  if (prefixes.size === 0) return [];
+  if (!payload || typeof payload !== "object" || !("models" in payload)) return [];
+  const entries = payload.models;
+  if (!Array.isArray(entries)) return [];
+  const out: PiModelDefinition[] = [];
+  const seen = new Set<string>(advertised);
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    const provider = "provider" in entry && typeof entry.provider === "string" ? entry.provider : "";
+    if (!provider || !prefixes.has(provider)) continue;
+    const routed = "routedModel" in entry && typeof entry.routedModel === "string" && entry.routedModel.length > 0 ? entry.routedModel : undefined;
+    const full = "fullModel" in entry && typeof entry.fullModel === "string" && entry.fullModel.length > 0 ? entry.fullModel : undefined;
+    const id = routed ?? full;
+    // Reject degenerate ids (`provider/` with an empty model segment) and never
+    // shadow an advertised entry — the advertised catalog stays authoritative.
+    if (!id || id.endsWith("/") || seen.has(id)) continue;
+    const caps = "caps" in entry && entry.caps && typeof entry.caps === "object" ? entry.caps : {};
+    const ctx = "contextWindow" in caps && typeof caps.contextWindow === "number" ? caps.contextWindow : NaN;
+    const maxTok = "maxOutput" in caps && typeof caps.maxOutput === "number" ? caps.maxOutput : NaN;
+    if (!Number.isFinite(ctx) || !Number.isFinite(maxTok) || ctx <= 0 || maxTok <= 0) continue;
+    const reasoning = "reasoning" in caps && caps.reasoning === true;
+    const vision = "vision" in caps && caps.vision === true;
+    seen.add(id);
+    out.push({
+      id,
+      name: id,
+      reasoning,
+      input: vision ? ["text", "image"] : ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: ctx,
+      maxTokens: maxTok,
+    });
+  }
+  return out;
+}
+
+/**
+ * D74: models the router routes but `/v1/models` does not advertise, for the
+ * provider prefixes the router declares for Pi. Bounded: at most two admin
+ * requests, both abortable; any failure yields an empty supplement.
+ */
+export async function fetchSupplementaryCatalog(advertised: ReadonlySet<string>): Promise<PiModelDefinition[]> {
+  const prefixes = await fetchDeclaredPiProviderPrefixes();
+  if (prefixes.size === 0) return [];
+  const catalog = await fetchRouterAdminJson(ROUTER_INTERNAL_MODELS_ENDPOINT);
+  if (!catalog) return [];
+  return mapInternalCatalogEntries(catalog, prefixes, advertised);
+}
+
+/**
+ * Merges the advertised catalog with the supplement. Advertised entries win on
+ * id collision, so the primary listing can never be duplicated or overridden.
+ */
+export function mergeCatalog(
+  advertised: readonly PiModelDefinition[],
+  supplementary: readonly PiModelDefinition[],
+): PiModelDefinition[] {
+  const out = [...advertised];
+  const seen = new Set(advertised.map((m) => m.id));
+  for (const model of supplementary) {
+    if (seen.has(model.id)) continue;
+    seen.add(model.id);
+    out.push(model);
+  }
+  return out;
+}
+
 /**
  * D73: one bounded router-catalog recovery attempt, used once per /model open.
  *
@@ -3720,12 +3898,22 @@ export default function (pi: ExtensionAPI) {
           live = null; // unreachable/slow: fall through to the prior catalog
         }
       }
-      const models = resolveRefreshedCatalog(live, prior);
-      if (models === null) {
+      const resolved = resolveRefreshedCatalog(live, prior);
+      if (resolved === null) {
         // Offline init, or the router is down and no prior catalog exists.
         // Throwing leaves the host's last-known-good 9router catalog in place
         // (and keeps the provider truthfully empty on a cold offline boot).
         throw new Error("9router catalog unavailable (router unreachable and no cached catalog)");
+      }
+      // D74: `/v1/models` omits no-auth/dynamic providers (`oc/*`), so fold in
+      // the routable-but-unadvertised models the router declares for Pi. Only
+      // attempted when the advertised listing actually succeeded, and never
+      // allowed to fail the refresh — the advertised catalog stands alone.
+      let models = resolved;
+      if (live && live.length > 0) {
+        const advertised = new Set(live.map((m) => m.id));
+        const supplement = await fetchSupplementaryCatalog(advertised);
+        if (supplement.length > 0) models = mergeCatalog(models, supplement);
       }
       // D42 Phase 1: apply user visibility curation (never claims connectivity).
       const vis = loadModelsVisibility();

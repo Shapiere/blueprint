@@ -9,6 +9,7 @@
  * restore them in finally blocks.
  */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { getKeybindings } from "@earendil-works/pi-tui";
 import fs from "node:fs";
 import os from "node:os";
@@ -45,6 +46,11 @@ import {
   mapRouterCatalog,
   refreshRouterCatalogOnce,
   resolveRefreshedCatalog,
+  ROUTER_BASE_URL,
+  extractPiProviderPrefixes,
+  mapInternalCatalogEntries,
+  mergeCatalog,
+  routerCliToken,
   type EffectiveReasoning,
   type ModelSurfaceState,
   type MccSection,
@@ -2747,6 +2753,124 @@ check("D73 12 — FULL REGRESSION: /model command registration is unchanged (D51
   assert.match(src, /pi\.registerCommand\("model", \{/, "extension model command preserved for the D51 bridge");
   const bridge = fs.readFileSync(path.resolve(__dirname, "../../scripts/pi-model-bridge.mjs"), "utf8");
   assert.match(bridge, /_cmds\.find\(\(c\) => c\.name === "model"\)/, "bridge dispatches the extension model command");
+});
+
+// ------------------------------------------------------- D74 — supplementary model discovery
+check("D74 1 — CLI TOKEN: derived with the router's own algorithm, shape-checked", () => {
+  const token = routerCliToken();
+  if (token === null) {
+    // Router data files absent on this machine: the supplement degrades to
+    // "advertised catalog only", which is the documented fail-soft contract.
+    assert.ok(true, "no router data files — supplement disabled (fail-soft)");
+    return;
+  }
+  assert.match(token, /^[0-9a-f]{16}$/, "16 lowercase hex chars, matching the router's CLI token");
+  // Independently recompute from the same inputs the router's CLI uses.
+  const appdata = process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming");
+  const dir = path.join(appdata, "9router");
+  const raw = fs.readFileSync(path.join(dir, "machine-id"), "utf8").trim();
+  const secret = fs.readFileSync(path.join(dir, "auth", "cli-secret"), "utf8").trim();
+  const expected = createHash("sha256").update(raw + "9r-cli-auth" + secret).digest("hex").substring(0, 16);
+  assert.equal(token, expected, "sha256(machineId + salt + cliSecret)[0..16]");
+});
+
+check("D74 2 — DECLARED PREFIXES: extracted from the router's Pi config, robust to junk", () => {
+  const prefixes = extractPiProviderPrefixes({
+    installed: true,
+    config: { providers: { "9router": { models: [{ id: "oc/a" }, { id: "oc/b" }, { id: "gel-m/x" }, { id: "bad" }, { nope: 1 }] } } },
+  });
+  assert.deepEqual([...prefixes].sort(), ["bad", "gel-m", "oc"], "prefixes taken from each declared id, junk ignored");
+  assert.equal(extractPiProviderPrefixes(null).size, 0, "null payload → empty");
+  assert.equal(extractPiProviderPrefixes({}).size, 0, "missing config → empty");
+  assert.equal(extractPiProviderPrefixes({ config: {} }).size, 0, "missing providers → empty");
+  assert.equal(extractPiProviderPrefixes({ config: { providers: { p: { models: "nope" } } } }).size, 0, "non-array models → empty");
+});
+
+check("D74 3 — SUPPLEMENT MAPPING: prefix-scoped, routed id preferred, advertised never duplicated", () => {
+  const payload = {
+    models: [
+      // In scope, routed id differs from the display id → routed wins.
+      { provider: "oc", model: "muse-spark-1.3-contributor-free", fullModel: "oc/muse-spark-1.3-contributor-free", routedModel: "oc/muse-spark-1.3-contributor-free", caps: { vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 131072 } },
+      // Already advertised → must not be repeated.
+      { provider: "oc", fullModel: "oc/already-there", routedModel: "oc/already-there", caps: { contextWindow: 1, maxOutput: 1 } },
+      // Degenerate id (`provider/` with an empty model segment) → dropped.
+      { provider: "oc", fullModel: "oc/", routedModel: "oc/", caps: { contextWindow: 100, maxOutput: 100 } },
+      // Non-finite capability metadata → dropped, never fabricated.
+      { provider: "oc", fullModel: "oc/no-caps", routedModel: "oc/no-caps", caps: {} },
+      // Provider outside the declared prefixes → untouched.
+      { provider: "assemblyai", fullModel: "assemblyai/universal-3-pro", caps: { contextWindow: 200000, maxOutput: 64000 } },
+      // Routed id differs: the router routes on routedModel, so that is the id.
+      { provider: "ocg", model: "glm-5.3", fullModel: "opencode-go/glm-5.3", routedModel: "ocg/glm-5.3", caps: { reasoning: true, contextWindow: 1000000, maxOutput: 128000 } },
+    ],
+  };
+  const advertised = new Set(["oc/already-there"]);
+  const mapped = mapInternalCatalogEntries(payload, new Set(["oc", "ocg"]), advertised);
+  assert.deepEqual(mapped.map((m) => m.id), ["oc/muse-spark-1.3-contributor-free", "ocg/glm-5.3"], "only in-scope, non-duplicate, mappable ids");
+  const muse = mapped[0]!;
+  assert.equal(muse.contextWindow, 1048576, "context window from caps");
+  assert.equal(muse.maxTokens, 131072, "output budget from caps");
+  assert.equal(muse.reasoning, true, "reasoning from caps");
+  assert.deepEqual(muse.input, ["text", "image"], "vision → image input");
+  assert.deepEqual(mapped[1]!.input, ["text"], "no vision → text only");
+  assert.deepEqual(mapped[1]!.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, "cost never invented");
+  assert.equal(mapInternalCatalogEntries(payload, new Set(), advertised).length, 0, "no declared prefixes → no supplement");
+  assert.equal(mapInternalCatalogEntries(null, new Set(["oc"]), advertised).length, 0, "null payload → no supplement");
+});
+
+check("D74 4 — MERGE: advertised catalog wins on id collision, no duplicates", () => {
+  const adv = [
+    { id: "a/1", name: "a/1", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 10, maxTokens: 5 },
+    { id: "b/2", name: "b/2", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 10, maxTokens: 5 },
+  ] as never[];
+  const sup = [
+    { id: "b/2", name: "b/2-CLONE", reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 99, maxTokens: 99 },
+    { id: "c/3", name: "c/3", reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 10, maxTokens: 5 },
+  ] as never[];
+  const merged = mergeCatalog(adv, sup);
+  assert.deepEqual(merged.map((m) => m.id), ["a/1", "b/2", "c/3"], "advertised order preserved, supplement appended");
+  assert.equal(new Set(merged.map((m) => m.id)).size, merged.length, "no duplicate ids");
+  assert.equal(merged.find((m) => m.id === "b/2")!.name, "b/2", "advertised entry wins on collision");
+  assert.deepEqual(mergeCatalog(adv, []).map((m) => m.id), ["a/1", "b/2"], "empty supplement is a no-op");
+});
+
+check("D74 5 — WIRING: supplement folded into refreshModels, gated on a successful advertised listing", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.match(src, /const supplement = await fetchSupplementaryCatalog\(advertised\);/, "refreshModels consults the supplement");
+  assert.match(src, /if \(supplement\.length > 0\) models = mergeCatalog\(models, supplement\);/, "supplement merged, never replacing");
+  // Gated on `live` so an offline boot behaves exactly as before (D73 preserved).
+  assert.match(src, /if \(live && live\.length > 0\) \{[\s\S]{0,400}fetchSupplementaryCatalog/, "supplement only when the advertised listing succeeded");
+  // Endpoints derive from the single router base — no new host, no new port.
+  assert.match(src, /const ROUTER_ADMIN_BASE = ROUTER_BASE_URL\.replace\(\/\\\/v1\$\/, ""\);/, "admin base derived from ROUTER_BASE_URL");
+  assert.match(src, /ROUTER_BASE_URL\.replace\(\/\\\/v1\$\/, ""\)/, "no hardcoded router host");
+  // No hardcoded model ids anywhere in the extension.
+  assert.doesNotMatch(src, /muse-spark/, "no hardcoded model id");
+  assert.doesNotMatch(src, /opencode/, "no hardcoded provider name");
+});
+
+check("D74 6 — D57 INVARIANTS: bounded, no polling, no spawn, no retries", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  // The D74 path makes at most two abortable admin GETs per refresh; the only
+  // interval in the extension is still the Activity spinner (D73 8).
+  assert.equal((src.match(/setInterval\(/g) || []).length, 1, "still exactly one interval (Activity animation)");
+  assert.doesNotMatch(src, /setInterval\([^)]*fetchSupplementaryCatalog/, "no interval-driven supplement");
+  assert.doesNotMatch(src, /setInterval\([^)]*fetchDeclaredPiProviderPrefixes/, "no interval-driven prefix fetch");
+  assert.doesNotMatch(src, /node:child_process|require\("child_process"\)/, "never imports a process-spawning module (D57: the user starts 9router)");
+  assert.doesNotMatch(src, /\b(spawn|spawnSync|execFile|execFileSync|execSync)\s*\(/, "never calls a process-spawning API");
+  assert.doesNotMatch(src, /while \(true\)|for \(;;\) \{\s*await fetchSupplementaryCatalog/, "no retry loop around the supplement");
+  // Every admin request is abort-bounded.
+  assert.match(src, /const timer = setTimeout\(\(\) => controller\.abort\(\), timeoutMs\);/, "admin fetch is abort-bounded");
+  assert.match(src, /\} finally \{\s*clearTimeout\(timer\);\s*\}/, "admin fetch clears its timer in finally");
+});
+
+check("D74 7 — FAIL-SOFT: a missing token or endpoint never breaks the refresh", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.match(src, /export function routerCliToken\(\): string \| null \{[\s\S]*?catch \{\s*return null;/, "token derivation is fail-soft");
+  assert.match(src, /async function fetchRouterAdminJson[\s\S]*?catch \{\s*return null;\s*\} finally/, "admin fetch is fail-soft");
+  assert.match(src, /if \(prefixes\.size === 0\) return \[\];/, "no declared prefixes → empty supplement");
+  assert.match(src, /if \(!catalog\) return \[\];/, "unreachable catalog → empty supplement");
+  // The supplement is awaited, so a rejected promise can never escape into the
+  // refresh — and it cannot throw by construction (both helpers return null).
+  assert.doesNotMatch(src, /fetchSupplementaryCatalog\([^)]*\)\.catch/, "no swallow-the-error shim needed (returns empty)");
 });
 
 
