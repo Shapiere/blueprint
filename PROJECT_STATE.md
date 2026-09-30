@@ -110,7 +110,6 @@ None open.
 - Interactive-only validations outstanding: plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens.
 - Deferred capabilities awaiting triggers: GitHub MCP (PAT), piolium (container), playwright (E2E need), pi-web-access (API key).
 - Work items **D55**, **D56** and **D58** have no decision entry (evidence lives in the reports and [CHANGELOG.md](CHANGELOG.md)); the numbers are retired, not reused. See the Numbering section of [docs/DECISIONS.md](docs/DECISIONS.md).
-- `IMPLEMENTATION_PLAN.md` is an untracked D72-era scratch file at the repository root (a four-line Work Plan note). It is referenced here so it is not an undocumented stray; decide whether to delete it or fold it into `implementation/TODO.md`.
 - Execution-profile status chip can persist up to its 30-minute window after a workflow ends (documented v1 semantics).
 
 ## Next

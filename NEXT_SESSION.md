@@ -8,13 +8,13 @@ Handoff: what to do first, what must not be broken, and what is genuinely left. 
 
 - **Continuous Evolution** (D30) — no milestone gates. Last shipped work item: **D76 Model Governance & Runtime Hardening** (2026-09-30, decision record **D77**, commit `6e59d64`, pushed).
 - Repository and deployed runtime are in sync: `capabilities/extensions/runtime-orchestrator.ts` is byte-identical to `~/.pi/agent/extensions/runtime-orchestrator.ts`.
-- Test suite **201 checks green**; strict type-check PASS; `verify.py` reports exactly one known orphan (`IMPLEMENTATION_PLAN.md`).
+- Test suite **201 checks green**; strict type-check PASS; `verify.py` reports **zero orphans** (the last one, `IMPLEMENTATION_PLAN.md`, was removed 2026-10-01).
 - The documentation layer was reconciled on **2026-10-01** (D66 → current capture loop): registry, changelog, decision numbering, project state and this handoff.
 - No runtime work is in flight. Nothing is blocked.
 
 ## First Actions (in order)
 
-1. **Verify repository state.** `python capabilities/scripts/verify.py` (expect `OK - all checks passed`); `git status` (expect a clean tree apart from the untracked `IMPLEMENTATION_PLAN.md` scratch file); confirm local `main` matches `origin/main`.
+1. **Verify repository state.** `python capabilities/scripts/verify.py` (expect `OK - all checks passed`); `git status` (expect a fully clean tree); confirm local `main` matches `origin/main`.
 2. **Run the gates before changing anything.**
    - Tests: `npx -y tsx --tsconfig "%TEMP%/pi-tsconfig.json" capabilities/extensions/tests/d42.test.ts` → expect `201 PASS / 0 FAIL`.
    - Types: `npx -y -p typescript@latest tsc -p "%TEMP%/pi-tsconfig.json"` → expect exit 0.
@@ -42,13 +42,12 @@ Handoff: what to do first, what must not be broken, and what is genuinely left. 
 
 ## Next work
 
-No runtime work is pending. In order of value:
+No runtime work is pending, and the repository has no open findings. In order of value:
 
-1. **Clear the one known repository finding** — decide the fate of the untracked `IMPLEMENTATION_PLAN.md` (a D72-era scratch file): delete it, or fold it into `implementation/TODO.md` and track it. Either way it should stop being an orphan.
-2. **Interactive validations** (require a live TUI session, not automatable): plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens.
-3. **Trigger-based integrations** when their triggers actually fire: GitHub MCP (PAT), piolium (container), playwright (E2E need), pi-web-access (API key). Do not adopt them speculatively.
-4. **Optional documentation debt** — work items D55, D56 and D58 have no decision entry (evidence exists in the reports and `CHANGELOG.md`). Writing them retroactively is optional and must be evidence-based; the numbering deliberately leaves the gaps.
-5. **New engineering work** starts only from a real need, through the capability lifecycle and the capture loop. Do not create a milestone to consume remaining documentation debt.
+1. **Interactive validations** (require a live TUI session, not automatable): plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens.
+2. **Trigger-based integrations** when their triggers actually fire: GitHub MCP (PAT), piolium (container), playwright (E2E need), pi-web-access (API key). Do not adopt them speculatively.
+3. **Optional documentation debt** — work items D55, D56 and D58 have no decision entry (evidence exists in the reports and `CHANGELOG.md`). Writing them retroactively is optional and must be evidence-based; the numbering deliberately leaves the gaps.
+4. **New engineering work** starts only from a real need, through the capability lifecycle and the capture loop. Do not create a milestone to consume remaining documentation debt.
 
 ## Left Unresolved / Deferred
 
