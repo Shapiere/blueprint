@@ -42,10 +42,10 @@ Handoff: what to do first, what must not be broken, and what is genuinely left. 
 
 ## Next work
 
-No runtime work is pending, and the repository has no open findings. In order of value:
+No runtime work is pending, and the repository has no open findings. The four interactive capabilities were audited and live-validated on 2026-10-01 (plan-mode, ask-user prompting and pi-lens fully; pi-simplify at its entry point). In order of value:
 
-1. **Interactive validations** (require a live TUI session, not automatable): plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens.
-2. **Trigger-based integrations** when their triggers actually fire: GitHub MCP (PAT), piolium (container), playwright (E2E need), pi-web-access (API key). Do not adopt them speculatively.
+1. **Trigger-based integrations** when their triggers actually fire: GitHub MCP (PAT), piolium (container), playwright (E2E need), pi-web-access (API key). Do not adopt them speculatively.
+2. **Optional follow-ups from the interactive sweep** — neither is required work: a plan-mode run that actually attempts an edit (to observe the refusal rather than infer it from the tool set), and a pi-simplify end-to-end run on a scratch branch (its workflow edits files, so it must not be run against the main tree).
 3. **Optional documentation debt** — work items D55, D56 and D58 have no decision entry (evidence exists in the reports and `CHANGELOG.md`). Writing them retroactively is optional and must be evidence-based; the numbering deliberately leaves the gaps.
 4. **New engineering work** starts only from a real need, through the capability lifecycle and the capture loop. Do not create a milestone to consume remaining documentation debt.
 
@@ -65,7 +65,8 @@ No runtime work is pending, and the repository has no open findings. In order of
 
 ## Engineering environment notes
 
-- **Never use `/tmp` in this shell.** It resolves to **`G:/tmp`**, a real directory on `G:` that a previous session destroyed with `rm -rf /tmp`. Use `%TEMP%` (`"$TEMP/foo"`) or an explicit repo-local scratch directory, and never delete a directory you did not create.
+- **Never use `/tmp` in this shell.** It does not exist here (`ls -ld /tmp` → no such file) and coreutils that need a scratch directory fail outright (`sort: cannot create temporary file in 'C:/tmp'`). A previous session ran `rm -rf /tmp` against a `/tmp` that *did* map to `G:/tmp` — the mapping is not stable across shells, which is the real hazard. Use `%TEMP%` (`"$TEMP/foo"`, verified working) or an explicit repo-local scratch directory, and never delete a directory you did not create.
+- **A stray `C` lands in pi's editor at session start** (a terminal reply leaking into stdin before the editor takes over). It is prepended to the first submission, so `/plan` arrives as `C/plan` and is handled as a message rather than a command. In an automated/PTY session, clear the editor first (Ctrl+C) and confirm the frame shows an empty `╰─ π │  ╯` before sending the first command.
 - **`capabilities/extensions/runtime-orchestrator.ts` uses CRLF.** Test regexes that read the source must tolerate it (`\r?\n`), and `write`/`edit` must not silently normalise the whole file.
 - **The tool-output pipeline strips `claude-*` substrings.** Model ids containing that text render truncated (`ag/claude-…` → `ag/`). Verify identity by length, hash or hex — never by reading a rendered string back. This is an artifact of the tooling, not a product bug.
 - **The test suite writes `~/.pi/agent/settings.json` transiently** (D75 checks declare a default and restore it, serialized). Do not run it while a live Pi session depends on that file.

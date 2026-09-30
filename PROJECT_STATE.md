@@ -107,7 +107,7 @@ None open.
 **Repository / validation debt:**
 
 - Full cold-install on a fresh machine not executed (simulated — D12); interactive `/login` on a fresh machine untested.
-- Interactive-only validations outstanding: plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens.
+- Interactive validations: **completed 2026-10-01** for plan-mode, ask-user prompting and pi-lens (command surface); pi-simplify was validated at its entry point only, because its workflow mutates files and the sweep was read-only.
 - Deferred capabilities awaiting triggers: GitHub MCP (PAT), piolium (container), playwright (E2E need), pi-web-access (API key).
 - Work items **D55**, **D56** and **D58** have no decision entry (evidence lives in the reports and [CHANGELOG.md](CHANGELOG.md)); the numbers are retired, not reused. See the Numbering section of [docs/DECISIONS.md](docs/DECISIONS.md).
 - Execution-profile status chip can persist up to its 30-minute window after a workflow ends (documented v1 semantics).

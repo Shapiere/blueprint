@@ -71,7 +71,7 @@ Concrete actionable tasks. Priorities and milestone context live in [ROADMAP.md]
 - [x] `/metrics` automated run — done 2026-08-21 (trend vs D26 baseline: maturity 79→88%, coverage 89→94%).
 - [x] power-tools type-check — done 2026-08-21: strict type-check PASS (TypeScript 7.0.2 vs global pi type declarations, zero-footprint; D29 trigger satisfied without a repo-local dev setup).
 - [x] Confirm open question 2 (other machines/agents) — resolved 2026-08-21 (D31).
-- [ ] Interactive validations: plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens (TUI session).
+- [x] Interactive validations — done 2026-10-01: plan-mode PASS (read-only tool set, enter/exit, state persisted in the session branch), ask-user prompting PASS (invoke → prompt → answer → return), pi-lens PASS (command surface), pi-simplify entry point PASS (its workflow mutates files, so no end-to-end run was performed). Registry + SETUP carry the evidence.
 - [ ] Trigger-based integrations when they fire: GitHub MCP (PAT), piolium (container), playwright (E2E need).
 - [ ] Full cold-install on a fresh machine (restore steps 1–3, 6–9).
 - [ ] Interactive `/login` flow on a fresh machine.

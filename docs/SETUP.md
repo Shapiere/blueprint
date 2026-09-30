@@ -92,14 +92,14 @@ Everything required to rebuild this environment from scratch, and the current st
 | `npm:pi-subagents` | task delegation to subagents |
 | `git:github.com/badlogic/pi-skills` | 8 skills (registered via settings `skills`, not the package loader — repo has no manifest) |
 | `npm:pi-mcp-adapter` | MCP server support via a single proxy tool |
-| `npm:pi-lens` | LSP/linter/formatter feedback during edits |
+| `npm:pi-lens` | LSP/linter/formatter feedback during edits (command surface validated 2026-10-01: `/lens-health`, `/lens-tools`) |
 | `npm:@juicesharp/rpiv-todo` | todo tool + live overlay (Wave 1, validated 2026-08-03) |
 | `npm:@gotgenes/pi-permission-system` | permission gates; path protection + bash policy active (Wave 1+2, validated 2026-08-03) |
-| `npm:@narumitw/pi-plan-mode` | enforced read-only plan mode (Wave 1, validated 2026-08-03) |
+| `npm:@narumitw/pi-plan-mode` | enforced read-only plan mode (Wave 1, validated 2026-08-03; live enter/exit + state persistence validated 2026-10-01) |
 | `npm:@ff-labs/pi-fff` | fuzzy file/content search (Wave 1, validated 2026-08-03) |
 | `npm:@quintinshaw/pi-dynamic-workflows` | dynamic workflow execution, routed subagents (Wave 2, validated 2026-08-03 — launch; completion async) |
-| `npm:@juicesharp/rpiv-ask-user-question` | structured typed questioning (Wave 2; interactive) |
-| `npm:pi-simplify` | diff-scoped simplify pass (Wave 2; interactive; load-validated) |
+| `npm:@juicesharp/rpiv-ask-user-question` | structured typed questioning (Wave 2; live prompt→answer→return validated 2026-10-01) |
+| `npm:pi-simplify` | diff-scoped simplify pass (Wave 2; entry point validated 2026-10-01 — the workflow mutates files, so no end-to-end run yet) |
 
 Removed Wave 2: `npm:pi-subagents` (retired per `docs/DECISIONS.md` D17/D20 — superseded by pi-dynamic-workflows).
 

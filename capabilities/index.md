@@ -4,7 +4,7 @@
 
 Single source of truth for platform capabilities: what is installed, at what version, in what lifecycle stage, with what validation evidence. Deployment paths live in `docs/SETUP.md`; this file owns status. One row per capability; status changes require the capture loop (CHANGELOG + registry in the same session).
 
-**Last updated: 2026-10-01 (Continuous Evolution — D66 → D76 capture-loop reconciliation)**
+**Last updated: 2026-10-01 (Continuous Evolution — interactive capability validation sweep)**
 
 ## Registry
 
@@ -13,7 +13,7 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | power-tools | local extension | — | Extension | active | — | PASS 2026-08-02 (repo_tree, git_log); strict type-check PASS 2026-08-21 (TS 7.0.2 vs global pi types, zero-footprint — D29 trigger satisfied) | Maintenance | — | 2026-08-21 |
 | pi-web-access | npm | 0.17.1 | Extension | installed | — | pending (search requires API key) | Maintenance | MIT | 2026-08-03 |
 | pi-mcp-adapter | npm | 2.17.0 | Extension (foundation) | active | — | PASS 2026-08-03 (MCP exercises) | Maintenance | MIT | 2026-08-03 |
-| pi-lens | npm | 3.8.74 | Extension | installed | — | pending (editor-side, interactive) | Maintenance | MIT | 2026-08-03 |
+| pi-lens | npm | 3.8.74 | Extension | active | as-is; Harness suppresses its editor widget key on the primary surface (D64) | PASS 2026-10-01 (live command surface: `/lens-health` returned a structured session report and `/lens-tools` the toolchain inventory — 9 available / 11 npx-fallback / 31 absent; the diagnostics pipeline is evidenced 2026-09-14 in `~/.pi-lens/bus-events.log`; the edit-feedback loop was not re-observed this session) | Maintenance | MIT | 2026-10-01 |
 | badlogic/pi-skills | git | latest | Skills (8) | active | via settings | PASS 2026-08-02 (discovery) | Maintenance | MIT (repo) | 2026-08-02 |
 | chrome-devtools | MCP (npx) | 1.7.0 | MCP server | active | — | PASS 2026-08-03 (first use); re-verified 2026-08-21 (pinned 1.7.0 handshake + 29 tools) | Maintenance | Apache-2.0 (verified) | 2026-08-21 |
 | commit / explain | local prompts | — | Prompt templates | active | — | PASS 2026-08-02 | Maintenance | — | 2026-08-02 |
@@ -21,7 +21,7 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | img2threejs + 10 skills | claude/codex/pi dirs | — | Skills | active | — | PASS 2026-08-02 | Maintenance | — | 2026-08-02 |
 | rpiv-todo | npm:@juicesharp/rpiv-todo | 2.3.1 | Extension | active | as-is, with Harness-owned presentation: `~/.config/rpiv-todo/config.json` `overlayEnabled:false` + `collapseKey:off` makes the Harness Work Plan the only surface and `ctrl+shift+t` its only owner (D72/D72.1) | PASS 2026-08-03 (task create + list); PASS 2026-09-30 (Work Plan regression: one surface, no `Todos (...)` overlay, width-safe 12–400) | Maintenance | MIT | 2026-09-30 |
 | pi-permission-system | npm:@gotgenes/pi-permission-system | 24.0.0 | Extension | active | path protection + bash + external-dir; vendored snapshot extended with `PermissionPromptRendererRegistry` (D70) so the Harness decision surface renders the one terminal prompt while the package keeps all policy | PASS 2026-08-03 (deny tests, both waves); PASS 2026-09-12 (single permission UI + hierarchy polish, D70/D71 — 141-check suite) | Maintenance | MIT | 2026-09-12 |
-| pi-plan-mode | npm:@narumitw/pi-plan-mode | 0.44.0 | Extension | active | as-is | PASS 2026-08-03 (load); enforcement interactive | Maintenance | UNVERIFIED | 2026-08-03 |
+| pi-plan-mode | npm:@narumitw/pi-plan-mode | 0.44.0 | Extension | active | as-is | PASS 2026-08-03 (load); PASS 2026-10-01 (live: `/plan` entered with the read-only tool set `bash find grep ls read plan_mode_question plan_mode_complete` — no `edit`/`write`; `/plan exit` left it; `plan-mode-state` persisted `enabled:true`→`false` in the session branch; no collision with the Harness surface. Enforcement was observed as tool removal, not as a refused edit) | Maintenance | UNVERIFIED | 2026-10-01 |
 | pi-fff | npm:@ff-labs/pi-fff | 0.10.1 | Extension | active | as-is | PASS 2026-08-03 (fffind) | Maintenance | MIT | 2026-08-03 |
 | sequential-thinking | MCP (npx) | 2026.7.4 | MCP server | active | as-is | PASS 2026-08-03; re-verified 2026-08-21 (pinned 2026.7.4 tool call PASS) | Maintenance | MIT | 2026-08-21 |
 | context7 | MCP (npx) | 4.0.3 | MCP server | active | as-is | PASS 2026-08-03; re-verified 2026-08-21 (pinned 4.0.3 tool call PASS) | Maintenance | MIT | 2026-08-21 |
@@ -29,8 +29,8 @@ Single source of truth for platform capabilities: what is installed, at what ver
 | superpowers methodology skills | obra/superpowers | latest | Skills (4) | active | ported as-is (framework-free) | PASS 2026-08-03 (discovery) | Maintenance | MIT | 2026-08-03 |
 | frontend-design, skill-creator | anthropics/skills | latest | Skills (2) | active | referenced | PASS 2026-08-03 (discovery) | Maintenance | Apache-2.0 | 2026-08-03 |
 | pi-dynamic-workflows | npm:@quintinshaw/pi-dynamic-workflows | 3.5.0 | Extension | active | workflows (3) selected | PASS 2026-08-03 (launch + agent spawn; completion async) | Maintenance | MIT | 2026-08-03 |
-| rpiv-ask-user-question | npm:@juicesharp/rpiv-ask-user-question | 2.3.1 | Extension | installed | as-is | load-validated; interactive | Maintenance | MIT | 2026-08-03 |
-| pi-simplify | npm:pi-simplify | 0.2.3 | Extension | installed | as-is | load-validated; interactive | Maintenance | MIT | 2026-08-03 |
+| rpiv-ask-user-question | npm:@juicesharp/rpiv-ask-user-question | 2.3.1 | Extension | active | as-is | PASS 2026-10-01 (live: the agent invoked `ask_user_question`, a real prompt rendered with options plus the appended `Type something.` row, ↓/Enter answered it, and the answer returned verbatim to the agent, which continued; the `before_agent_start` reconciler gates on `ctx.hasUI`, so `pi` and `pi -c` behave identically) | Maintenance | MIT | 2026-10-01 |
+| pi-simplify | npm:pi-simplify | 0.2.3 | Extension | installed | as-is | PASS 2026-10-01 (entry point: `/simplify` ran `git diff --name-status HEAD`, fell back to `HEAD~1` on a clean tree, and delivered its prompt as a follow-up user message. It is a **mutating** workflow, so the end-to-end edit run was deliberately not attempted under a read-only mandate) | Maintenance | MIT | 2026-10-01 |
 | pi-subagents | npm (removed) | — | Extension | **deprecated/retired** | — | retired 2026-08-03 (D17/D20; superseded by dynamic-workflows) | — | MIT | — |
 | repository-intelligence | platform-owned skill | — | Skill (intelligence) | **active** | authored, v2 modules | PASS 2026-08-03 (behavioral: v1 + v2 analysis) | Maintenance | Apache-2.0 | 2026-08-03 |
 | decide | platform-owned prompt | — | Prompt (decision engine) | **active** | authored | PASS 2026-08-03 (behavioral: browser decision) | Maintenance | — | 2026-08-03 |
