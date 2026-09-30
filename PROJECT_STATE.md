@@ -8,7 +8,7 @@ Current status snapshot — the present only. History lives in [CHANGELOG.md](CH
 
 **Continuous Evolution** (since 2026-08-03, decision D30). The foundation (Milestones 1–10) is complete and certified; there are no predefined milestones. Work enters through the capability lifecycle, trigger-based integrations, and the capture loop. Architecture and governance are the stable core; capabilities, prompts and model configuration are the evolving surface.
 
-**Last shipped work item:** D76 — Model Governance & Runtime Hardening (2026-09-30, decision record **D77**, commit `6e59d64`, pushed to `origin/main`).
+**Last shipped work item:** D76 — Model Governance & Runtime Hardening (2026-09-30, decision record **D77**, commit `6e59d64`). The governance/documentation layer was reconciled to match it on **2026-10-01** (commit `daa1bb3`; see [CHANGELOG.md](CHANGELOG.md) and `G:/blueprint-report/d66-d76-governance-capture-loop-reconciliation-2026-10-01.md`).
 
 ## Shipped (Continuous Evolution)
 
