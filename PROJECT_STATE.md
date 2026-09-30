@@ -2,52 +2,90 @@
 
 ## Purpose
 
-Current status snapshot. History lives in [CHANGELOG.md](CHANGELOG.md); this file owns only the present.
+Current status snapshot — the present only. History lives in [CHANGELOG.md](CHANGELOG.md); the *why* lives in [docs/DECISIONS.md](docs/DECISIONS.md); the ordered action list lives in [NEXT_SESSION.md](NEXT_SESSION.md).
 
-## Current Milestone
+## Phase
 
-**Milestone 10 — Production Hardening & Real-World Readiness.** Status: **complete** (2026-08-03). Verdict: **foundation certified** (see completion report). Committed and pushed. **The platform now operates in Continuous Evolution** (D30).
+**Continuous Evolution** (since 2026-08-03, decision D30). The foundation (Milestones 1–10) is complete and certified; there are no predefined milestones. Work enters through the capability lifecycle, trigger-based integrations, and the capture loop. Architecture and governance are the stable core; capabilities, prompts and model configuration are the evolving surface.
 
-## Completed
+**Last shipped work item:** D76 — Model Governance & Runtime Hardening (2026-09-30, decision record **D77**, commit `6e59d64`, pushed to `origin/main`).
 
-- Repository structure per Bootstrap Specification v1.1.
-- Constitution committed: [docs/BOOTSTRAP_SPEC.md](docs/BOOTSTRAP_SPEC.md).
-- Setup inventory with last-verified markers: [docs/SETUP.md](docs/SETUP.md).
-- Secrets policy and `.gitignore` in place.
-- Vision, design principles, success criteria, decision log, roadmap, contributing guide.
-- Decision log records all audit dispositions.
-- Audit revisions applied (broken link fix, map deduplication, status pointers, ownership leaks, task traceability).
-- Milestone 2 validation: 9router service startup method documented and verified (npm global `9router@0.5.45`, manual start, no autostart).
-- Milestone 2 validation: fresh-config simulation passed (`FRESH_OK`) — restore steps 4–5 verified.
-- Milestone 2 validation: remote repository visibility determined — **public** (GitHub API, unauthenticated access).
-- Milestone 2 validation: success criteria re-evaluated with evidence (C1 partially validated; C2/C3/C5 re-validated).
-- Milestone 2 validation: capture loop exercised — validation findings captured same-session in SETUP.md, CHANGELOG.md, DECISIONS.md.
-- Milestone 3 depth: operations and troubleshooting sections added to [docs/SETUP.md](docs/SETUP.md) (start sequence, health check, updates, auth-shape incident recovery).
-- Milestone 3 depth: `models.json` provider entry shape documented (redacted verified example).
-- Milestone 3 depth: candidate evaluations recorded — no setup additions adopted ([docs/DECISIONS.md](docs/DECISIONS.md) D13, D14).
-- Milestone 3 depth: capture loop exercised — M3 updates captured same-session.
-- Milestone 6: platform architecture adopted — constitution v1.2, `docs/ARCHITECTURE.md`, `capabilities/` tree with registry ([docs/DECISIONS.md](docs/DECISIONS.md) D15).
-- Milestone 6: Wave 1 integrated and validated — rpiv-todo, pi-permission-system (path protection), pi-plan-mode, pi-fff, sequential-thinking + context7 MCP, anthropics doc skills; all smoke tests PASS (see [capabilities/index.md](capabilities/index.md)).
-- Milestone 6: platform assets versioned — power-tools + prompt templates sourced from `capabilities/`.
-- Milestone 6: decisions recorded — license-driven skill referencing (D16), Wave 2 layer decisions (D17).
-- Milestone 7: Wave 2 — permission policy deepened (bash + external-directory gates; `rm -rf` deny validated), dynamic-workflows core adopted + pi-subagents retired (D17/D20), superpowers methodology skills ported (TDD, systematic-debugging, plans), review workflow consolidated, rpiv-ask-user-question + pi-simplify loaded, frontend-design/skill-creator skills registered, pdf functional validation completed (pypdf), licenses verified (all MIT).
-- Milestone 8: Engineering Intelligence Layer v1 — repository-intelligence skill + five intelligence prompt templates + orchestrator rules ([docs/DECISIONS.md](docs/DECISIONS.md) D22/D23); behaviorally validated (repo analysis, plan-next audit, decide analysis).
-- Milestone 9: intelligence v2 — repository-intelligence v2 modules, orchestration v2 rules, debug/perf/metrics/memory templates; memory MCP integrated (validated); Wave 3 deferrals recorded with triggers (D25); metrics baseline (D26); memory strategy (D27).
-- Milestone 10: production hardening — verification script adopted (D28), hardening decisions (D29), foundation certified, transition to Continuous Evolution (D30).
-- Continuous Evolution (2026-08-21): repository consumption scope resolved — single primary environment, no other consumers ([docs/DECISIONS.md](docs/DECISIONS.md) D31); `/self-eval` and `/metrics` behavioral runs completed (registry updated); power-tools strict type-check PASS (D29 trigger satisfied zero-footprint); prompt deployment sync verified (12/12 identical).
-- Continuous Evolution (2026-08-22): Runtime Abstraction Layer v1 implemented — `capabilities/extensions/runtime-orchestrator.ts` (`session_start` topology detection, 9router supervision, workspace context injection, `/doctor` command); deployed to runtime; type-check PASS; registry and architecture updated (D33).
-- Continuous Evolution (2026-08-22): RAL v1 Phase 2 implemented — `/sync` one-way asset deployment engine inside `runtime-orchestrator.ts` (SHA256 drift detection, dry-run preview, conflict protection with `--force`, protected file isolation, strict allowlist scope); `/doctor` extended with sync status; validated against live runtime (idempotency 100% PASS); decision D34 recorded.
-- Continuous Evolution (2026-08-22): RAL v1 Phase 3 implemented — per-turn in-memory capability scoping (Option E+, D35): `capabilities/scopes.json` tag map, deterministic profile resolution, `<available_skills>` filtered per turn via `before_agent_start`, fail-open, native `/skill:<name>` escape hatch, `/doctor` scoping observability; 8 profile golden tests + fail-open + cross-contamination PASS; live Next.js profile 9 active / 12 available.
-- Continuous Evolution (2026-08-22): RAL Phase 4 implemented — Pi-native dynamic model catalog bridge (Option C, D36): `pi.registerProvider("9router", { refreshModels })` maps the live `/v1/models` catalog (203 models) into `/model` deterministically; fail-open with prior-catalog fallback; `models.json`/`auth.json` untouched; mapping goldens + config-untouched hash checks PASS.
-- Continuous Evolution (2026-08-23): RAL Phase 5 implemented — complexity-aware orchestration + independent reasoning profiles (D37): orchestration governance contract, workflow tool interception with strategy caps (DIRECT=1/LIGHT≤3/FULL≤8), HEAVY user-approval gate, model silent-switch guard, `/reasoning` profiles; fixes cafe-mockup over-orchestration incident (~37 agents → ≤3).
-- Continuous Evolution (2026-08-23): RAL Phase 6 implemented — integrated `/model` reasoning flow (D38): post-selection Reasoning Profile (10 profiles, Vision capability-gated) and Level (Ultra→xhigh mapping) selectors via native `model_select` event + `pi.setThinkingLevel()`; persistence in `harness-reasoning.json`; `/reasoning` retained for CLI compatibility.
-- Continuous Evolution (2026-08-23): `/mcc` UX refinement (D40) — viewport-limited model picker, unknown-model placeholder fix, immediate overview updates.
-- Continuous Evolution (2026-08-25): `/mcc` real-world defect fixes (D41) — profile-key parse bug repaired (corrupt `Plan__`-style override keys healed), grouped structural overview with never-selectable headers and distinct active marker, fuzzy router-first model picker (1356-model catalog), unified v2 reasoning persistence across `/model`, `/reasoning`, and `/mcc`; validated via strict type-check, 12-check headless harness, and live TUI round-trip.
-- Continuous Evolution (2026-08-25): Model Control System Phase 1 implemented (D42) — user-owned visibility trust state (`harness-models.json`) applied inside refreshModels (SELECTABLE = DISCOVERED ∩ VISIBLE; connectivity honestly UNVERIFIED in Phase 1), boot-default restoration with bounded handshake + notice, reasoning state v3 (defaultProfile + profiles, single sanitized writer, pure resolveEffective), ephemeral execution profiles via validated `// profile:` workflow tag, hardened inline-model-override guard, `/mcc` removed — `/model` post-selection flow is the unified control center; validated live (restore, immediate profile updates, Set-Default, immutable-config workflow run, override prompt + Keep-strip) and by a 15-check regression suite.
+## Shipped (Continuous Evolution)
+
+One line per work item; detail in [docs/DECISIONS.md](docs/DECISIONS.md) and [CHANGELOG.md](CHANGELOG.md). Work-item labels are the implementation names; where a label differs from its decision-record number, both are shown.
+
+| Work item | What shipped | Decision | Commit |
+|---|---|---|---|
+| D31 | Repository consumption scope: single primary environment | D31 | — |
+| D32 | MCP servers pinned to exact versions | D32 | — |
+| D33 | RAL v1 foundation — `session_start` topology, 9router probe, `/doctor` | D33 | — |
+| D34 | `/sync` one-way asset deployment (SHA256 drift, conflicts, allowlist) | D34 | — |
+| D35 | Per-turn in-memory capability scoping (`scopes.json`, fail-open) | D35 | — |
+| D36 | Pi-native dynamic model catalog bridge (`refreshModels`) | D36 | — |
+| D37 | Complexity-aware orchestration + independent reasoning profiles | D37 | — |
+| D38 | Integrated `/model` reasoning flow (model → profile → level) | D38 | — |
+| D39–D41 | `/mcc` adopted, refined, real-world defect fixes | D39–D41 | — |
+| D42 | Model Control System Phase 1 — visibility trust state, boot-default restore, reasoning v3, `/model` control center; `/mcc` removed | D42 | — |
+| D43 | Same-model dead-end root cause (host skip) + Alt+M / bare `/reasoning` access | D43 | — |
+| D44 | Unified `/model` via the version-guarded host bridge | D44 | — |
+| D45–D54 | `/model` responsive width fix, navigation/detail, scope IA, panelization, unified surface, single-active focus | D45–D54 | — |
+| D55 | `/model` visual redesign — boxed browser, grid profile controls, grouped inspectors | *no decision entry* | `bc2aeb3` |
+| D56 | Diagnosis only — provider classification reads Pi's cached availability snapshot | *no decision entry* | — |
+| D57 | 9router startup is **manual**; no spawn, no autostart; refresh follows router readiness | D57 | — |
+| D58 | `/model` outer surface frame with inline title | *no decision entry* | `1e0392c` |
+| D59–D61 | Purple three-column IA + bundled theme, precision visual correction, divider integration | D59–D61 | — |
+| D62–D65 | Runtime Context field, `/model` provenance fix, three-layer surface (Activity / Context / Input), visual polish | D62–D65 | — |
+| D66 | Permission Decision Surface (presentation-only authorizer) | D66 | `de3eed1` |
+| D66.1 | Runtime activation fix, then compact primary | D67, D68 | `34ad73c` |
+| D66.2 | Filesystem controls reflect the delegation envelope (`Y` hidden on excluded surfaces) | D69 | `6286eed` |
+| D66 | Single permission UI via the terminal prompt renderer (no `Session`, no stock) | D70 | `0f3c303` |
+| D66.3 | Permission information & action hierarchy polish (incl. the 2026-09-12 final refinement) | D71 | `c098bdb`, `b3cf66b` |
+| D72 | Work Plan compact status layer above Runtime Context (rpiv-todo single source) | D72 | `533f071`, `58f97d4`, `63a1bc5` |
+| D72.1 | Work Plan unified visual polish — one surface, one header | **D75** | `d31e678` |
+| D73 | 9router catalog reliability — bounded probe, one-shot recovery, non-destructive refresh | D73 | `c970d1f` |
+| D74 | Supplementary discovery for routable-but-unadvertised models | D74 | `5bed7a0` |
+| D75 | Supplementary model default restore (declared default resolvable after catalog population) | **D76** | `cd2de51` |
+| D76 | Model governance & restore-race hardening (user selection outranks the declared default) | **D77** | `6e59d64` |
+
+## Current Runtime Guarantees
+
+### Model lifecycle
+
+```
+DISCOVERED → VISIBLE → SELECTABLE → DECLARED DEFAULT → RESTORED → CURRENT
+```
+
+- **Discovery** (D36, D74): the advertised catalog (`GET /v1/models`) is authoritative and first; the router's own Pi declaration (`GET /api/cli-tools/pi-settings`) scopes a supplementary catalog built from its routable catalog (`GET /api/models`). Advertised wins on collision; entries without finite `caps` are dropped rather than defaulted; no provider or model id is hardcoded; the path is fail-soft and bounded.
+- **Visibility** (D42): `~/.pi/agent/harness-models.json` is user curation only. SELECTABLE = DISCOVERED ∩ VISIBLE. Connectivity is honestly **UNVERIFIED** (Phase 2 skipped, D52).
+- **Selection** (D42–D63): `/model` is the single entry point, routed to the Model Control Surface by the version-guarded host bridge (`capabilities/scripts/pi-model-bridge.mjs`). It never opens from programmatic model events.
+- **Declared default** (D42, D75, D76): `settings.json` `defaultProvider`/`defaultModel`, written by the host on every selection.
+- **Restore** (D75, D76): a bounded post-start reconciliation (`1200 ms` + `8 × 900 ms`) repairs a session the host could not resolve — it waits for the dynamic catalog and replaces the host's provider-sentinel fallback. Genuine misses warn truthfully instead of 401ing.
+- **Precedence** (D77, enforced): explicit user selection **>** declared default **>** fallback. `explicitUserSelection` forbids reconciliation once the user has chosen; `reconciliationApplies` limits it to an unresolved session or process startup (a resumed `pi -c` session keeps its own model); `withModelWrite` serializes every Harness-initiated model write; the restore reports success truthfully.
+- Model, reasoning profile and reasoning level remain **independent**; `/doctor` reports the declared default, whether the current model is advertised or supplementary, and whether the reconciliation stood down.
+
+### 9router policy (D57, D73)
+
+Manually started by the user. Harness **never** spawns, kills, restarts, watchdogs or polls it. Recovery is bounded and one-shot: one boot-time refresh when the router is already healthy, and one probe + at most one refresh per `/model` open. Offline wording is truthful; the health probe is a bounded 4.5 s request with a classified failure (`timeout | http | connection | parse`) surfaced in `/doctor`. `refreshModels` never publishes an empty catalog over a known-good one.
+
+### Runtime surface (D62–D65, D72, D72.1)
+
+Primary surface order is `Activity → Work Plan → Runtime Context → Input`, with a zero-height footer (branch source only) and no extension-status fragments anywhere (diagnostics live in `/doctor`). The Runtime Context field carries `model · ● level · ★ profile > 📁 workspace > ⑂ branch > usage` in one framed, tinted field.
+
+### Work Plan (D72, D72.1)
+
+`@juicesharp/rpiv-todo` owns state, tool and persistence; Harness owns presentation. ONE surface: collapsed `◆ WORK PLAN  │ X/Y  ◐ <task>  ›`, expanded the same header with `⌃` over indented rows; glyphs carry state (`◐` active / `●` completed / `○` pending); zero tasks → the surface disappears. `rpiv-todos` never registers (`overlayEnabled:false`), and Harness is the sole `ctrl+shift+t` owner (`collapseKey:off`). `X/Y` is ordinal position, not completed/total.
+
+### Permission surface (D66–D71)
+
+`pi-permission-system` remains the sole authority (policy, session rules, fail-closed). Harness contributes presentation only: `capabilities/extensions/components/permission-surface.ts` plus the terminal prompt renderer registered through the package, giving one `Y/N/R` decision surface with `Esc`/`Ctrl+C` fail-closed, a subagent badge, and width safety `12..400`.
+
+### Capability scoping & sync (D34, D35)
+
+Per-turn `<available_skills>` scoping is deterministic and in-memory (fail-open, `/skill:<name>` escape hatch). `/sync` deploys platform assets one way with SHA256 drift detection, conflict protection and a protected-file allowlist.
 
 ## In Flight
 
-Nothing. The foundational phase is complete; the platform operates in Continuous Evolution (no predefined milestones — see [ROADMAP.md](ROADMAP.md)).
+Nothing.
 
 ## Blocked
 
@@ -57,46 +95,24 @@ Nothing.
 
 None open.
 
-(Resolved 2026-08-21: repository consumption scope — single primary Harness Pi environment, no other machines or agents consume it as their source of truth; `docs/DECISIONS.md` D31. Resolved during Milestone 2: remote visibility is **public** — D11. Resolved during Milestone 6: subagent-layer and browser-server decisions — D17.)
-
 ## Known Gaps
 
-- Full cold-install on a fresh machine not executed (no fresh machine available during Milestone 2; simulated validation completed — `docs/DECISIONS.md` D12).
-- Interactive `/login` flow on a fresh machine untested (stored-credential path verified).
-- Continuous Evolution (2026-08-25): `/model` same-model dead-end root-caused to a Pi host skip (`_emitModelSelect` early-return on equal models; interactive `/model` hard-coded pre-extension; identical in 0.84.3) and mitigated (D43): Alt+M shortcut + bare `/reasoning` open the same control center/v3 state, handler errors surface visibly, doctor tip added; also clarified `/effort` is a workflow auto-arm toggle unrelated to reasoning state.
-- Continuous Evolution (2026-08-25): Unified `/model` completed (D44) — version-guarded host bridge (`capabilities/scripts/pi-model-bridge.mjs`, status/apply/restore) emits `model_select(sameModel:true)` for same-model selector picks; control center now opens for BOTH same-model and changed-model selections; doctor reports bridge state; Alt+M // bare `/reasoning` remain as secondary access to the identical flow.
-- Continuous Evolution (2026-08-25): fixed the `/model` width-overflow crash (D45) — `Rendered line 40 exceeds terminal width (215 > 204)` caused by the row marker inflating the label column; rows/headers/footer/status now use dynamic column sizing with ANSI/Unicode-aware truncation and a final per-line width clamp, so no rendered line can exceed the terminal at any width.
-- Continuous Evolution (2026-08-25): `/model` Model Control Center visual refinement (D46) — table rows (name | level | description) with dynamic columns, semantic level tones, marker inside the name column, MODEL/REASONING header blocks, width-aware chrome and footers, subtle selection highlight; no architecture changes.
-- Continuous Evolution (2026-08-25): `/model` navigation + detail architecture (D47) — NavDetailPane two-pane control surface (wide) / stacked (narrow), focused CURRENT MODEL and PROFILE detail panels, SELECTED MODEL detail strip in the picker, selection-change wiring; no runtime behavior changes.
-- Continuous Evolution (2026-08-25): `/model` panelization (D49) — semantic regions via a shared titled-rule panel primitive: CURRENT MODEL, NAVIGATION · DETAIL (with subtle `│` divider), SELECTED MODEL, footer; no runtime behavior changes.
-- Continuous Evolution (2026-08-25): `/model` scope/navigation architecture (D48) — PROVIDERS nav section with truthful counts, two-pane scoped model browser (provider | models), scope-aware titles, ✓ current marker, dash suppressed for non-profile rows; no runtime behavior changes.
+**Host-side limitations (cannot be fixed from this repository):**
 
-- Continuous Evolution (2026-08-25): `/model` unified Model Control Surface (D50) — three-region NAVIGATION | MODELS | DETAIL layout, detail follows focus, provider wording corrected (never 'Connected'), standalone browser retired; 27-check suite green.
-- Continuous Evolution (2026-08-25): `/model` opens the Model Control Surface directly (D51) — version-guarded host bridge extends the D44 pattern to intercept `/model` dispatch in interactive-mode.js, routing to the extension's control surface instead of the native picker; `openModelBrowser` retired.
-- Continuous Evolution (2026-09-01): `/model` final information architecture (D53) — PROVIDERS | MODELS two-pane browser with scope titles and truthful counts, focus-following SELECTED MODEL / PROVIDER / PROFILE detail region, horizontally dense REASONING PROFILES (all ten visible, ›/★/● distinct), visible in-pane search, contextual footer; D50 three-region composition retired; `model_select` re-entrancy guard; 32-check suite green.
-- Continuous Evolution (2026-09-01): `/model` single-active-focus polish (D54) — exactly one region carries the keyboard cursor; passive regions readable with ✓/★/● state markers; models pane on focus-gated `MccOverviewList`; `Search:` prompt and region-specific footers; 35-check suite green.
-- Continuous Evolution (2026-09-01): 9router startup policy changed to MANUAL (D57) — Pi never spawns the router (`autoStart9router` removed); healthy-at-boot refresh + default restore unchanged; router offline → truthful offline status and "start 9router manually" notice; manual mid-session start recovered by a bounded one-shot refresh on the next `/model` open; 42-check suite green.
-- Continuous Evolution (2026-09-03): `/model` outer surface frame (D58) — one full-width Model Control Center boundary with the title inline in the top rule; browser box width math corrected (inner `┐` exactly 3 columns from the outer rail); inspector metadata grouped; 42-check suite green ([docs/DECISIONS.md](docs/DECISIONS.md) D59 context).
-- Continuous Evolution (2026-09-03): `/model` purple three-column IA (D59) — Row 1 = CURRENT MODEL band + PROVIDERS | MODELS | SELECTED MODEL (inspector = passive column 3 with name / route·ctx / `N output` / Capabilities / ✓ status; two-column collapse below innerWidth 78, stacked below 56); Row 2 = aligned reasoning grid with `●` under each profile name and semantic level colors (Off gray / Low green / Medium cyan / High amber / Ultra violet); profile editor rendered inside the MCC frame (shared `frameLines`); bundled `mcc-purple.json` theme auto-applied on surface open, restored on close; 49-check suite green ([docs/DECISIONS.md](docs/DECISIONS.md) D59).
-- Continuous Evolution (2026-09-04): `/model` precision visual correction (D60) — Selected Model inspector strictly bounded to its column (`selW − 2` budget, ellipsis truncation, approved target layout with CAPABILITIES rows so no capability is dropped at narrow widths); browser divider geometry junction-exact (`│ cell │ cell │ cell │` rows spanning innerWidth exactly — both dividers run `┬`→`┴` on one stable column; same contract in two-column collapse); reasoning palette corrected (Medium → thinkingMedium `#81a2be` steel blue, High → thinkingHigh `#e0af68`, Ultra → thinkingXhigh `#c792ea` — Medium and Ultra no longer both purple); 52-check suite green ([docs/DECISIONS.md](docs/DECISIONS.md) D60).
-- Continuous Evolution (2026-09-04): `/model` browser divider integration (D61) — internal dividers restyled from raw terminal-default glyphs to the purple-family `border` token (#4a4262, darker than the dim outline, never white); all browser rows (three-column + two-column) build through ONE `browserRow` helper whose divider x derives from the same widths array as the borders; geometry unchanged; 55-check suite green ([docs/DECISIONS.md](docs/DECISIONS.md) D61).
-- Continuous Evolution (2026-09-04): Runtime Context Bar + reduced footer shipped (D62) — the primary surface now carries a compact bar above the editor (π · lifecycle with braille Running spinner and MM:SS elapsed · model display name · `● <level>` in the D60 palette · `~`-shortened workspace · context usage with the built-in 70/90 tones; second line = tool activity while running, else Default/Execution profile) and a one-line footer (branch + token totals + cost, no extension statuses); the three RAL `ctx.ui.setStatus` fragments (topology, 9router online/offline, reasoning) were deleted in a clean cutover — diagnostics remain in `/doctor`; the bar hides while the Model Control Center is open; event-driven store, zero polling; 70-check suite green ([docs/DECISIONS.md](docs/DECISIONS.md) D62).
-- Continuous Evolution (2026-09-04): `/model` provenance fix (D63) — the D51 host-bridge blob dispatched the extension `model` command before the builtin `/model` text guard, so every submitted line (e.g. "testing" + Enter) opened the Model Control Surface; the D62 "~20 s startup auto-open" was the same defect (input during the boot window), NOT a `model_select`/catalog event (instrumented: zero `_emitModelSelect` calls during a repro run). The blob now sits inside the guard; `pi-model-bridge.mjs` migrates legacy hosts; D44 same-model bridge, D57 manual-start, and D62 bar/footer unchanged; 77-check suite green ([docs/DECISIONS.md](docs/DECISIONS.md) D63).
-- Continuous Evolution (2026-09-04): main surface visual redesign (D64) — three layers: transient activity line (◐ MM:SS · phrase, ✓/✕ settle, zero-height idle), persistent OMP-style context spine (model · ● level · profile │ 📁 workspace │ usage with 70/90 tones), and a frameless π-gutter input surface via the public setEditorComponent API; native Working... duplication suppressed through public APIs; pi-lens diagnostics widget removed from the primary surface; 78-check suite green ([docs/DECISIONS.md](docs/DECISIONS.md) D64).
-- Continuous Evolution (2026-09-04): runtime surface visual polish (D65) — coherent bright `border` token across both fields, purple-tinted `customMessageBg` surface on the context spine, semantic content hierarchy (model primary / reasoning D60 tokens / ★ lavender profile / 📁 cool accent workspace / ⑂ green branch / dynamic usage), footer reduced to a zero-height MinimalFooter (token accounting removed from the primary UI; branch source retained for the context field); 76-check suite green ([docs/DECISIONS.md](docs/DECISIONS.md) D65).
-- Continuous Evolution (2026-09-06): primary frame left rail brightness fixed — `contextFieldLines` left `╭── ` wrapped in `frame("text")` bright + `PiInputEditor` now uses captured `borderFgFn` (`liveTheme.fg("text")`) not host `borderColor` thinking-level; `contextFieldLines.compose` fill `-1` not `-5` + bare fallback width-accurate so `top==content==bottom==outerWidth` and `╮`/`│`/`╯` same right column; `PiInputEditor` two-state (`visibleRows===1` → single `╰─ π │ input   ╯` bottomInput, `>1` → `│ π │ row1 │`/`│     rowN │` + `╰──╯` bottomEmpty) with `visibleRows` from actual `super.render` visual rows; 90-check suite (8 multiline +1 frame-geometry 12..400 + left-rail); strict tsc PASS; verify.py OK; deployed parity; 9router untouched
-- Continuous Evolution (2026-09-06): Model Control Surface auto-focus to reasoning profiles — `runModelControlSurfaceLoop` now sets `surfaceState.focus="profiles"` inside `try` after successful `await pi.setModel(target)` (only focus, profile/model untouched), failure/`!target` preserves, same-model D44 also moves, D54 single-active preserved; 97-check suite (7 focus tests); strict tsc PASS; verify.py OK
-- Continuous Evolution (2026-09-07): Permission Decision Surface (D66) — presentation-only extension `capabilities/extensions/components/permission-surface.ts` (`PermissionDecisionSurface` `Component`) + wiring in `runtime-orchestrator.ts` (`currentPermissionUi` capture on `session_start`, `permissions:ready` → `getPermissionsService().registerAuthorizer("harness-decision-surface", authorize)`): `Y→allow`, `S→defer` (stock `SessionRules` fallback, `Session · policy` annotation), `N→deny`, `R→deny(reason)` inline editor, `Esc`/`Ctrl+C`→`deny(cancelled)` fail-closed, subagent badge `· (Subagent: name)`, `Command` compact `truncateToWidth` + `d` detail (`full command`/`cwd`/`policyReason`) `Esc` return, controls `←→`/`Enter`/hotkeys single `›` focus (D54), `doublePressToConfirm` 800ms `Press Y again`, `!hasAuthority→defer` (preserves `ParentAuthorizer` forwarding), exactly-once `resolved` guard, width-safe `12..400`, no `ToolExecutionComponent` patch, no `Goal` change. Activation `~/.pi/agent/extensions/pi-permission-system/config.json` `authorizerChain: ["harness-decision-surface"]` (rollback remove entry). `capabilities/extensions/components/permission-surface.ts` + `capabilities/extensions/tests/d42.test.ts` 15 perm tests. 112-check suite PASS; strict tsc PASS; verify.py OK; deployed parity (`runtime-orchestrator.ts` + `permission-surface.ts`); 9router untouched; `D44/D51/D63` intact
-- Continuous Evolution (2026-09-07): Permission Decision Surface refinements (D66.1) — compact semantic primary `External directory access`/`Bash command` ignoring verbose `Current agent requested` prose, one `Command` preview + `Policy` compact one line, `d` detail with `wrapTextMultiline` scroll; 119-check suite PASS.
-- Continuous Evolution (2026-09-10): Permission Decision Surface excluded-surfaces refinement (D66.2) — `external_directory`/`path` excluded from `Y→allow` via `delegation-envelope` `DELEGATION_EXCLUDED_SURFACES`, `Y` hidden on those surfaces (`S`→stock `SessionRules`), 3 controls `S/N/R`; 127-check suite PASS.
-- Continuous Evolution (2026-09-10): Single Permission UI via terminal prompt renderer (D70) — `pi-permission-system` `PermissionPromptRendererRegistry` + `LocalUserAuthorizer` renderer-first + Harness `PermissionPromptDecision` `Y/N/R` no `Session`/stock, package remains authority; 135-check suite PASS.
-- Continuous Evolution (2026-09-10): Permission information & action hierarchy polish (D66.3) — `WHAT`/`WHERE` `text` `bold`, `Command` `dim`/`text`, `Policy` `dim`/`muted`, controls semantic `success`/`error`/`warning` on `selectedBg`; 141-check suite PASS.
-- Continuous Evolution (2026-09-12): Permission final visual polish (D71) — title `customMessageLabel` lavender `bold`, border `border` muted, key hints semantic; 141-check suite PASS.
-- Continuous Evolution (2026-09-13): Work Plan compact status layer above Runtime Context (D72) — `WorkPlanWidget` `harness-work-plan` `aboveEditor` between `Activity` and `Runtime Context` (`Activity → Work Plan → Runtime Context → Input`), one-line `◆ Work plan · X/Y · current task` (`dim` prefix + `text` task, `visibleWidth`/`truncateToWidth` 12–400, `in_progress` else first `pending`), expanded 12-row `●`/`○`/`◐` with `… more`, authoritative `@juicesharp/rpiv-todo` `getRenderState()` at render time, `session_start` hides `rpiv-todos` when compact primary, `tool_execution_end` for `todo` → `repaint()` + re-hide, `session_shutdown` clears, event-driven only; 154-check suite PASS (+13 `WORK PLAN 1..13`), tsc PASS, verify.py OK, deployed parity, `pi --help` OK, live shows `Activity` + `◆ Work plan` + `Context` + `Input` at 80–120 and 40.
-- Continuous Evolution (2026-09-13): D72 live expand/collapse verified — Harness sole `ctrl+shift+t` via `~/.config/rpiv-todo/config.json` `{"collapseKey":"off"}`, `WorkPlanWidget` deterministic toggle (collapsed one-line ↔ 12-row), never both with `rpiv-todos`, 6 browser screenshots (no plan / compact / activity+compact / expanded / collapsed / multiline) + hub Pi no conflict, 155 PASS.
-- Continuous Evolution (2026-09-13): D72 runtime integration fix — `WorkPlanWidget` `subject` fallback, `state/store.ts` `globalThis Symbol` shared store, `config.ts` `overlayEnabled` + `index.ts` early return makes Harness sole presentation owner (no `rpiv-todos` re-register race), `◆ Work plan · 1/3 · Inspect runtime` not `undefined`, `156 PASS`.
-- Continuous Evolution (2026-09-30): D73 9router catalog reliability — `ROUTER_HEALTH_TIMEOUT_MS` 1500→4500 ms (measured 474–1180 ms cold call left only ~320 ms boot headroom → intermittent false `9router is offline`, permanent under D57's no-retry policy); abort window now spans the whole request (`clearTimeout` in `finally` after `res.json()`); `check9routerHealth(endpoint?, timeoutMs?)` returns classified `{ok, modelCount?, error?, kind: timeout|http|connection|parse}` shown in `/doctor`; `/model` recovery = `refreshRouterCatalogOnce` (one probe + one refresh per open, no longer gated on an empty availability snapshot, so stale static entries cannot block refresh); `refreshModels` non-destructive via `resolveRefreshedCatalog` and throws when nothing trustworthy exists (host retries `allowNetwork:false` and applies the result, so `[]` would wipe the catalog). No polling, no auto-start (D57 exact), no `models.json`/host change, D72 untouched; 168 PASS (+12 `D73 1..12`), tsc PASS, verify.py OK, deployed parity, live `/doctor` `✓ 9router: Online — 765 models discovered`, `/model` `(1/827)` with live-only ids.
-- Continuous Evolution (2026-09-30): D74 supplementary model discovery — `/v1/models` (773) structurally omits no-auth/dynamic providers while the router's own catalog holds 1751, so `oc/*` (OpenCode Free) was undiscoverable and only a hand-maintained static list could expose it (the stale `oc/muse-spark-1.2` that outlived 1.3). New generic path scoped by the router's own Pi declaration (`/api/cli-tools/pi-settings` prefixes) over its authoritative catalog (`/api/models`), preferring `routedModel`, dropping entries without finite `caps`, collision-free merge with advertised-first; admin auth = locally derived router CLI token; fail-soft, bounded (two abortable GETs), gated on a successful advertised refresh, no hardcoded provider/model id. D57 exact, D73 semantics preserved, `models.json` untouched, D72 untouched; 175 PASS (+7 `D74 1..7`), tsc PASS, verify.py OK, deployed parity, live probe supplement 20 / merged 793 / 0 duplicates, live `/model` `(1/835)` → `(1/855)` with `oc/muse-spark-1.3-contributor-free` DISCOVERED, VISIBLE and SELECTABLE.
-- Continuous Evolution (2026-09-30): D72.1 Work Plan unified visual polish — one surface, not "status line + separate list": uppercase bold `◆ WORK PLAN` + `dim` `│` separator + non-bold `text` progress; exported `WORK_PLAN_TASK_STYLES` pins `◐` accent/text (active, strongest), `●` success/dim (completed, subdued), `○` muted/muted (pending) with glyphs alone carrying state; compact one line with right-aligned `›`, expanded same header with `⌃` + indented rows (no Todo title, no border, no panel); zero-task state now disappears in BOTH modes. Presentation-only — rpiv-todo authoritative, D72/D73/D74 architecture, Runtime Context, Input, Activity, `/model` and 9router untouched; 183 PASS (+8 `D72.1 1..8`), tsc PASS, verify.py OK, deployed parity, live dogfood `1/4→4/4` with live `○→◐` transitions, expanded `●`/`◐`/`○` rows, collapse restored, all-completed removed the surface.
-- Continuous Evolution (2026-09-30): D76 supplementary model default restore (D75 task) — cold `pi` and `pi -c` both resolved `9router/oc/muse-spark-1.3-contributor-free` (a D74 supplementary model): `isUnresolvedModel` (provider/id blank or not findable in registry) + `restoreDeclaredDefault` now restores whenever the declared default is present/visible and not already current, waiting for the D74 catalog; the host's `defaultModelPerProvider.anthropic === ""` sentinel that would 401 every request is replaced, and genuine misses warn truthfully instead of 401ing. Bounded, one-shot, D57 exact, D74 `--scope generic--`; 192 PASS (+9 `D75 1..9`), tsc PASS, verify.py OK, deployed parity, live: `○  ·` → `Restored …` → `○ oc/muse-spark-1.3-contributor-free` → `d75-live-ok`.
-- Continuous Evolution (2026-09-30): D76 model governance & restore-race hardening (decision record **D77**; D76 was already the D75 restore) — the precedence rule `explicit /model selection` > `declared default` > `fallback` held only incidentally, and three orderings broke it: a selection completing before the host's `settings.json` write landed was overwritten by the next handshake tick (proven: with the guard removed, `D76 2` fails and the declared default is forced back), an apply already in flight could not be undone yet reported success, and a `pi -c` session whose model the host restored was overridden by another session's declared default. Fix (generic, no new persistent state, no host change): `explicitUserSelection` flag recorded at the single `model_select` entry point and cleared per session; `sessionStartReason` + `reconciliationApplies(ctx) = isUnresolvedModel(ctx) || sessionStartReason === "startup"` so the declared default repairs an unresolved session or process startup instead of always forcing itself back; `withModelWrite` promise chain serializing every Harness-initiated model write; truthful `applied && !explicitUserSelection`; handshake stand-down; `/doctor` now reports the declared default, names the current model as advertised vs supplementary, and states when the reconciliation stood down; the `/model` autocomplete conflict documented as an intentional compatibility shim. D57/D72/D72.1/D73/D74/D75 preserved; 201 PASS (+9 `D76 1..9`), tsc PASS, verify.py OK, deployed parity, live `pi` + `/model` selection + `pi -c` + catalog (774 advertised + 20 supplementary = 794 merged, 0 duplicates) + Work Plan regression all validated.
+- Pi resolves the initial model during session construction, **before** any extension's `session_start`, so the host may pick its `defaultModelPerProvider` sentinel and print its own warning. Harness can only repair afterwards.
+- The host exposes no atomic compare-and-set for the current model; the D77 write chain closes the reachable window, not the primitive.
+- The `/model` autocomplete warning ("conflicts with built-in interactive command") is a host command-name collision. It is cosmetic: the Harness command is load-bearing for the bridge and must not be removed.
+- Router-side catalog artifacts (e.g. ids in the router's generated `models.json` template that are absent from `/v1/models`) remain selectable and are outside Harness ownership.
+
+**Repository / validation debt:**
+
+- Full cold-install on a fresh machine not executed (simulated — D12); interactive `/login` on a fresh machine untested.
+- Interactive-only validations outstanding: plan-mode enforcement, ask-user prompting, pi-simplify, pi-lens.
+- Deferred capabilities awaiting triggers: GitHub MCP (PAT), piolium (container), playwright (E2E need), pi-web-access (API key).
+- Work items **D55**, **D56** and **D58** have no decision entry (evidence lives in the reports and [CHANGELOG.md](CHANGELOG.md)); the numbers are retired, not reused. See the Numbering section of [docs/DECISIONS.md](docs/DECISIONS.md).
+- `IMPLEMENTATION_PLAN.md` is an untracked D72-era scratch file at the repository root (a four-line Work Plan note). It is referenced here so it is not an undocumented stray; decide whether to delete it or fold it into `implementation/TODO.md`.
+- Execution-profile status chip can persist up to its 30-minute window after a workflow ends (documented v1 semantics).
+
+## Next
+
+See [NEXT_SESSION.md](NEXT_SESSION.md). The platform is at a clean, fully documented baseline: no runtime work is in flight, the suite is green, and the deployed extension is byte-identical to the repository source.
