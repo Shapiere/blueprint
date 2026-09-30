@@ -52,6 +52,9 @@ import {
   mergeCatalog,
   routerCliToken,
   WORK_PLAN_TASK_STYLES,
+  isUnresolvedModel,
+  restoreDeclaredDefault,
+  setPiSetModelRef,
   type EffectiveReasoning,
   type ModelSurfaceState,
   type MccSection,
@@ -2736,6 +2739,288 @@ check("D72.1 8 — UNIFIED: one surface, rpiv-todos never rendered alongside", (
   assert.equal((flat.match(/◆ WORK PLAN/g) || []).length, 1, "identity rendered exactly once");
 });
 
+// ------------------------------------------------------- D75 — supplementary default restore
+/**
+ * Fake host that reproduces the D75 ordering exactly: the initial model is
+ * resolved BEFORE the dynamic catalog exists, so a declared default living only
+ * in the supplementary catalog is unresolvable and the host substitutes a
+ * provider-sentinel fallback. `populate()` then makes the catalog ready.
+ */
+function makeBootCtx(opts: {
+  declared: { provider: string; model: string };
+  supplementary: { provider: string; id: string };
+  initialModel: { provider: string; id: string } | undefined;
+}) {
+  const setModelCalls: Array<{ provider: string; id: string }> = [];
+  const catalog: Array<{ provider: string; id: string }> = [];
+  let ready = false;
+  const ctx = {
+    model: opts.initialModel as unknown,
+    modelRegistry: {
+      getAvailable: () => (ready ? [...catalog] : []),
+      find: (provider: string, id: string) =>
+        ready ? catalog.find((m) => m.provider === provider && m.id === id) : undefined,
+    },
+  };
+  return {
+    ctx: ctx as never,
+    setModelCalls,
+    /** The host's post-restore state: the declared default is now current. */
+    populate() {
+      catalog.push({ ...opts.supplementary });
+      ready = true;
+    },
+    /** What the session is left on when the host fallback sticks. */
+    current: () => ctx.model as { provider: string; id: string } | undefined,
+    adopt(model: { provider: string; id: string }) {
+      ctx.model = model as unknown;
+    },
+  };
+}
+
+/**
+ * Serializes the D75 checks. They share two pieces of global state — the
+ * settings.json declared default AND the module-level setModel bridge — while
+ * the suite runs async checks concurrently, so without this one test's spy and
+ * declared default would be observed by another test's restore attempt.
+ */
+let d75Lock: Promise<unknown> = Promise.resolve();
+async function d75Serial(fn: () => Promise<void>): Promise<void> {
+  const run = d75Lock.then(fn);
+  d75Lock = run.catch(() => {});
+  return run;
+}
+
+/** Runs fn with settings.json temporarily declaring the given default. Call inside d75Serial. */
+async function withDeclaredDefault(provider: string, model: string, fn: () => Promise<void> | void): Promise<void> {
+  const p = path.join(os.homedir(), ".pi", "agent", "settings.json");
+  const backup = fs.readFileSync(p, "utf-8");
+  try {
+    const parsed = JSON.parse(backup) as Record<string, unknown>;
+    parsed.defaultProvider = provider;
+    parsed.defaultModel = model;
+    fs.writeFileSync(p, JSON.stringify(parsed, null, 2) + "\n", "utf-8");
+    await fn();
+  } finally {
+    fs.writeFileSync(p, backup, "utf-8");
+  }
+}
+
+check("D75 1 — UNRESOLVED PREDICATE: sentinel/blank/placeholder are unresolved, real models are not", () => {
+  const boot = makeBootCtx({
+    declared: { provider: "9router", model: "oc/never-advertised" },
+    supplementary: { provider: "9router", id: "oc/never-advertised" },
+    initialModel: { provider: "unknown", id: "unknown" },
+  });
+  // Placeholder
+  assert.equal(isUnresolvedModel(boot.ctx), true, "unknown/unknown is unresolved");
+  // Host sentinel fallback: provider present, id blank
+  boot.adopt({ provider: "anthropic", id: "" });
+  assert.equal(isUnresolvedModel(boot.ctx), true, "blank id (host sentinel) is unresolved");
+  boot.adopt({ provider: "", id: "gpt-x" });
+  assert.equal(isUnresolvedModel(boot.ctx), true, "blank provider is unresolved");
+  boot.adopt({ provider: "anthropic", id: "   " });
+  assert.equal(isUnresolvedModel(boot.ctx), true, "whitespace-only id is unresolved");
+  // No model at all
+  const noModel = makeBootCtx({
+    declared: { provider: "9router", model: "oc/never-advertised" },
+    supplementary: { provider: "9router", id: "oc/never-advertised" },
+    initialModel: undefined,
+  });
+  assert.equal(isUnresolvedModel(noModel.ctx), true, "absent model is unresolved");
+  // A real, registry-resolvable model is resolved
+  const real = makeBootCtx({
+    declared: { provider: "9router", model: "oc/never-advertised" },
+    supplementary: { provider: "9router", id: "oc/never-advertised" },
+    initialModel: { provider: "anthropic", id: "" },
+  });
+  real.populate();
+  real.adopt({ provider: "9router", id: "oc/never-advertised" });
+  assert.equal(isUnresolvedModel(real.ctx), false, "a registry-resolvable model is resolved");
+});
+
+check("D75 2 — ORDERING: restore before catalog population misses, after population succeeds", async () => {
+  await d75Serial(async () => {
+    const boot = makeBootCtx({
+      declared: { provider: "9router", model: "oc/supplementary-model" },
+      supplementary: { provider: "9router", id: "oc/supplementary-model" },
+      initialModel: { provider: "anthropic", id: "" },
+    });
+    setPiSetModelRef(async (m) => {
+      boot.setModelCalls.push(m as { provider: string; id: string });
+    });
+    try {
+      await withDeclaredDefault("9router", "oc/supplementary-model", async () => {
+        // Phase 1 — the exact live race: the host already fell back and the
+        // dynamic catalog is not populated yet.
+        const before = await restoreDeclaredDefault(boot.ctx);
+        assert.equal(before, false, "restore misses while the dynamic catalog is empty");
+        assert.equal(boot.setModelCalls.length, 0, "no model is selected on a miss");
+        assert.equal(isUnresolvedModel(boot.ctx), true, "session is still unresolved after the miss");
+        // Phase 2 — D74 population lands (this is what session_start awaits).
+        boot.populate();
+        const after = await restoreDeclaredDefault(boot.ctx);
+        assert.equal(after, true, "restore succeeds once the supplementary catalog is populated");
+        assert.deepEqual(
+          boot.setModelCalls,
+          [{ provider: "9router", id: "oc/supplementary-model" }],
+          "the declared supplementary default is selected",
+        );
+      });
+    } finally {
+      setPiSetModelRef(null);
+    }
+  });
+});
+
+check("D75 3 — NO SENTINEL FALLBACK: the host sentinel is never left as the effective model", async () => {
+  await d75Serial(async () => {
+    const boot = makeBootCtx({
+      declared: { provider: "9router", model: "oc/supplementary-model" },
+      supplementary: { provider: "9router", id: "oc/supplementary-model" },
+      initialModel: { provider: "anthropic", id: "" },
+    });
+    setPiSetModelRef(async (m) => {
+      boot.setModelCalls.push(m as { provider: string; id: string });
+      boot.adopt(m as { provider: string; id: string }); // the host applies the selection
+    });
+    try {
+      await withDeclaredDefault("9router", "oc/supplementary-model", async () => {
+        assert.equal(await restoreDeclaredDefault(boot.ctx), false, "miss before population");
+        boot.populate();
+        assert.equal(await restoreDeclaredDefault(boot.ctx), true, "restored after population");
+        assert.deepEqual(boot.current(), { provider: "9router", id: "oc/supplementary-model" }, "sentinel replaced");
+        assert.notEqual(boot.current()!.id, "", "never left on an empty-id model");
+        assert.equal(isUnresolvedModel(boot.ctx), false, "session is resolved");
+      });
+    } finally {
+      setPiSetModelRef(null);
+    }
+  });
+});
+
+check("D75 4 — ADVERTISED DEFAULT: an advertised model still restores normally", async () => {
+  await d75Serial(async () => {
+    const boot = makeBootCtx({
+      declared: { provider: "9router", model: "advertised-model" },
+      supplementary: { provider: "9router", id: "advertised-model" },
+      initialModel: { provider: "unknown", id: "unknown" },
+    });
+    setPiSetModelRef(async (m) => {
+      boot.setModelCalls.push(m as { provider: string; id: string });
+    });
+    try {
+      await withDeclaredDefault("9router", "advertised-model", async () => {
+        boot.populate();
+        assert.equal(await restoreDeclaredDefault(boot.ctx), true, "advertised default restores");
+        assert.deepEqual(boot.setModelCalls, [{ provider: "9router", id: "advertised-model" }]);
+      });
+    } finally {
+      setPiSetModelRef(null);
+    }
+  });
+});
+
+check("D75 5 — UNKNOWN/UNKNOWN: placeholder behaviour preserved", async () => {
+  await d75Serial(async () => {
+    const boot = makeBootCtx({
+      declared: { provider: "9router", model: "advertised-model" },
+      supplementary: { provider: "9router", id: "advertised-model" },
+      initialModel: { provider: "unknown", id: "unknown" },
+    });
+    setPiSetModelRef(async (m) => {
+      boot.setModelCalls.push(m as { provider: string; id: string });
+    });
+    try {
+      await withDeclaredDefault("9router", "advertised-model", async () => {
+        assert.equal(await restoreDeclaredDefault(boot.ctx), false, "nothing to restore while the catalog is empty");
+        assert.equal(boot.setModelCalls.length, 0, "placeholder alone never triggers a selection");
+        boot.populate();
+        assert.equal(await restoreDeclaredDefault(boot.ctx), true, "placeholder restores once resolvable");
+      });
+    } finally {
+      setPiSetModelRef(null);
+    }
+  });
+});
+
+check("D75 6 — NO FIGHTING A WORKING SESSION: a resolved current model is left alone", async () => {
+  await d75Serial(async () => {
+    const boot = makeBootCtx({
+      declared: { provider: "9router", model: "oc/supplementary-model" },
+      supplementary: { provider: "9router", id: "oc/supplementary-model" },
+      initialModel: { provider: "anthropic", id: "" },
+    });
+    setPiSetModelRef(async (m) => {
+      boot.setModelCalls.push(m as { provider: string; id: string });
+    });
+    try {
+      boot.populate();
+      boot.adopt({ provider: "9router", id: "oc/supplementary-model" }); // a real, working model
+      await withDeclaredDefault("9router", "oc/supplementary-model", async () => {
+        assert.equal(await restoreDeclaredDefault(boot.ctx), false, "no restore when the session already has a real model");
+        assert.equal(boot.setModelCalls.length, 0, "no redundant model switch");
+      });
+    } finally {
+      setPiSetModelRef(null);
+    }
+  });
+});
+
+check("D75 7 — GENUINE MISS: an unresolvable declared default stays truthful, selects nothing", async () => {
+  await d75Serial(async () => {
+    const boot = makeBootCtx({
+      declared: { provider: "9router", model: "oc/never-served" },
+      supplementary: { provider: "9router", id: "oc/something-else" },
+      initialModel: { provider: "anthropic", id: "" },
+    });
+    setPiSetModelRef(async (m) => {
+      boot.setModelCalls.push(m as { provider: string; id: string });
+    });
+    try {
+      await withDeclaredDefault("9router", "oc/never-served", async () => {
+        boot.populate();
+        assert.equal(await restoreDeclaredDefault(boot.ctx), false, "unresolvable default is not restored");
+        assert.equal(boot.setModelCalls.length, 0, "nothing is invented or substituted");
+        assert.equal(isUnresolvedModel(boot.ctx), true, "state stays truthfully unresolved");
+      });
+      const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+      assert.match(src, /Default model not restored:/, "exhaustion surfaces a truthful warning");
+      assert.match(src, /isUnresolvedModel\(ctx\)\) \{/, "the warning is gated on a still-unresolved session");
+    } finally {
+      setPiSetModelRef(null);
+    }
+  });
+});
+
+check("D75 8 — GENERIC: no hardcoded provider or model name in the restore path", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  const start = src.indexOf("export function isUnresolvedModel");
+  const end = src.indexOf("/** Late-bound setModel bridge", start);
+  assert.ok(start > 0 && end > start, "restore path located");
+  const body = src.slice(start, end).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  for (const needle of ["muse", "opencode", "anthropic", "openai", "oc/"]) {
+    assert.ok(!body.includes(needle), `restore path must not mention ${needle}`);
+  }
+  // The declared default is always read from settings.json — never a literal.
+  assert.match(body, /settings\.defaultProvider/, "provider comes from settings");
+  assert.match(body, /settings\.defaultModel/, "model comes from settings");
+});
+
+check("D75 9 — D57/ONE-SHOT: bounded handshake, no polling, no retry loop added", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.equal((src.match(/setInterval\(/g) || []).length, 1, "still exactly one interval (Activity)");
+  assert.doesNotMatch(src, /setInterval\([^)]*restoreDeclaredDefault/, "no interval-driven restore");
+  assert.doesNotMatch(src, /setInterval\([^)]*modelRegistry\.refresh/, "no interval-driven refresh");
+  // The boot handshake stays bounded at 8 attempts with a 900 ms spacing.
+  assert.match(src, /if \(attempts < 8\) \{/, "bounded attempt count");
+  assert.match(src, /setTimeout\(tryRestore, 900\);/, "bounded spacing");
+  assert.match(src, /setTimeout\(tryRestore, 1200\);/, "single delayed start");
+  assert.doesNotMatch(src, /while \(true\)[\s\S]{0,200}restoreDeclaredDefault/, "no unbounded loop");
+  assert.doesNotMatch(src, /node:child_process|require\("child_process"\)/, "never imports a spawning module (D57)");
+  assert.doesNotMatch(src, /\b(spawn|spawnSync|execFile|execFileSync|execSync)\s*\(/, "never calls a spawning API (D57)");
+});
+
 // ------------------------------------------------------- D73 — 9router catalog reliability
 /** Ephemeral local HTTP server so health probes are exercised over real HTTP. */
 async function withRouter(
@@ -3004,8 +3289,9 @@ check("D74 5 — WIRING: supplement folded into refreshModels, gated on a succes
   assert.match(src, /const ROUTER_ADMIN_BASE = ROUTER_BASE_URL\.replace\(\/\\\/v1\$\/, ""\);/, "admin base derived from ROUTER_BASE_URL");
   assert.match(src, /ROUTER_BASE_URL\.replace\(\/\\\/v1\$\/, ""\)/, "no hardcoded router host");
   // No hardcoded model ids anywhere in the extension.
-  assert.doesNotMatch(src, /muse-spark/, "no hardcoded model id");
-  assert.doesNotMatch(src, /opencode/, "no hardcoded provider name");
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  assert.doesNotMatch(code, /muse-spark/, "no hardcoded model id");
+  assert.doesNotMatch(code, /opencode/, "no hardcoded provider name");
 });
 
 check("D74 6 — D57 INVARIANTS: bounded, no polling, no spawn, no retries", () => {

@@ -1444,23 +1444,62 @@ export function listAvailableModelSpecsSafe(ctx: ExtensionContext): string[] {
   }
 }
 /**
- * Restores the user's DECLARED default model when Pi left the session at the
- * placeholder because the static catalog predated the dynamic one. This is
- * restoration of existing configuration — never a model switch. Guards:
- * only when ctx.model is the placeholder, the declared default exists in the
- * availability snapshot, and it is currently visible per harness-models.json.
+ * D75: is the session's CURRENT model unresolved — i.e. not a real model this
+ * session can actually use?
+ *
+ * The host resolves the initial model during session construction, before any
+ * extension runs. A declared default that exists only in the D74
+ * supplementary catalog therefore cannot be found yet, and the host substitutes a
+ * provider-sentinel fallback (its own `defaultModelPerProvider` table maps
+ * `anthropic` to an empty model id). That fallback is not a usable model — and
+ * it is not necessarily the documented `unknown/unknown` placeholder, which is
+ * why the previous placeholder-only guard never fired and the session was left
+ * on a model every request 401s against.
+ *
+ * Deliberately provider- and model-agnostic: no provider name, no model id, no
+ * special case. A model counts as resolved only when it carries a non-blank
+ * provider AND id AND the registry can actually find it.
+ */
+export function isUnresolvedModel(ctx: ExtensionContext): boolean {
+  try {
+    const model = ctx.model;
+    if (!model) return true;
+    const provider = typeof model.provider === "string" ? model.provider.trim() : "";
+    const id = typeof model.id === "string" ? model.id.trim() : "";
+    if (!provider || !id) return true;
+    if (provider === "unknown" && id === "unknown") return true;
+    return !ctx.modelRegistry.find(provider, id);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Restores the user's DECLARED default model when it is not yet current.
+ * This is restoration of existing configuration — never a model switch.
+ *
+ * Guards:
+ * only when the declared default exists in the availability snapshot and is
+ * currently visible per harness-models.json, and the current model is not
+ * already the declared default. Until D75 the first guard was
+ * `unknown/unknown` only, which missed the host's real fallback
+ * (`defaultModelPerProvider.anthropic === ""` → `anthropic/<sentinel>`): a
+ * stale, non-empty provider with a valid id that is nonetheless the host's
+ * sentinel. A supplementary D74 model fell through that exact gap, so a cold
+ * start that should have landed on `9router/oc/muse-spark-1.3-contributor-free`
+ * stayed on the sentinel and 401'd every request.
  */
 export async function restoreDeclaredDefault(ctx: ExtensionContext): Promise<boolean> {
   try {
-    const model = ctx.model;
-    const isPlaceholder = !!model && model.provider === "unknown" && model.id === "unknown";
-    if (!isPlaceholder) return false;
     const settings = JSON.parse(
       fs.readFileSync(path.join(os.homedir(), ".pi", "agent", "settings.json"), "utf-8"),
     ) as { defaultProvider?: unknown; defaultModel?: unknown };
     const provider = typeof settings.defaultProvider === "string" ? settings.defaultProvider : undefined;
     const id = typeof settings.defaultModel === "string" ? settings.defaultModel : undefined;
     if (!provider || !id) return false;
+    const currentProvider = typeof ctx.model?.provider === "string" ? ctx.model.provider.trim() : "";
+    const currentId = typeof ctx.model?.id === "string" ? ctx.model.id.trim() : "";
+    if (currentProvider === provider && currentId === id) return false;
     const available = ctx.modelRegistry.getAvailable();
     const target = available.find((m) => m.provider === provider && m.id === id);
     if (!target) return false;
@@ -1480,11 +1519,19 @@ export async function restoreDeclaredDefault(ctx: ExtensionContext): Promise<boo
     return false;
   }
 }
-
 /** Late-bound setModel bridge; assigned inside the extension bootstrap. */
 let piSetModelRef: ((m: unknown) => Promise<unknown>) | null = null;
 /** True while a boot-default restoration is in flight; suppresses the post-select dialog. */
 let restoringBootDefault = false;
+
+/**
+ * Test seam for the late-bound setModel bridge (mirrors setPiEditorThemeFns).
+ * Production assigns this inside the extension bootstrap; tests inject a spy so
+ * the declared-default restore path can be exercised without a live host.
+ */
+export function setPiSetModelRef(fn: ((m: unknown) => Promise<unknown>) | null): void {
+  piSetModelRef = fn;
+}
 
 /**
  * D44 bridge decision: the version-guarded host patch emits model_select with
@@ -4119,7 +4166,20 @@ export default function (pi: ExtensionAPI) {
                       ctx.ui.notify(`Restored default model:\n${declaredDefaultLabel()}`, "info");
                     return;
                   }
-                  if (attempts < 8) setTimeout(tryRestore, 900);
+                  if (attempts < 8) {
+                    setTimeout(tryRestore, 900);
+                    return;
+                  }
+                  // D75: the bounded handshake is exhausted. If the session is
+                  // still sitting on an unresolved model, say so truthfully —
+                  // never invent, substitute or select a model here, and never
+                  // silently leave requests 401ing against a host sentinel.
+                  if (ctx.hasUI && isUnresolvedModel(ctx)) {
+                    ctx.ui.notify(
+                      `Default model not restored: ${declaredDefaultLabel()} is not available in the current catalog. Open /model to choose a model.`,
+                      "warning",
+                    );
+                  }
                 } catch {}
                 })();
               };
