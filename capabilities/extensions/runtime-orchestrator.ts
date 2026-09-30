@@ -3076,15 +3076,63 @@ export class RuntimeContextBar implements Component {
 }
 
 /**
- * WORK PLAN — compact status layer between Activity and Runtime Context.
- * Reads the single authoritative rpiv-todo state via getRenderState() +
- * selectTodoCounts/selectOverlayLayout at render time (never replayFromBranch).
- * Collapsed primary is one horizontal line: `◆ Work plan · 1/5 · current task`.
- * Returns [] (zero lines) when no active plan exists — auto-hide, no dashboard.
- * The 12-row rpiv-todos overlay remains the on-demand full list via the existing
- * `r` collapse/expand shortcut; WorkPlanWidget and rpiv-todos are never both
- * visible in the primary strip (see session_start ordering).
+ * D72.1 WORK PLAN surface — ONE premium terminal-native surface that combines
+ * the plan header (identity + progress) with its own todo rows. rpiv-todo stays
+ * the authoritative state/tool/persistence owner; Harness stays the sole visual
+ * owner. State is read at render time (never replayFromBranch), the surface
+ * returns [] when no active/pending task exists (auto-hide, no empty shell),
+ * and the rpiv-todos overlay is never rendered alongside it.
+ *
+ * Collapsed (one line):
+ *   ◆ WORK PLAN  │ 2/4  ◐ Test compact mode                     ›
+ * Expanded (header + indented rows; no border, no separate Todo title):
+ *   ◆ WORK PLAN  │ 2/4                                           ⌃
+ *     ● Prepare Work Plan
+ *     ◐ Test compact mode
+ *     ○ Test expanded mode
  */
+
+/** Task status → glyph and tones. Semantics pinned by the spec. */
+export interface WorkPlanTaskStyle {
+  glyph: string;
+  glyphTone: ThemeColor;
+  titleTone: ThemeColor;
+}
+
+/**
+ * D72.1 visual hierarchy: active is strongest (accent glyph + bright text),
+ * completed carries a subdued success glyph, pending stays readable but muted.
+ * The glyphs carry the state on their own — colour is emphasis, never the only
+ * signal — and are never replaced by checkboxes or badges. Every tone is an
+ * existing theme token; no new colour system is introduced.
+ */
+export const WORK_PLAN_TASK_STYLES: Record<string, WorkPlanTaskStyle> = {
+  completed: { glyph: "●", glyphTone: "success", titleTone: "dim" },
+  in_progress: { glyph: "◐", glyphTone: "accent", titleTone: "text" },
+  pending: { glyph: "○", glyphTone: "muted", titleTone: "muted" },
+};
+
+const WORK_PLAN_UNKNOWN_STYLE: WorkPlanTaskStyle = {
+  glyph: "○",
+  glyphTone: "muted",
+  titleTone: "muted",
+};
+
+/** Identity — uppercase for hierarchy, lavender accent family for premium tone. */
+const WORK_PLAN_IDENTITY = "◆ WORK PLAN";
+/** Space between identity and the structural separator. */
+const WORK_PLAN_HEAD_GAP = "  ";
+/** Space between progress and the task glyph / row glyph. */
+const WORK_PLAN_TASK_GAP = "  ";
+/** Indent that makes task rows read as children of the header. */
+const WORK_PLAN_ROW_INDENT = "  ";
+/** Trailing affordances — restrained and terminal-native, never `[expand]`. */
+const WORK_PLAN_EXPAND_HINT = "›";
+const WORK_PLAN_COLLAPSE_HINT = "⌃";
+/** Columns the title must keep before the trailing hint is dropped instead. */
+const WORK_PLAN_MIN_TITLE = 8;
+/** Content-row budget, mirroring the rpiv-todos overlay budget. */
+const WORK_PLAN_MAX_ROWS = 12;
 
 export class WorkPlanWidget implements Component {
   private tui: TUI | undefined;
@@ -3108,6 +3156,97 @@ export class WorkPlanWidget implements Component {
     this.repaint();
   }
 
+  /** Final safety net: no rendered line may ever exceed the available width. */
+  private fit(line: string, width: number): string {
+    return visibleWidth(line) > width ? truncateToWidth(line, width, "…") : line;
+  }
+
+  /**
+   * Header: identity (bold accent) + structural separator + legible progress.
+   * Identity is the strongest accent in the surface but stays in the accent
+   * family, and progress is deliberately not bold, so the whole Work Plan
+   * remains subordinate to the Runtime Context spine. The separator uses the
+   * same `dim` punctuation tone the Runtime Context already uses between its
+   * own segments — no second accent colour enters the primary strip.
+   */
+  private header(progress: string): string {
+    const theme = this.theme;
+    const identity = theme.fg("accent", theme.bold(WORK_PLAN_IDENTITY));
+    const separator = theme.fg("dim", "│");
+    return `${identity}${WORK_PLAN_HEAD_GAP}${separator} ${theme.fg("text", progress)}`;
+  }
+
+  private taskTitle(task: { subject?: string; content?: string }): string {
+    return task.subject ?? task.content ?? "";
+  }
+
+  /** Collapsed: identity + progress + state glyph + current task + `›`. */
+  private compactLine(width: number, head: string, hint: string, active: { subject?: string; content?: string; status: string }): string {
+    const theme = this.theme;
+    const style = WORK_PLAN_TASK_STYLES[active.status] ?? WORK_PLAN_UNKNOWN_STYLE;
+    const glyph = `${theme.fg(style.glyphTone, style.glyph)} `;
+    const title = theme.fg(style.titleTone, this.taskTitle(active));
+    const fixedW = visibleWidth(head) + visibleWidth(WORK_PLAN_TASK_GAP) + visibleWidth(glyph);
+    const hintW = visibleWidth(hint);
+    // Priority: identity > progress > state glyph > hint > task title. The
+    // title yields first; the hint is dropped only when keeping it would push
+    // the title below a readable minimum.
+    const titleAvail = width - fixedW - hintW - 1;
+    if (titleAvail >= WORK_PLAN_MIN_TITLE) {
+      const fitted = truncateToWidth(title, titleAvail, "…");
+      const pad = Math.max(1, width - fixedW - visibleWidth(fitted) - hintW);
+      return this.fit(`${head}${WORK_PLAN_TASK_GAP}${glyph}${fitted}${" ".repeat(pad)}${hint}`, width);
+    }
+    const bareAvail = width - fixedW;
+    const fitted = bareAvail > 0 ? truncateToWidth(title, bareAvail, "…") : "";
+    return this.fit(`${head}${WORK_PLAN_TASK_GAP}${glyph}${fitted}`, width);
+  }
+
+  /** Expanded: the same header with `⌃`, then indented rows. No Todo title. */
+  private expandedLines(
+    width: number,
+    head: string,
+    hint: string,
+    visible: Array<{ subject?: string; content?: string; status: string }>,
+  ): string[] {
+    const theme = this.theme;
+    const headW = visibleWidth(head);
+    const hintW = visibleWidth(hint);
+    const lines: string[] = [
+      headW + hintW + 1 <= width
+        ? `${head}${" ".repeat(width - headW - hintW)}${hint}`
+        : this.fit(head, width),
+    ];
+    // Row budget mirrors the rpiv-todos overlay: drop completed first, then
+    // trim the unfinished tail.
+    let toShow: typeof visible = visible;
+    if (visible.length > WORK_PLAN_MAX_ROWS) {
+      const nonCompleted = visible.filter((t) => t.status !== "completed");
+      if (nonCompleted.length <= WORK_PLAN_MAX_ROWS - 1) {
+        const keep = new Set(nonCompleted);
+        for (const t of visible) {
+          if (keep.size >= WORK_PLAN_MAX_ROWS - 1) break;
+          if (t.status === "completed") keep.add(t);
+        }
+        toShow = visible.filter((t) => keep.has(t));
+      } else {
+        toShow = nonCompleted.slice(0, WORK_PLAN_MAX_ROWS - 1);
+      }
+    }
+    for (const task of toShow) {
+      const style = WORK_PLAN_TASK_STYLES[task.status] ?? WORK_PLAN_UNKNOWN_STYLE;
+      const prefix = `${WORK_PLAN_ROW_INDENT}${theme.fg(style.glyphTone, style.glyph)} `;
+      const title = theme.fg(style.titleTone, this.taskTitle(task));
+      const avail = width - visibleWidth(prefix);
+      const fitted = avail > 0 ? truncateToWidth(title, avail, "…") : "";
+      lines.push(this.fit(`${prefix}${fitted}`, width));
+    }
+    if (visible.length > toShow.length) {
+      lines.push(this.fit(theme.fg("dim", `${WORK_PLAN_ROW_INDENT}… ${visible.length - toShow.length} more`), width));
+    }
+    return lines;
+  }
+
   render(width: number): string[] {
     let state: { tasks: Array<{ subject?: string; content?: string; status: string }>; nextId: number } | null = null;
     try {
@@ -3118,60 +3257,15 @@ export class WorkPlanWidget implements Component {
     if (!state || !state.tasks || state.tasks.length === 0) return [];
     const visible = state.tasks.filter((t) => t.status !== "deleted");
     if (visible.length === 0) return [];
-    // Find current task: in_progress first, else first pending, else none → hide (unless expanded with completed)
-    let active = visible.find((t) => t.status === "in_progress");
-    if (!active) active = visible.find((t) => t.status === "pending");
-    // Expanded: show full list via overlay layout; collapsed: show one line
-    if (!this.collapsed) {
-      // Full list — up to 12 rows, selectOverlayLayout style (completed hidden first, then pending)
-      const maxLines = 12;
-      let toShow: typeof visible = visible;
-      if (visible.length > maxLines) {
-        const nonCompleted = visible.filter((t) => t.status !== "completed");
-        if (nonCompleted.length <= maxLines - 1) {
-          const keep = new Set(nonCompleted);
-          for (const t of visible) {
-            if (keep.size >= maxLines - 1) break;
-            if (t.status === "completed") keep.add(t);
-          }
-          toShow = visible.filter((t) => keep.has(t));
-        } else {
-          toShow = nonCompleted.slice(0, maxLines - 1);
-        }
-      }
-      const lines: string[] = [];
-      for (const task of toShow) {
-        const icon = task.status === "completed" ? "●" : task.status === "in_progress" ? "◐" : "○";
-        const color = task.status === "completed" ? "dim" : task.status === "in_progress" ? "accent" : "dim";
-        const subjectVal = task.subject ?? task.content ?? "";
-        const line = this.theme.fg(color as ThemeColor, `${icon} ${subjectVal}`);
-        lines.push(visibleWidth(line) <= width ? line : truncateToWidth(line, width, "…"));
-      }
-      if (visible.length > toShow.length) {
-        const more = visible.length - toShow.length;
-        lines.push(this.theme.fg("dim", `… ${more} more`));
-      }
-      lines.push(this.theme.fg("dim", `  [${this.collapsed ? "expand" : "collapse"}]`));
-      return lines.map((l) => (visibleWidth(l) <= width ? l : truncateToWidth(l, width, "…")));
-    }
+    // Current task: in_progress first, else first pending. All-completed (and
+    // all-deleted) is the zero-task state — the surface disappears entirely in
+    // BOTH modes: no empty shell, no `0/0`, no blank todo section.
+    const active = visible.find((t) => t.status === "in_progress") ?? visible.find((t) => t.status === "pending");
     if (!active) return [];
-    const total = visible.length;
-    const completed = visible.filter((t) => t.status === "completed").length;
-    const idx = visible.indexOf(active);
-    const pos = idx >= 0 ? idx + 1 : 1;
-    const progress = `${pos}/${total}`;
-    const prefixStyled = this.theme.fg("dim", "◆ Work plan · ") + this.theme.fg("dim", `${progress} · `);
-    const subjectActive = active.subject ?? active.content ?? "";
-    const taskStyled = this.theme.fg("text", subjectActive);
-    const prefixW = visibleWidth(prefixStyled);
-    const taskAvail = Math.max(0, width - prefixW);
-    const taskFitted = taskAvail <= 0 ? "" : visibleWidth(taskStyled) <= taskAvail ? taskStyled : truncateToWidth(taskStyled, taskAvail, "…");
-    const line = `${prefixStyled}${taskFitted}`;
-    if (visibleWidth(line) > width) {
-      const fallback = this.theme.fg("dim", `◆ Work plan · ${progress}`);
-      return [visibleWidth(fallback) <= width ? fallback : truncateToWidth(fallback, width, "…")];
-    }
-    return [visibleWidth(line) <= width ? line : truncateToWidth(line, width, "…")];
+    const progress = `${visible.indexOf(active) + 1}/${visible.length}`;
+    const head = this.header(progress);
+    const hint = this.theme.fg("dim", this.collapsed ? WORK_PLAN_EXPAND_HINT : WORK_PLAN_COLLAPSE_HINT);
+    return this.collapsed ? [this.compactLine(width, head, hint, active)] : this.expandedLines(width, head, hint, visible);
   }
 
   invalidate(): void {}

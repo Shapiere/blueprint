@@ -51,6 +51,7 @@ import {
   mapInternalCatalogEntries,
   mergeCatalog,
   routerCliToken,
+  WORK_PLAN_TASK_STYLES,
   type EffectiveReasoning,
   type ModelSurfaceState,
   type MccSection,
@@ -2422,12 +2423,12 @@ check("WORK PLAN 2 — ACTIVE TASK: in_progress → first pending fallback", () 
   const tasksInProg = [{ content: "Inventory repo", status: "in_progress" } as any, { content: "Trace authority", status: "pending" } as any];
   const w = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks: tasksInProg, nextId: 3 }));
   const flat = flatText(w.render(80));
-  assert.match(flat, /◆ Work plan · 1\/2 · Inventory repo/, "in_progress 1/2");
+  assert.match(flat, /◆ WORK PLAN\s+│ 1\/2\s+◐ Inventory repo/, "in_progress 1/2 with glyph");
   assert.equal(w.render(80).length, 1, "exactly one line");
   const tasksPendingOnly = [{ content: "Trace authority", status: "pending" } as any, { content: "Inventory repo", status: "completed" } as any];
   const w2 = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks: tasksPendingOnly, nextId: 3 }));
   const flat2 = flatText(w2.render(80));
-  assert.match(flat2, /Trace authority/, "first pending fallback");
+  assert.match(flat2, /○ Trace authority/, "first pending fallback with pending glyph");
 });
 
 check("WORK PLAN 3 — PENDING FALLBACK: no in_progress, first pending becomes active", () => {
@@ -2452,7 +2453,7 @@ check("WORK PLAN 5 — NO DASHBOARD: collapsed primary never contains full list"
   const tasks = [{ content: "a", status: "pending" } as any, { content: "b", status: "pending" } as any, { content: "c", status: "pending" } as any];
   const w = new WorkPlanWidget(themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme, () => ({ tasks, nextId: 4 }));
   const flat = flatText(w.render(80));
-  assert.ok(!flat.includes("●") || flat.includes("◆ Work plan"), "no full ●/○ board in collapsed");
+  assert.ok(!flat.includes("●") || flat.includes("◆ WORK PLAN"), "no full ●/○ board in collapsed");
   assert.ok(!flat.includes("Todos (") , "no Todos heading in collapsed");
   assert.equal(w.render(80).length, 1, "one line collapsed");
 });
@@ -2573,6 +2574,166 @@ check("WORK PLAN 15 — SAME AUTHORITATIVE STATE: WorkPlan reads same store inst
   const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
   assert.match(src, /Symbol\.for\("rpiv-todo\.store"\)/, "WorkPlan getState uses global Symbol as primary");
   assert.match(src, /getRenderState/, "WorkPlan getState uses getRenderState");
+});
+
+// ------------------------------------------------------- D72.1 — unified Work Plan surface
+const wpTheme = themeStub as unknown as import("@earendil-works/pi-coding-agent").Theme;
+const wpTasks = (statuses: string[]) => ({
+  tasks: statuses.map((status, i) => ({ subject: `Task ${i + 1}`, status })) as any,
+  nextId: statuses.length + 1,
+});
+const wpFlat = (w: WorkPlanWidget, width: number) => flatText(w.render(width));
+
+check("D72.1 1 — HEADER: identity + structural separator + legible progress", () => {
+  const w = new WorkPlanWidget(wpTheme, () => wpTasks(["in_progress", "pending", "pending", "pending"]));
+  const flat = wpFlat(w, 120);
+  assert.match(flat, /◆ WORK PLAN/, "uppercase identity present");
+  assert.match(flat, /◆ WORK PLAN\s+│/, "identity followed by the structural separator");
+  assert.match(flat, /│ 1\/4/, "progress directly after the separator");
+  const raw = w.render(120)[0]!;
+  assert.ok(stripAnsi(raw).startsWith("◆ WORK PLAN"), "identity leads the line");
+  // Identity must be the bolded accent, progress must NOT be bold — that is what
+  // keeps the whole surface subordinate to the Runtime Context spine.
+  assert.match(raw, /\x1b\[1m◆ WORK PLAN\x1b\[0m/, "identity is bold");
+  assert.equal((raw.match(/\x1b\[1m/g) || []).length, 1, "exactly one bold run (identity only)");
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.doesNotMatch(src, /[▏▎▍▌▋▊▉█]/, "no progress bar glyphs");
+  assert.doesNotMatch(src, /━|▓|░/, "no bar/panel decoration");
+});
+
+check("D72.1 2 — GLYPH SEMANTICS: ● completed / ◐ in-progress / ○ pending, never checkboxes", () => {
+  assert.deepEqual(WORK_PLAN_TASK_STYLES.completed!.glyph, "●", "completed glyph pinned");
+  assert.deepEqual(WORK_PLAN_TASK_STYLES.in_progress!.glyph, "◐", "in-progress glyph pinned");
+  assert.deepEqual(WORK_PLAN_TASK_STYLES.pending!.glyph, "○", "pending glyph pinned");
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.doesNotMatch(src, /\[x\]|\[ \]|☐|☑|✅|❌/, "no checkbox/emoji task icons");
+  // All three glyphs appear together in the expanded board.
+  const w = new WorkPlanWidget(wpTheme, () => wpTasks(["completed", "in_progress", "pending"]));
+  (w as unknown as { collapsed: boolean }).collapsed = false;
+  const flat = wpFlat(w, 120);
+  for (const g of ["●", "◐", "○"]) assert.ok(flat.includes(g), `expanded board shows ${g}`);
+});
+
+check("D72.1 3 — TONES: active strongest, completed subdued success, pending muted", () => {
+  assert.equal(WORK_PLAN_TASK_STYLES.in_progress!.titleTone, "text", "active title is the brightest text token");
+  assert.equal(WORK_PLAN_TASK_STYLES.in_progress!.glyphTone, "accent", "active glyph carries the accent");
+  assert.equal(WORK_PLAN_TASK_STYLES.completed!.glyphTone, "success", "completed glyph carries a muted success tone");
+  assert.equal(WORK_PLAN_TASK_STYLES.completed!.titleTone, "dim", "completed title is subdued");
+  assert.equal(WORK_PLAN_TASK_STYLES.pending!.titleTone, "muted", "pending is muted neutral");
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.doesNotMatch(src, /strikethrough|lineThrough|\\\\x1b\[9m/, "completed is not struck through");
+  // Every tone used is an existing theme token — no new colour system.
+  const tones = new Set(
+    Object.values(WORK_PLAN_TASK_STYLES).flatMap((s) => [s.glyphTone, s.titleTone]),
+  );
+  for (const t of tones) {
+    assert.ok(
+      ["text", "dim", "muted", "accent", "success"].includes(t),
+      `tone ${t} is an established token`,
+    );
+  }
+});
+
+check("D72.1 4 — AFFORDANCE: restrained › / ⌃, never [expand] / [collapse]", () => {
+  const collapsed = new WorkPlanWidget(wpTheme, () => wpTasks(["in_progress", "pending"]));
+  const collapsedLine = stripAnsi(collapsed.render(120)[0]!);
+  assert.ok(collapsedLine.trimEnd().endsWith("›"), `collapsed ends with › (got ${JSON.stringify(collapsedLine.slice(-12))})`);
+  assert.ok(!collapsedLine.includes("expand"), "no [expand] text");
+  const expanded = new WorkPlanWidget(wpTheme, () => wpTasks(["in_progress", "pending"]));
+  (expanded as unknown as { collapsed: boolean }).collapsed = false;
+  const expandedHead = stripAnsi(expanded.render(120)[0]!);
+  assert.ok(expandedHead.trimEnd().endsWith("⌃"), `expanded header ends with ⌃ (got ${JSON.stringify(expandedHead.slice(-12))})`);
+  assert.ok(!expandedHead.includes("collapse"), "no [collapse] text");
+  // No bracketed affordance anywhere in either rendered surface.
+  assert.ok(!stripAnsi(collapsed.render(120).join("\n")).includes("["), "no bracketed hint in compact");
+  assert.ok(!stripAnsi(expanded.render(120).join("\n")).includes("["), "no bracketed hint in expanded");
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  assert.doesNotMatch(src, /\[\$\{this\.collapsed \? "expand"/, "the old bracketed-hint builder is gone");
+});
+
+check("D72.1 5 — EXPANDED: same header, indented rows, no Todo title, no border", () => {
+  const w = new WorkPlanWidget(wpTheme, () => wpTasks(["completed", "in_progress", "pending", "pending"]));
+  (w as unknown as { collapsed: boolean }).collapsed = false;
+  const lines = w.render(120);
+  assert.equal(lines.length, 5, "header + 4 rows");
+  const head = stripAnsi(lines[0]!);
+  assert.match(head, /◆ WORK PLAN\s+│ 2\/4/, "header keeps identity + progress");
+  assert.ok(!head.includes("Task 2"), "header does not duplicate the current task when rows are visible");
+  for (const row of lines.slice(1)) {
+    assert.ok(stripAnsi(row).startsWith("  "), "rows are indented as children");
+  }
+  const flat = flatText(lines);
+  assert.ok(!flat.includes("Todos ("), "no separate Todo title");
+  assert.ok(!flat.includes("Todos"), "no Todo heading at all");
+  for (const ch of ["╭", "╮", "╰", "╯", "┌", "┐", "└", "┘", "│ "]) {
+    if (ch === "│ ") continue;
+    assert.ok(!flat.includes(ch), `no border/panel glyph ${ch}`);
+  }
+});
+
+check("D72.1 6 — ZERO TASK: no active AND no pending disappears in BOTH modes", () => {
+  const allDone = () => wpTasks(["completed", "completed"]);
+  const collapsed = new WorkPlanWidget(wpTheme, allDone);
+  assert.deepEqual(collapsed.render(120), [], "collapsed all-completed → []");
+  const expanded = new WorkPlanWidget(wpTheme, allDone);
+  (expanded as unknown as { collapsed: boolean }).collapsed = false;
+  assert.deepEqual(expanded.render(120), [], "expanded all-completed → [] (no empty shell, no 0/0)");
+  // A pending tail alone keeps the surface alive.
+  const pendingOnly = new WorkPlanWidget(wpTheme, () => wpTasks(["completed", "pending"]));
+  assert.equal(pendingOnly.render(120).length, 1, "pending tail keeps the compact line");
+  const flat = wpFlat(pendingOnly, 120);
+  assert.ok(!flat.includes("0/0"), "never renders 0/0");
+});
+
+check("D72.1 7 — WIDTH: identity, progress and glyph survive 80/100/120/160; title yields first", () => {
+  const long = "Investigate the supplementary model discovery pipeline for OpenCode Free providers and document the full evidence chain";
+  const tasks = () => ({ tasks: [{ subject: long, status: "in_progress" }, { subject: "b", status: "pending" }] as any, nextId: 3 });
+  for (const width of [80, 100, 120, 160]) {
+    const w = new WorkPlanWidget(wpTheme, tasks);
+    const line = w.render(width)[0]!;
+    const flat = stripAnsi(line);
+    assert.ok(flat.includes("◆ WORK PLAN"), `identity survives at ${width}`);
+    assert.match(flat, /│ 1\/2/, `progress survives at ${width}`);
+    assert.ok(flat.includes("◐"), `state glyph survives at ${width}`);
+    assert.ok(visibleWidth(line) <= width, `no overflow at ${width} (${visibleWidth(line)})`);
+    assert.ok(!line.includes("\n"), `single row at ${width}`);
+  }
+  // Narrowest sweep — still bounded, still one row, never wrapped.
+  for (const width of [12, 20, 40, 60, 80, 100, 120, 140, 160, 200, 300, 400]) {
+    for (const collapsed of [true, false]) {
+      const w = new WorkPlanWidget(wpTheme, tasks);
+      (w as unknown as { collapsed: boolean }).collapsed = collapsed;
+      const lines = w.render(width);
+      for (const l of lines) {
+        assert.ok(visibleWidth(l) <= width, `width ${width} collapsed=${collapsed} overflow ${visibleWidth(l)}`);
+        assert.ok(!l.includes("\n"), `width ${width} collapsed=${collapsed} wrapped`);
+      }
+    }
+  }
+  // The title yields before the affordance is dropped.
+  const w80 = new WorkPlanWidget(wpTheme, tasks);
+  assert.ok(stripAnsi(w80.render(80)[0]!).includes("…"), "long title truncated with an ellipsis at 80");
+});
+
+check("D72.1 8 — UNIFIED: one surface, rpiv-todos never rendered alongside", () => {
+  const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
+  // Scope to the class body: the WorkPlan surface itself must never mount
+  // another widget or reference the rpiv-todos key. (The session_start defense
+  // that hides rpiv-todos lives outside the class and is asserted elsewhere.)
+  const wpStart = src.indexOf("export class WorkPlanWidget");
+  const wpEnd = src.indexOf("/** Token counts for compact footer display", wpStart);
+  assert.ok(wpStart > 0 && wpEnd > wpStart, "WorkPlanWidget class located");
+  const wpBody = src.slice(wpStart, wpEnd);
+  assert.doesNotMatch(wpBody, /setWidget\(/, "WorkPlanWidget mounts no widget");
+  assert.doesNotMatch(wpBody, /"rpiv-todos"/, "WorkPlanWidget never references the rpiv-todos widget key");
+  assert.doesNotMatch(src, /Todos \(\$\{|Todos \(X\/Y\)/, "no Todos heading template");
+  const expanded = new WorkPlanWidget(wpTheme, () => wpTasks(["in_progress", "pending"]));
+  (expanded as unknown as { collapsed: boolean }).collapsed = false;
+  const lines = expanded.render(120);
+  assert.equal(lines.length, 3, "exactly header + two rows — no extra panel");
+  // Identity appears once (in the header), never repeated per row.
+  const flat = flatText(lines);
+  assert.equal((flat.match(/◆ WORK PLAN/g) || []).length, 1, "identity rendered exactly once");
 });
 
 // ------------------------------------------------------- D73 — 9router catalog reliability
@@ -2736,7 +2897,7 @@ check("D73 10 — DEFAULT RESTORE: truthful, never a silent substitution", () =>
 check("D73 11 — D72 REGRESSION: Work Plan surface untouched by D73", () => {
   const src = fs.readFileSync(path.resolve(__dirname, "../runtime-orchestrator.ts"), "utf8");
   assert.match(src, /class WorkPlanWidget implements Component/, "WorkPlanWidget intact");
-  assert.match(src, /◆ Work plan · /, "compact Work Plan line intact");
+  assert.match(src, /◆ WORK PLAN/, "compact Work Plan identity intact");
   assert.match(src, /registerShortcut\("ctrl\+shift\+t"/, "Work Plan shortcut intact");
   assert.match(src, /Symbol\.for\("rpiv-todo\.store"\)/, "shared rpiv-todo store intact");
   assert.match(src, /class ActivityWidget/, "Activity intact");
