@@ -110,7 +110,7 @@ None open.
 - Interactive validations: **completed 2026-10-01** for plan-mode, ask-user prompting and pi-lens (command surface); pi-simplify was validated at its entry point only, because its workflow mutates files and the sweep was read-only.
 - Deferred capabilities awaiting triggers: GitHub MCP (PAT), piolium (container), playwright (E2E need), pi-web-access (API key).
 - Work items **D55**, **D56** and **D58** have no decision entry (evidence lives in the reports and [CHANGELOG.md](CHANGELOG.md)); the numbers are retired, not reused. See the Numbering section of [docs/DECISIONS.md](docs/DECISIONS.md).
-- **Pi host upgrade deferred** (D78): the environment advertises `0.99.2` against the validated `0.83.0`. The upgrade was performed and rolled back on 2026-10-01 — it needs a `RefreshModelsContext.store` to `stored` migration in `refreshModels` (D73's prior-catalog fallback) and a host-bridge version-allowlist extension, plus a live check that five third-party packages still behave under 0.99's new `VIRTUAL_MODULES` TUI resolution.
+- **Pi host upgrade deferred** (D78, migration attempted and rolled back under D79): the environment advertises `0.99.2` against the validated `0.83.0`. The `refreshModels` migration is solved and was verified on 0.99.2, but adoption is blocked by the host bridge: **0.99.2's `pi` binary is a minified bundle (`dist/bundle/cli.js`)**, so the D44/D51 anchors no longer exist in the code the CLI runs and `/model` falls through to Pi's native picker. Reopening this needs a bridge strategy that survives bundling, not just an allowlist entry.
 - Execution-profile status chip can persist up to its 30-minute window after a workflow ends (documented v1 semantics).
 
 ## Next
